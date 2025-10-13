@@ -267,7 +267,7 @@ install(
 )
 
 install(
-  DIRECTORY src/kinematics src/control
+  DIRECTORY src/kinematics 
   DESTINATION ${CMAKE_INSTALL_DATADIR}/yaskawa-robots
 )
 
