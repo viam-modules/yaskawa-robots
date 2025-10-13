@@ -181,8 +181,6 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
 }
 void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     const std::unique_lock wlock{config_mutex_};
-    VIAM_SDK_LOG(warn) << "Reconfigure called: shutting down current state";
-    //    shutdown_(wlock);
     VIAM_SDK_LOG(warn) << "Reconfigure called: configuring new state";
     configure_(deps, cfg);
     VIAM_SDK_LOG(info) << "Reconfigure completed OK";
@@ -230,7 +228,9 @@ pose YaskawaArm::get_end_position(const ProtoStruct&) {
     throw std::runtime_error(std::format("get_end_position is unimplemented for arm model {}", model_.to_string()));
 }
 
-void YaskawaArm::stop(const ProtoStruct&) {}
+void YaskawaArm::stop(const ProtoStruct&) {
+    robot_->stop().get();
+}
 
 ProtoStruct YaskawaArm::do_command(const ProtoStruct&) {
     ProtoStruct resp = ProtoStruct{};

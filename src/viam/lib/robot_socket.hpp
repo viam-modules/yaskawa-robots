@@ -312,6 +312,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::future<Message> echo_trajectory();
     std::future<Message> get_goal_status(int32_t id);
     std::future<Message> cancel_goal(int32_t id);
+    std::future<Message> stop();
 
     std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
 

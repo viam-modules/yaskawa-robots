@@ -11,8 +11,8 @@ This model can be used to control a yaskawa robots arm from a machine running a 
 ```json
 {
     "host": <arm ip address string>,
-    "speed_radss_per_sec": <float>,
-    "acceleration_radss_per_sec2": <float>
+    "speed_rads_per_sec": <float>,
+    "acceleration_rads_per_sec2": <float>
 }
 ```
 

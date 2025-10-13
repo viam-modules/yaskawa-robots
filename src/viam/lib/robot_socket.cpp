@@ -755,6 +755,9 @@ std::future<Message> YaskawaController::echo_trajectory() {
     // Echo trajectory command has no payload
     return tcp_socket_->send_request(Message(MSG_ECHO_TRAJECTORY));
 }
+std::future<Message> YaskawaController::stop() {
+    return tcp_socket_->send_request(Message(MSG_STOP_MOTION));
+}
 
 bool YaskawaController::is_status_command(message_type_t type) const {
     return type == MSG_ROBOT_POSITION_VELOCITY_TORQUE || type == MSG_ROBOT_STATUS;
