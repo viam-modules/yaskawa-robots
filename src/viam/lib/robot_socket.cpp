@@ -654,8 +654,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
 
     auto curr_joint_pos = StatusMessage(get_robot_position_velocity_torque().get()).position;
 
-    auto curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
-    auto curr_waypoint_rad = degrees_to_radians(std::move(curr_waypoint_deg)).eval();
+    auto curr_waypoint_rad = Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
     if (!curr_waypoint_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
         waypoints.emplace_front(std::move(curr_waypoint_rad));
     }
