@@ -522,6 +522,14 @@ std::future<Message> YaskawaController::cancel_goal(int32_t goal_id) {
     return tcp_socket_->send_request(Message(MSG_CANCEL_GOAL, payload));
 }
 
+std::future<Message> YaskawaController::setMotionMode(uint8_t mode) {
+    std::vector<uint8_t> payload(sizeof(motion_mode_payload_t));
+    motion_mode_payload_t* req = reinterpret_cast<motion_mode_payload_t*>(payload.data());
+    req->motion_mode = mode;
+
+    return tcp_socket_->send_request(Message(MSG_SET_MOTION_MODE, payload));
+}
+
 std::future<Message> YaskawaController::send_test_trajectory() {
     if (!robot_state_.IsReady()) {
         throw std::runtime_error(std::format("cannot send test trajectory the robot state is e_stopped {} in error {}",
