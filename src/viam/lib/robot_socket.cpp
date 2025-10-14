@@ -671,7 +671,6 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     std::vector<trajectory_point_t> points;
 
     const Trajectory trajectory(Path(waypoints, 0.1), max_velocity, max_acceleration);
-    trajectory.outputPhasePlaneTrajectory();
     if (!trajectory.isValid()) {
         std::stringstream buffer;
         buffer << "trajectory generation failed for path:";
