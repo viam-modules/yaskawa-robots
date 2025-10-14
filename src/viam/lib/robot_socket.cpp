@@ -69,7 +69,7 @@ void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec
     const double step = duration_sec / static_cast<double>((num_samples - 1));
 
     // Generate samples by evaluating f at each time point
-    for (std::size_t i = 1; i < num_samples - 1; ++i) {
+    for (std::size_t i = 0; i < num_samples - 1; ++i) {
         samples.push_back(f(static_cast<double>(i) * step, step));
     }
 
@@ -342,6 +342,8 @@ void UdpRobotSocket::disconnect() {
 }
 
 void UdpRobotSocket::get_status(std::promise<Message> promise) {
+    if (connected_ == false)
+        throw std::runtime_error("socket is disconnected");
     std::unique_lock lock(status_mutex_);
 
     cached_status_ = std::visit(
@@ -361,6 +363,8 @@ void UdpRobotSocket::get_status(std::promise<Message> promise) {
 }
 
 void UdpRobotSocket::get_robot_status(std::promise<Message> promise) {
+    if (connected_ == false)
+        throw std::runtime_error("socket is disconnected");
     std::unique_lock lock(status_mutex_);
 
     cached_robot_status_ = std::visit(
@@ -395,7 +399,6 @@ awaitable<void> UdpRobotSocket::receive_messages() {
 
             buffer.resize(bytes_received);
             Message message = parse_message(buffer);
-
             // Log received message type
             if (message.header.message_type == MSG_ROBOT_POSITION_VELOCITY_TORQUE) {
                 handle_status_message(message);
