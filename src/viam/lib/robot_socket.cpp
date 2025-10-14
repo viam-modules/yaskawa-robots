@@ -17,6 +17,7 @@
 #include <boost/range/algorithm/for_each.hpp>
 #include <boost/range/begin.hpp>
 #include <boost/range/end.hpp>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -61,7 +62,6 @@ void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec
     if (!std::isfinite(putative_samples) || putative_samples > k_max_samples) {
         throw std::invalid_argument("duration_sec and sampling_frequency_hz exceed the maximum allowable samples");
     }
-
     // Calculate the number of samples needed. this will always be at least 2.
     const auto num_samples = static_cast<std::size_t>(std::ceil(putative_samples) + 1);
 
@@ -615,7 +615,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             "cannot move the robot state is e_stopped {} in error {}", robot_state_.e_stopped.load(), robot_state_.in_error.load()));
     }
     auto response = make_goal_(std::move(waypoints), unix_time).get();
-
+    std::cout << response << std::endl;
     if (response.header.message_type != MSG_GOAL_ACCEPTED) {
         throw std::runtime_error(std::format("Expected MSG_GOAL_ACCEPTED, got {}", (int)response.header.message_type));
     }
@@ -641,7 +641,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             }
         } catch (...) {
             try {
-                promise.set_exception(std::current_exception());
+                promise.set_exception_at_thread_exit(std::current_exception());
             } catch (...) {
             }
         }
@@ -652,12 +652,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     std::cout << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size() << "\n";
 
-    // get current joint position and add that as starting pose to waypoints
-    std::cout << "move: get_joint_positions start " << unix_time << "\n";
     auto curr_joint_pos = StatusMessage(get_robot_position_velocity_torque().get()).position;
-    std::cout << "move: get_joint_positions end " << unix_time << "\n";
 
-    std::cout << "move: compute_trajectory start " << unix_time << "\n";
     auto curr_waypoint_deg = Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
     auto curr_waypoint_rad = degrees_to_radians(std::move(curr_waypoint_deg)).eval();
     if (!curr_waypoint_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
@@ -667,36 +663,6 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         throw std::runtime_error("arm is already at the desired joint positions");
     }
 
-    // Walk all interior points of the waypoints list, if any. If the
-    // point of current interest is the cusp of a direction reversal
-    // w.r.t. the points immediately before and after it, then splice
-    // all waypoints up to and including the cusp point into a new
-    // segment, and then begin accumulating a new segment starting at
-    // the cusp point. The cusp point is duplicated, forming both the
-    // end of one segment and the beginning of the next segment. After
-    // exiting the loop, any remaining waypoints form the last (and if
-    // no cusps were identified the only) segment. If one or more cusp
-    // points were identified, the waypoints list will always have at
-    // least two residual waypoints, since the last waypoint is never
-    // examined, and the splice call never removes the waypoint being
-    // visited.
-    //
-    // NOTE: This assumes waypoints have been de-duplicated to avoid
-    // zero-length segments that would cause numerical issues in
-    // normalized() calculations.
-    std::vector<decltype(waypoints)> segments;
-    for (auto where = next(begin(waypoints)); where != prev(end(waypoints)); ++where) {
-        const auto segment_ab = *where - *prev(where);
-        const auto segment_bc = *next(where) - *where;
-        const auto dot = segment_ab.normalized().dot(segment_bc.normalized());
-        if (std::fabs(dot + 1.0) < 1e-3) {
-            segments.emplace_back();
-            segments.back().splice(segments.back().begin(), waypoints, waypoints.begin(), where);
-            segments.back().push_back(*where);
-        }
-    }
-    segments.push_back(std::move(waypoints));
-
     // set velocity/acceleration constraints
     const auto max_velocity = Eigen::VectorXd::Constant(6, speed_);
     const auto max_acceleration = Eigen::VectorXd::Constant(6, acceleration_);
@@ -704,48 +670,50 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
 
     std::vector<trajectory_point_t> points;
 
-    for (const auto& segment : segments) {
-        const Trajectory trajectory(Path(segment, 0.1), max_velocity, max_acceleration);
-        trajectory.outputPhasePlaneTrajectory();
-        if (!trajectory.isValid()) {
-            std::stringstream buffer;
-            buffer << "trajectory generation failed for path:";
-            for (const auto& position : segment) {
-                buffer << "{";
-                for (Eigen::Index j = 0; j < 6; j++) {
-                    buffer << position[j] << " ";
-                }
-                buffer << "}";
+    const Trajectory trajectory(Path(waypoints, 0.1), max_velocity, max_acceleration);
+    trajectory.outputPhasePlaneTrajectory();
+    if (!trajectory.isValid()) {
+        std::stringstream buffer;
+        buffer << "trajectory generation failed for path:";
+        for (const auto& position : waypoints) {
+            buffer << "{";
+            for (Eigen::Index j = 0; j < 6; j++) {
+                buffer << position[j] << " ";
             }
-            throw std::runtime_error(buffer.str());
+            buffer << "}";
         }
-
-        const double duration = trajectory.getDuration();
-        if (!std::isfinite(duration)) {
-            throw std::runtime_error("trajectory.getDuration() was not a finite number");
-        }
-        // TODO(RSDK-11069): Make this configurable
-        // https://viam.atlassian.net/browse/RSDK-11069
-        if (duration > 600) {  // if the duration is longer than 10 minutes
-            throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
-        }
-        if (duration < k_min_timestep_sec) {
-            throw std::runtime_error(std::format("duration {} lower than {} assuming arm is at goal", duration, k_min_timestep_sec));
-        }
-
-        // desired sampling frequency. if the duration is small we will oversample but that should be fine.
-        constexpr double k_sampling_freq_hz = 5;
-        sampling_func(points, duration, k_sampling_freq_hz, [&](const double t, const double step) {
-            auto p_eigen = trajectory.getPosition(t);
-            auto v_eigen = trajectory.getVelocity(t);
-            return trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
-                                      {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
-                                      {0},
-                                      {0},
-                                      {boost::numeric_cast<int32_t>(step), 0}};
-        });
+        throw std::runtime_error(buffer.str());
     }
-    std::cout << "move: compute_trajectory end " << unix_time << " samples.size() " << points.size() << " segments " << segments.size() - 1
+
+    const double duration = trajectory.getDuration();
+    if (!std::isfinite(duration)) {
+        throw std::runtime_error("trajectory.getDuration() was not a finite number");
+    }
+    // TODO(RSDK-11069): Make this configurable
+    // https://viam.atlassian.net/browse/RSDK-11069
+    if (duration > 600) {  // if the duration is longer than 10 minutes
+        throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
+    }
+    if (duration < k_min_timestep_sec) {
+        throw std::runtime_error(std::format("duration {} lower than {} assuming arm is at goal", duration, k_min_timestep_sec));
+    }
+
+    // desired sampling frequency. if the duration is small we will oversample but that should be fine.
+    constexpr double k_sampling_freq_hz = 5;
+    sampling_func(points, duration, k_sampling_freq_hz, [&](const double t, const double step) {
+        auto p_eigen = trajectory.getPosition(t);
+        auto v_eigen = trajectory.getVelocity(t).cwiseAbs().eval();
+        auto secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::duration<double>(t));
+        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(t) - secs);
+        std::cout << " time " << secs << " " << nanos << " stp " << step << std::endl;
+        return trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                  {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+                                  {0},
+                                  {0},
+                                  {(int32_t)secs.count(), (int32_t)nanos.count()}};
+    });
+
+    std::cout << "move: compute_trajectory end " << unix_time << " samples.size() " << points.size() << " segments " << waypoints.size() - 1
               << "\n";
 
     return send_goal_(group_index_, 6, points, {});
