@@ -31,6 +31,8 @@ extern "C" {
 #include "protocol.h"
 }
 
+#include "logger.hpp"
+
 namespace robot {
 
 template <typename T>
@@ -165,6 +167,22 @@ struct Message {
     friend std::ostream& operator<<(std::ostream& os, const Message& msg);
 };
 
+struct CartesianPosition {
+    double x, y, z;
+    double rx, ry, rz;
+    CartesianPosition() = default;
+    CartesianPosition(const Message&);
+    std::string toString() noexcept;
+};
+
+struct AnglePosition {
+    std::vector<double> pos;
+    AnglePosition() = default;
+    AnglePosition(const Message&);
+    AnglePosition(std::vector<double> posRad);
+    std::string toString() noexcept;
+};
+
 struct StatusMessage {
     int64_t timestamp;             // 8 bytes
     uint8_t num_axes;              // 1 byte
@@ -287,6 +305,26 @@ class UdpRobotSocket : public RobotSocketBase {
     Message parse_message(const std::vector<uint8_t>& buffer);
 };
 
+class UdpBroadcastListener {
+   public:
+    explicit UdpBroadcastListener(boost::asio::io_context& io_context, uint16_t port = 21789);
+    ~UdpBroadcastListener();
+
+    void start();
+    void stop();
+
+   private:
+    using udp = boost::asio::ip::udp;
+
+    boost::asio::io_context& io_context_;
+    udp::socket socket_;
+    uint16_t port_;
+    std::atomic<bool> running_{false};
+    std::array<char, 1024> recv_buffer_;
+
+    boost::asio::awaitable<void> receive_broadcasts();
+};
+
 class GoalRequestHandle;
 
 class YaskawaController : public std::enable_shared_from_this<YaskawaController> {
@@ -314,6 +352,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::future<Message> cancel_goal(int32_t id);
     std::future<Message> stop();
     std::future<Message> setMotionMode(uint8_t mode);
+    std::future<Message> getCartPosition();
+    std::future<Message> cartPosToAngle(CartesianPosition& pos);
+    std::future<Message> angleToCartPos(AnglePosition& pos);
 
     std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
 
@@ -324,6 +365,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     std::unique_ptr<TcpRobotSocket> tcp_socket_;
     std::unique_ptr<UdpRobotSocket> udp_socket_;
+    std::unique_ptr<UdpBroadcastListener> broadcast_listener_;
     double speed_;
     double acceleration_;
     uint32_t group_index_;

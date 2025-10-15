@@ -144,6 +144,7 @@ add_library(viam-yaskawa)
 target_sources(viam-yaskawa
   PRIVATE
     src/viam/lib/robot_socket.cpp
+    src/viam/lib/logger.cpp
 )
 
 target_compile_options( viam-yaskawa PRIVATE -O0)

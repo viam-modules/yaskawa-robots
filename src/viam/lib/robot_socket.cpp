@@ -1,4 +1,5 @@
 #include "robot_socket.hpp"
+#include <algorithm>
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/buffer.hpp>
@@ -35,12 +36,30 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include <viam/lib/logger.hpp>
 #include "protocol.h"
 
 #include <third_party/trajectories/Trajectory.h>
 
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
+
+constexpr const char* goal_state_to_string(goal_state_t state) {
+    switch (state) {
+        case GOAL_STATE_SUCCEEDED:
+            return "goal succeeded";
+        case GOAL_STATE_PENDING:
+            return "goal pending";
+        case GOAL_STATE_ABORTED:
+            return "goal aborted (server side)";
+        case GOAL_STATE_CANCELLED:
+            return "goal cancelled (client side)";
+        case GOAL_STATE_ACTIVE:
+            return "goal state active";
+        default:
+            return "unknown goal state";
+    }
+}
 
 template <typename T>
 [[nodiscard]] constexpr decltype(auto) degrees_to_radians(T&& degrees) {
@@ -80,6 +99,42 @@ void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec
 namespace robot {
 
 using namespace boost::asio;
+
+CartesianPosition::CartesianPosition(const Message& msg) {
+    if (!(msg.header.message_type == MSG_GET_CART || msg.header.message_type == MSG_FROM_JOINT_TO_CART))
+        throw std::runtime_error(
+            std::format("wrong message status type expected MSG_GET_CART or  MSG_FROM_JOINT_TO_CART had {}", msg.header.message_type));
+    if (msg.payload.size() != sizeof(cartesian_payload_t))
+        throw std::runtime_error("incorrect status size");
+    const cartesian_payload_t* cart_coord = reinterpret_cast<const cartesian_payload_t*>(msg.payload.data());
+    x = cart_coord->cartesianCoord[0];
+    y = cart_coord->cartesianCoord[1];
+    z = cart_coord->cartesianCoord[2];
+    rx = cart_coord->cartesianCoord[3];
+    ry = cart_coord->cartesianCoord[4];
+    rz = cart_coord->cartesianCoord[5];
+}
+std::string CartesianPosition::toString() noexcept {
+    return std::format(" ({},{},{}) - ({},{},{}) ", x, y, z, rx, ry, rz);
+}
+
+AnglePosition::AnglePosition(const Message& msg) {
+    if (!(msg.header.message_type == MSG_FROM_CART_TO_JOINT))
+        throw std::runtime_error(std::format("wrong message status type expected MSG_FROM_CART_TO_JOINT  had {}", msg.header.message_type));
+    if (msg.payload.size() != sizeof(position_angle_degree_payload_t))
+        throw std::runtime_error("incorrect status size");
+    const position_angle_degree_payload_t* retPos = reinterpret_cast<const position_angle_degree_payload_t*>(msg.payload.data());
+    pos.reserve(8);
+    boost::copy(retPos->positionAngleDegree, std::back_inserter(pos));
+}
+AnglePosition::AnglePosition(std::vector<double> posRad) {
+    std::transform(posRad.begin(), posRad.end(), posRad.begin(), [](double d) -> double { return d * (180.0 / M_PI); });
+    pos.reserve(8);
+    boost::copy(posRad, std::back_inserter(pos));
+}
+std::string AnglePosition::toString() noexcept {
+    return std::format("{} {} {} {} {} {}", pos[0], pos[1], pos[2], pos[3], pos[4], pos[5]);
+}
 
 StatusMessage::StatusMessage(const Message& msg) {
     if (msg.header.message_type != MSG_ROBOT_POSITION_VELOCITY_TORQUE)
@@ -190,7 +245,7 @@ std::future<void> TcpRobotSocket::connect() {
         [this, promise]() mutable -> awaitable<void> {
             try {
                 ip::tcp::resolver resolver(io_context_);
-                std::cout << "connecting to " << host_ << ":" << port_ << " \n";
+                LOGGING(info) << "connecting to " << host_ << ":" << port_;
                 auto endpoints = co_await resolver.async_resolve(host_, std::to_string(port_), use_awaitable);
                 co_await async_connect(socket_, endpoints, use_awaitable);
 
@@ -411,7 +466,7 @@ awaitable<void> UdpRobotSocket::receive_messages() {
         } catch (const std::exception& e) {
             running_ = false;
             robot_state_.in_error.store(true);
-            std::cout << "error " << e.what() << " while waiting on UDP messages" << std::endl;
+            LOGGING(error) << "error " << e.what() << " while waiting on UDP messages";
         }
     }
 }
@@ -473,10 +528,93 @@ Message UdpRobotSocket::parse_message(const std::vector<uint8_t>& buffer) {
     return message;
 }
 
+// UdpBroadcastListener Implementation
+UdpBroadcastListener::UdpBroadcastListener(boost::asio::io_context& io_context, uint16_t port)
+    : io_context_(io_context), socket_(io_context), port_(port) {}
+
+UdpBroadcastListener::~UdpBroadcastListener() {
+    stop();
+}
+
+void UdpBroadcastListener::start() {
+    if (running_.exchange(true)) {
+        return;  // Already running
+    }
+
+    try {
+        // Open socket and bind to broadcast port
+        socket_.open(udp::v4());
+        socket_.set_option(udp::socket::reuse_address(true));
+        socket_.bind(udp::endpoint(udp::v4(), port_));
+
+        // Start receiving broadcasts
+        co_spawn(io_context_, receive_broadcasts(), detached);
+
+        LOGGING(info) << "UDP broadcast listener started on port " << port_;
+    } catch (const std::exception& e) {
+        running_ = false;
+        LOGGING(error) << "Failed to start UDP broadcast listener: " << e.what();
+        throw;
+    }
+}
+
+void UdpBroadcastListener::stop() {
+    if (!running_.exchange(false)) {
+        return;  // Already stopped
+    }
+
+    try {
+        if (socket_.is_open()) {
+            socket_.close();
+        }
+        LOGGING(info) << "UDP broadcast listener stopped";
+    } catch (const std::exception& e) {
+        LOGGING(error) << "Error stopping UDP broadcast listener: " << e.what();
+    }
+}
+
+boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
+    while (running_) {
+        try {
+            udp::endpoint sender_endpoint;
+
+            // Receive broadcast message
+            std::size_t bytes_received =
+                co_await socket_.async_receive_from(boost::asio::buffer(recv_buffer_), sender_endpoint, use_awaitable);
+
+            if (bytes_received > 0 && running_) {
+                // Null-terminate the string (handle case where buffer is full)
+                std::size_t str_len = bytes_received;
+
+                // Find null terminator or use full buffer
+                for (std::size_t i = 0; i < bytes_received; ++i) {
+                    if (recv_buffer_[i] == '\0') {
+                        str_len = i;
+                        break;
+                    }
+                }
+
+                // Parse and log the broadcast message
+                std::string message(recv_buffer_.data(), str_len);
+                if (!message.empty()) {
+                    // TODO deconstruct incoming log messages
+                    LOGGING(info) << message;
+                }
+            }
+        } catch (const std::exception& e) {
+            if (running_) {
+                LOGGING(error) << "Error receiving broadcast: " << e.what();
+            }
+            break;
+        }
+    }
+}
+
 // Robot Implementation
 YaskawaController::YaskawaController(boost::asio::io_context& io_context, double speed, double acceleration, const std::string& host)
     : io_context_(io_context), host_(host), robot_state_(State()), speed_(speed), acceleration_(acceleration) {
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
+    broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
 }
 
 std::future<void> YaskawaController::connect() {
@@ -489,11 +627,15 @@ std::future<void> YaskawaController::connect() {
 
             uint16_t local_udp_port = udp_socket_->get_local_port();
             auto registration_response = register_udp_port(local_udp_port).get();
-            std::cout << " UDP port registration response: " << registration_response << " \n";
+            LOGGING(info) << "UDP port registration response: " << registration_response;
             // wait for first status;
             get_robot_status().get();
 
+            // Start broadcast listener
+            broadcast_listener_->start();
+
         } catch (const std::exception& e) {
+            broadcast_listener_.reset();
             udp_socket_.reset();
             throw;
         }
@@ -501,6 +643,9 @@ std::future<void> YaskawaController::connect() {
 }
 
 void YaskawaController::disconnect() {
+    if (broadcast_listener_) {
+        broadcast_listener_->stop();
+    }
     if (tcp_socket_) {
         tcp_socket_->disconnect();
     }
@@ -626,7 +771,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             "cannot move the robot state is e_stopped {} in error {}", robot_state_.e_stopped.load(), robot_state_.in_error.load()));
     }
     auto response = make_goal_(std::move(waypoints), unix_time).get();
-    std::cout << response << std::endl;
+    LOGGING(info) << response;
     if (response.header.message_type != MSG_GOAL_ACCEPTED) {
         throw std::runtime_error(std::format("Expected MSG_GOAL_ACCEPTED, got {}", (int)response.header.message_type));
     }
@@ -643,14 +788,17 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
         try {
             while (1) {
                 auto status_msg = GoalStatusMessage(self->get_goal_status(goal_id).get());
-                if (status_msg.state == GOAL_STATE_SUCCEEDED || status_msg.state == GOAL_STATE_CANCELLED ||
-                    status_msg.state == GOAL_STATE_ABORTED) {
+                if (status_msg.state == GOAL_STATE_ACTIVE)
+                    continue;
+                if (status_msg.state == GOAL_STATE_SUCCEEDED) {
                     promise.set_value_at_thread_exit(status_msg.state);
                     break;
+                } else {
+                    throw std::runtime_error(std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
-        } catch (...) {
+        } catch (std::exception& e) {
             try {
                 promise.set_exception_at_thread_exit(std::current_exception());
             } catch (...) {
@@ -661,7 +809,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 }
 
 std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
-    std::cout << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size() << "\n";
+    LOGGING(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
 
     auto curr_joint_pos = StatusMessage(get_robot_position_velocity_torque().get()).position;
 
@@ -676,7 +824,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     // set velocity/acceleration constraints
     const auto max_velocity = Eigen::VectorXd::Constant(6, speed_);
     const auto max_acceleration = Eigen::VectorXd::Constant(6, acceleration_);
-    std::cout << "generating trajectory with max speed: " << radians_to_degrees(max_velocity[0]) << "\n";
+    LOGGING(info) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity[0]);
 
     std::vector<trajectory_point_t> points;
 
@@ -708,13 +856,27 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     }
 
     // desired sampling frequency. if the duration is small we will oversample but that should be fine.
-    constexpr double k_sampling_freq_hz = 5;
-    sampling_func(points, duration, k_sampling_freq_hz, [&](const double t, const double step) {
+    constexpr double k_sampling_freq_hz = 1;
+    sampling_func(points, duration, k_sampling_freq_hz, [&](const double t, const double) {
         auto p_eigen = trajectory.getPosition(t);
-        auto v_eigen = trajectory.getVelocity(t).cwiseAbs().eval();
+        auto v_eigen = trajectory.getVelocity(t);
         auto secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::duration<double>(t));
         auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(t) - secs);
-        std::cout << " time " << secs << " " << nanos << " stp " << step << std::endl;
+        LOGGING(info) << std::format("Time {}.{} - P ({},{},{},{},{},{}) -  V ({},{},{},{},{},{})",
+                                     secs,
+                                     nanos,
+                                     p_eigen[0],
+                                     p_eigen[1],
+                                     p_eigen[2],
+                                     p_eigen[3],
+                                     p_eigen[4],
+                                     p_eigen[5],
+                                     v_eigen[0],
+                                     v_eigen[1],
+                                     v_eigen[2],
+                                     v_eigen[3],
+                                     v_eigen[4],
+                                     v_eigen[5]);
         return trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
                                   {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
                                   {0},
@@ -722,8 +884,8 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
                                   {(int32_t)secs.count(), (int32_t)nanos.count()}};
     });
 
-    std::cout << "move: compute_trajectory end " << unix_time << " samples.size() " << points.size() << " segments " << waypoints.size() - 1
-              << "\n";
+    LOGGING(info) << "move: compute_trajectory end " << unix_time << " samples.size() " << points.size() << " segments "
+                  << waypoints.size() - 1;
 
     return send_goal_(group_index_, 6, points, {});
 }
@@ -734,6 +896,36 @@ std::future<Message> YaskawaController::echo_trajectory() {
 }
 std::future<Message> YaskawaController::stop() {
     return tcp_socket_->send_request(Message(MSG_STOP_MOTION));
+}
+std::future<Message> YaskawaController::getCartPosition() {
+    std::vector<uint8_t> payload(sizeof(group_id_t));
+    group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
+    id->group_id = (int32_t)group_index_;
+    return tcp_socket_->send_request(Message(MSG_GET_CART, payload));
+}
+std::future<Message> YaskawaController::cartPosToAngle(CartesianPosition& pos) {
+    std::vector<uint8_t> payload(sizeof(cartesian_payload_t));
+    cartesian_payload_t* cid = reinterpret_cast<cartesian_payload_t*>(payload.data());
+    cid->group_id = (int32_t)group_index_;
+    cid->cartesianCoord[0] = pos.x;
+    cid->cartesianCoord[1] = pos.y;
+    cid->cartesianCoord[2] = pos.z;
+    cid->cartesianCoord[3] = pos.rx;
+    cid->cartesianCoord[4] = pos.ry;
+    cid->cartesianCoord[5] = pos.rz;
+    return tcp_socket_->send_request(Message(MSG_FROM_CART_TO_JOINT, payload));
+}
+std::future<Message> YaskawaController::angleToCartPos(AnglePosition& pos) {
+    std::vector<uint8_t> payload(sizeof(position_angle_degree_payload_t));
+    position_angle_degree_payload_t* pid = reinterpret_cast<position_angle_degree_payload_t*>(payload.data());
+    pid->group_id = (int32_t)group_index_;
+    pid->positionAngleDegree[0] = pos.pos[0];
+    pid->positionAngleDegree[1] = pos.pos[1];
+    pid->positionAngleDegree[2] = pos.pos[2];
+    pid->positionAngleDegree[3] = pos.pos[3];
+    pid->positionAngleDegree[4] = pos.pos[4];
+    pid->positionAngleDegree[5] = pos.pos[5];
+    return tcp_socket_->send_request(Message(MSG_FROM_JOINT_TO_CART, payload));
 }
 
 bool YaskawaController::is_status_command(message_type_t type) const {

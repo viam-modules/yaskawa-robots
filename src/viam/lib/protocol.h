@@ -58,7 +58,10 @@ typedef enum {
     MSG_GOAL_ACCEPTED = 0x12,	// Goal accepted with ID
     MSG_GOAL_STATUS = 0x13,	// Goal status update/notification
     MSG_CANCEL_GOAL = 0x14,	// Cancel a specific goal
-    MSG_GET_GOAL_STATUS = 0x15	// Query status of a goal
+    MSG_GET_GOAL_STATUS = 0x15,	// Query status of a goal
+    MSG_FROM_JOINT_TO_CART = 0x16,
+    MSG_FROM_CART_TO_JOINT = 0x17,
+    MSG_GET_CART = 0x18
 } message_type_t;
 
 // Goal states
@@ -152,6 +155,20 @@ typedef PACK(struct {
     uint8_t value;	// 1 byte - boolean value (0 = false, 1 = true)
 }) boolean_payload_t;
 
+// Cartesian coordinate
+typedef PACK(struct 
+{ 
+	int group_id;
+	double cartesianCoord[8];
+}) cartesian_payload_t;
+
+// Cartesian coordinate
+typedef PACK(struct 
+{ 
+	int group_id;
+	double positionAngleDegree[8];
+}) position_angle_degree_payload_t;
+
 // Goal accepted response payload
 typedef PACK(struct {
     int32_t goal_id;		// 4 bytes - unique goal identifier (random)
@@ -170,6 +187,12 @@ typedef PACK(struct {
 typedef PACK(struct {
     int32_t goal_id;		// 4 bytes - goal to cancel
 }) cancel_goal_payload_t;
+
+// Group ID
+typedef PACK(struct {
+    int32_t group_id;  // 4 bytes - goup id
+}) group_id_t;
+
 
 typedef struct {
     protocol_header_t *header;
