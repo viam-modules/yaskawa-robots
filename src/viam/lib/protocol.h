@@ -1,6 +1,10 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+// Protocol definition for Yaskawa robot communication
+// This protocol uses packed structs for binary communication over TCP/UDP
+// All multi-byte integers are assumed to be in native endianness
+// Version: 1
 
 #ifdef __GNUC__
 #define PACK( __Declaration__ ) __Declaration__ __attribute__((__packed__))
@@ -14,7 +18,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define PROTOCOL_MAGIC_NUMBER 0x56494152	// "VIAR" in little endian
+#define PROTOCOL_MAGIC_NUMBER 0x56494152	// "VIAR" in little endian - used for protocol validation
 #define PROTOCOL_VERSION 1
 
 #define TCP_PORT 27654

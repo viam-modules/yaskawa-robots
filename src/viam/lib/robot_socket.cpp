@@ -41,8 +41,12 @@
 
 #include <third_party/trajectories/Trajectory.h>
 
+// Tolerance for comparing waypoint positions to detect duplicates (radians)
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
-constexpr double k_min_timestep_sec = 1e-2;  // determined experimentally, the arm appears to error when given timesteps ~2e-5 and lower
+
+// Minimum timestep between trajectory points (seconds)
+// Determined experimentally: the arm appears to error when given timesteps ~2e-5 and lower
+constexpr double k_min_timestep_sec = 1e-2;
 
 constexpr const char* goal_state_to_string(goal_state_t state) {
     switch (state) {
@@ -410,8 +414,9 @@ void UdpRobotSocket::get_status(std::promise<Message> promise) {
                 promise.set_value(current);
                 return current;
             } else {
-                // NOTE SHOULD SET EXCEPTION INSTEAD
-                return std::move(promise);
+                // Concurrent status requests not supported
+                promise.set_exception(std::make_exception_ptr(std::runtime_error("Concurrent status requests are not supported")));
+                return std::move(current);
             }
         },
         cached_status_);
@@ -431,8 +436,9 @@ void UdpRobotSocket::get_robot_status(std::promise<Message> promise) {
                 promise.set_value(current);
                 return current;
             } else {
-                // NOTE SHOULD SET EXCEPTION INSTEAD
-                return std::move(promise);
+                // Concurrent robot status requests not supported
+                promise.set_exception(std::make_exception_ptr(std::runtime_error("Concurrent robot status requests are not supported")));
+                return std::move(current);
             }
         },
         cached_robot_status_);
@@ -620,21 +626,26 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, double
 std::future<void> YaskawaController::connect() {
     return std::async(std::launch::async, [this]() {
         try {
+            // Establish TCP connection for commands
             tcp_socket_->connect().get();
-            // Create and connect UDP socket
+
+            // Create and connect UDP socket for receiving status updates
             udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
             udp_socket_->connect().get();
 
+            // Register UDP port with robot so it knows where to send status messages
             uint16_t local_udp_port = udp_socket_->get_local_port();
             auto registration_response = register_udp_port(local_udp_port).get();
             LOGGING(info) << "UDP port registration response: " << registration_response;
-            // wait for first status;
+
+            // Wait for first status update to ensure connection is fully established
             get_robot_status().get();
 
-            // Start broadcast listener
+            // Start listening for broadcast messages from robot
             broadcast_listener_->start();
 
         } catch (const std::exception& e) {
+            // Clean up on connection failure
             broadcast_listener_.reset();
             udp_socket_.reset();
             throw;

@@ -153,8 +153,8 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     const auto module_executable_path = boost::dll::program_location();
     const auto module_executable_directory = module_executable_path.parent_path();
 
-    auto resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "universal-robots");
-    VIAM_SDK_LOG(info) << "Universal robots module executable found in `" << module_executable_path << "; resources will be found in `"
+    auto resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "yaskawa-robots");
+    VIAM_SDK_LOG(info) << "Yaskawa robots module executable found in `" << module_executable_path << "; resources will be found in `"
                        << resource_root << "`";
 
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
@@ -167,10 +167,13 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     constexpr int k_max_connection_try = 5;
     int connection_try = 0;
 
-    while (1) {
+    // Attempt connection with retry logic
+    while (connection_try < k_max_connection_try) {
         try {
             ++connection_try;
             robot_->connect().get();
+            VIAM_SDK_LOG(info) << "Successfully connected to robot on attempt " << connection_try;
+            break;  // Exit on successful connection
         } catch (std::exception& ex) {
             VIAM_SDK_LOG(error) << std::format(
                 "connection {} out of {} failed because {}", connection_try, k_max_connection_try, ex.what());
@@ -200,9 +203,13 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
 
     if (!positions.empty()) {
         std::list<Eigen::VectorXd> waypoints;
+
+        // Convert joint positions from degrees to radians and filter duplicate waypoints
         for (const auto& position : positions) {
             auto next_waypoint_deg = Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
             auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg)).eval();
+
+            // Skip waypoints that are too close to the previous one to avoid redundant motion
             if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), k_waypoint_equivalancy_epsilon_rad))) {
                 continue;
             }
@@ -211,7 +218,8 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
 
         const auto unix_time = unix_time_iso8601();
 
-        // move will throw if an error occurs
+        // Execute the move command and block until completion
+        // This will throw if an error occurs during motion
         robot_->move(std::move(waypoints), unix_time)->wait();
     }
 }

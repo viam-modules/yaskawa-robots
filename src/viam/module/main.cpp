@@ -11,7 +11,11 @@ using namespace viam::sdk;
 
 int main(int argc, char** argv) {
     const Instance instance;
-    boost::asio::io_context io_context(2);
+
+    // Create io_context with concurrency hint for handling async operations
+    // 2 threads: one for socket I/O, one for command processing
+    constexpr int k_io_context_concurrency_hint = 2;
+    boost::asio::io_context io_context(k_io_context_concurrency_hint);
 
     std::thread io_thread([&io_context]() {
             VIAM_SDK_LOG(info) << "io context running";

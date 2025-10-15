@@ -147,19 +147,24 @@ void example(asio::io_context& io_context) {
 
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
+            } catch (const std::exception& e) {
+                std::cerr << "Monitoring thread error: " << e.what() << std::endl;
             } catch (...) {
+                std::cerr << "Monitoring thread encountered unknown error" << std::endl;
             }
         }).detach();
         std::cout << "Reset errors " << robot->reset_errors().get() << std::endl;
         std::cout << "Turning servo power ON..." << std::endl;
-        while (1) {
+
+        // Example: Query cartesian position and convert to joint angles
+        for (int i = 0; i < 10; ++i) {
             auto getCarPos = robot->getCartPosition().get();
-            std::cout << "resp is " << CartesianPosition(getCarPos).toString() << std::endl;
-            ;
+            std::cout << "Cartesian position: " << CartesianPosition(getCarPos).toString() << std::endl;
+
             auto pos = CartesianPosition(getCarPos);
             auto cartPosToAngle = robot->cartPosToAngle(pos).get();
             auto ang = AnglePosition(cartPosToAngle);
-            std::cout << "resp is " << ang.toString() << std::endl;
+            std::cout << "Joint angles: " << ang.toString() << std::endl;
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
         //        auto pp = StatusMessage(robot->get_robot_position_velocity_torque().get());
@@ -185,7 +190,9 @@ int main() {
 
         std::cout << "Custom file and console logger initialized. Logs will be written to robot.log" << std::endl;
 
-        asio::io_context io_context(2);
+        // Create io_context with concurrency hint for handling async operations
+        constexpr int k_io_context_concurrency_hint = 2;
+        asio::io_context io_context(k_io_context_concurrency_hint);
 
         // Run the io_context in a separate thread to handle async operations
         std::thread io_thread([&io_context]() {

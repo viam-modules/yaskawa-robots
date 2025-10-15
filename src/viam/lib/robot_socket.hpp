@@ -35,6 +35,9 @@ extern "C" {
 
 namespace robot {
 
+/// Thread-safe asynchronous queue with Boost.Asio integration
+/// Supports async waiting for items to become available
+/// @tparam T The type of items stored in the queue
 template <typename T>
 class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
    private:
