@@ -1,19 +1,25 @@
+#include <algorithm>
 #include <boost/asio.hpp>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <list>
 #include <memory>
 #include <mutex>
 #include <ostream>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include "logger.hpp"
 #include "robot_socket.hpp"
 
 #include <Eigen/src/Core/Matrix.h>
+#include <Eigen/src/Core/util/Constants.h>
 #include <third_party/trajectories/Trajectory.h>
+#include <Eigen/Dense>
 
 using namespace robot;
 namespace asio = boost::asio;
@@ -108,21 +114,23 @@ class FileAndConsoleLogger : public viam::yaskawa::ILogger {
     bool show_timestamps_;
     std::ofstream file_;
 };
-void move_request(std::shared_ptr<YaskawaController> robot) {
-    std::list<Eigen::VectorXd> wpt;
-    wpt.emplace_back(Eigen::Vector<double, 6>({0, 0, 0, 0, 0, 0}));
-    wpt.emplace_back(Eigen::Vector<double, 6>({1, 0, 0, 1, 1.1, 1}));
-    wpt.emplace_back(Eigen::Vector<double, 6>({0, 0, 0, 0, 0, 0}));
-    auto ret = robot->move(std::move(wpt), "");
-    std::cout << "will wait" << std::endl;
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
 
-    ret->wait();
-    std::cout << "Done" << std::endl;
+std::vector<CartesianPosition> generateCirclePosition(double r, double lb, double hb, int steps, const CartesianPosition& seed) {
+    auto inc = (hb - lb) / (double)steps;
+    std::vector<CartesianPosition> out;
+    for (int i = 0; i < steps; i++) {
+        double x = r * cos(lb + inc * (double)i);
+        double y = r * sin(lb + inc * (double)i);
+        CartesianPosition pos(seed);
+        pos.x = x;
+        pos.y = y;
+        out.push_back(std::move(pos));
+    }
+    return out;
 }
 
 void example(asio::io_context& io_context) {
-    auto robot = std::make_shared<YaskawaController>(io_context, 0.17, 0.4, "10.1.11.177");
+    auto robot = std::make_shared<YaskawaController>(io_context, 1.8, 0.7, "10.1.11.177");
 
     try {
         std::cout << "Connecting to robot..." << std::endl;
@@ -130,22 +138,19 @@ void example(asio::io_context& io_context) {
         std::thread([=] {
             try {
                 while (1) {
-                    std::cout << "RUN" << std::endl;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    // std::cout << "RUN" << std::endl;
                     StatusMessage pos_vel_msg(robot->get_robot_position_velocity_torque().get());
                     std::cout << " Position [" << pos_vel_msg.position[0] << " " << pos_vel_msg.position[1] << " "
                               << pos_vel_msg.position[2] << " " << pos_vel_msg.position[3] << " " << pos_vel_msg.position[4] << " "
                               << pos_vel_msg.position[5] << "] Velocity [ " << pos_vel_msg.velocity[0] << " " << pos_vel_msg.velocity[1]
                               << " " << pos_vel_msg.velocity[2] << " " << pos_vel_msg.velocity[3] << " " << pos_vel_msg.velocity[4] << " "
-                              << pos_vel_msg.velocity[5] << "] PositionCorrected [" << pos_vel_msg.position[0] << " "
-                              << pos_vel_msg.position[1] << " " << pos_vel_msg.position[2] << " " << pos_vel_msg.position[3] << " "
-                              << pos_vel_msg.position[4] << " " << pos_vel_msg.position[5] << "]" << std::endl;
+                              << pos_vel_msg.velocity[5] << "]" << std::endl;
 
-                    RobotStatusMessage robotStatus(robot->get_robot_status().get());
-                    std::cout << " Robot status : Powered Drive" << robotStatus.drives_powered << " InMotion " << robotStatus.in_motion
-                              << " EStopped " << robotStatus.e_stopped << " Mode " << robotStatus.mode << std::endl;
+                    // RobotStatusMessage robotStatus(robot->get_robot_status().get());
+                    // std::cout << " Robot status : Powered Drive" << robotStatus.drives_powered << "  InMotion " << robotStatus.in_motion
+                    //           << " EStopped " << robotStatus.e_stopped << " Mode " << robotStatus.mode << std::endl;
                     robot->send_heartbeat().get();
-
-                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
             } catch (const std::exception& e) {
                 std::cerr << "Monitoring thread error: " << e.what() << std::endl;
@@ -154,26 +159,60 @@ void example(asio::io_context& io_context) {
             }
         }).detach();
         std::cout << "Reset errors " << robot->reset_errors().get() << std::endl;
-        std::cout << "Turning servo power ON..." << std::endl;
+        for (int i = 0; i < 1; i++) {
+            auto currentCartPositon = CartesianPosition(robot->getCartPosition().get());
+            StatusMessage pos_vel_msg(robot->get_robot_position_velocity_torque().get());
+            auto currentAnglePos = AnglePosition(pos_vel_msg.position);
+            // currentAnglePos.toRad()
+            auto currentAnglePosEigen = Eigen::VectorXd::Map(pos_vel_msg.position.data(), (long)pos_vel_msg.position.size()).eval();
+            auto circleWayPointCart = generateCirclePosition(809.647, -M_PI / 2, M_PI, 20, currentCartPositon);
+            auto circleWayPointAngle = std::list<Eigen::VectorXd>();
+            std::transform(
+                circleWayPointCart.begin(), circleWayPointCart.end(), std::back_inserter(circleWayPointAngle), [&](CartesianPosition& pos) {
+                    auto angle = AnglePosition(robot->cartPosToAngle(pos).get());
+                    angle.toRad();
+                    return Eigen::VectorXd::Map(angle.pos.data(), (long)angle.pos.size()).eval();
+                });
 
-        // Example: Query cartesian position and convert to joint angles
-        for (int i = 0; i < 10; ++i) {
-            auto getCarPos = robot->getCartPosition().get();
-            std::cout << "Cartesian position: " << CartesianPosition(getCarPos).toString() << std::endl;
+            auto it = std::min_element(circleWayPointAngle.begin(), circleWayPointAngle.end(), [&](const auto& a, const auto& b) -> bool {
+                return (a - currentAnglePosEigen).template lpNorm<Eigen::Infinity>() <
+                       (b - currentAnglePosEigen).template lpNorm<Eigen::Infinity>();
+            });
+            auto finalPoints = std::list<Eigen::VectorXd>();
+            finalPoints.push_back(currentAnglePosEigen);
+            std::copy(it, circleWayPointAngle.end(), std::back_inserter(finalPoints));
+            std::copy(circleWayPointAngle.rbegin(), circleWayPointAngle.rend(), std::back_inserter(finalPoints));
+            std::copy(circleWayPointAngle.begin(), it, std::back_inserter(finalPoints));
+            finalPoints.push_back(currentAnglePosEigen);
+            std::cout << "ccurrent pos " << currentAnglePos.toString() << " idx " << std::distance(circleWayPointAngle.begin(), it)
+                      << std::endl;
 
-            auto pos = CartesianPosition(getCarPos);
-            auto cartPosToAngle = robot->cartPosToAngle(pos).get();
-            auto ang = AnglePosition(cartPosToAngle);
-            std::cout << "Joint angles: " << ang.toString() << std::endl;
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            for (auto& p : finalPoints) {
+                std::cout << std::format(" P ({:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}) - P ({:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}) ",
+                                         p[0],
+                                         p[1],
+                                         p[2],
+                                         p[3],
+                                         p[4],
+                                         p[5],
+                                         p[0] * (180.0 / M_PI),
+                                         p[1] * (180.0 / M_PI),
+                                         p[2] * (180.0 / M_PI),
+                                         p[3] * (180.0 / M_PI),
+                                         p[4] * (180.0 / M_PI),
+                                         p[5] * (180.0 / M_PI))
+                          << std::endl;
+            }
+
+            std::cout << "Turning servo power ON..." << std::endl;
+            auto servo_response = robot->turn_servo_power_on().get();
+            std::cout << "Motion trajectory mode..." << std::endl;
+
+            robot->setMotionMode(1).get();
+            auto ret = robot->move(finalPoints, "");
+            std::cout << "will wait" << std::endl;
+            ret->wait();
         }
-        //        auto pp = StatusMessage(robot->get_robot_position_velocity_torque().get());
-
-        // auto servo_response = robot->turn_servo_power_on().get();
-        // std::cout << "Motion trajectory mode..." << std::endl;
-        // robot->setMotionMode(1).get();
-        // move_request(robot);
-        // std::cout << "Sending test trajectory " << servo_response << std::endl;
 
         robot->disconnect();
     } catch (const std::exception& e) {

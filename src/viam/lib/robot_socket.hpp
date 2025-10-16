@@ -175,6 +175,7 @@ struct CartesianPosition {
     double rx, ry, rz;
     CartesianPosition() = default;
     CartesianPosition(const Message&);
+    CartesianPosition(const CartesianPosition&);
     std::string toString() noexcept;
 };
 
@@ -184,6 +185,7 @@ struct AnglePosition {
     AnglePosition(const Message&);
     AnglePosition(std::vector<double> posRad);
     std::string toString() noexcept;
+    void toRad();
 };
 
 struct StatusMessage {

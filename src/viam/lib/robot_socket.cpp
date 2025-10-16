@@ -104,12 +104,23 @@ namespace robot {
 
 using namespace boost::asio;
 
+/// Parse cartesian position from a protocol message
+/// Validates message type and payload size before extracting position data
 CartesianPosition::CartesianPosition(const Message& msg) {
+    // Validate message type
     if (!(msg.header.message_type == MSG_GET_CART || msg.header.message_type == MSG_FROM_JOINT_TO_CART))
         throw std::runtime_error(
-            std::format("wrong message status type expected MSG_GET_CART or  MSG_FROM_JOINT_TO_CART had {}", msg.header.message_type));
+            std::format("wrong message status type expected MSG_GET_CART or MSG_FROM_JOINT_TO_CART had {}", msg.header.message_type));
+
+    // Validate payload size to prevent buffer overruns
     if (msg.payload.size() != sizeof(cartesian_payload_t))
-        throw std::runtime_error("incorrect status size");
+        throw std::runtime_error(std::format(
+            "incorrect cartesian payload size: expected {} bytes, got {} bytes", sizeof(cartesian_payload_t), msg.payload.size()));
+
+    // Safe deserialization: verify alignment before reinterpret_cast
+    if (reinterpret_cast<uintptr_t>(msg.payload.data()) % alignof(cartesian_payload_t) != 0)
+        throw std::runtime_error("cartesian payload data is not properly aligned");
+
     const cartesian_payload_t* cart_coord = reinterpret_cast<const cartesian_payload_t*>(msg.payload.data());
     x = cart_coord->cartesianCoord[0];
     y = cart_coord->cartesianCoord[1];
@@ -118,15 +129,33 @@ CartesianPosition::CartesianPosition(const Message& msg) {
     ry = cart_coord->cartesianCoord[4];
     rz = cart_coord->cartesianCoord[5];
 }
+CartesianPosition::CartesianPosition(const CartesianPosition& other) {
+    x = other.x;
+    y = other.y;
+    z = other.z;
+    rx = other.rx;
+    ry = other.ry;
+    rz = other.rz;
+}
 std::string CartesianPosition::toString() noexcept {
     return std::format(" ({},{},{}) - ({},{},{}) ", x, y, z, rx, ry, rz);
 }
-
+/// Parse joint angle position from a protocol message
+/// Validates message type and payload size before extracting angle data
 AnglePosition::AnglePosition(const Message& msg) {
+    // Validate message type
     if (!(msg.header.message_type == MSG_FROM_CART_TO_JOINT))
-        throw std::runtime_error(std::format("wrong message status type expected MSG_FROM_CART_TO_JOINT  had {}", msg.header.message_type));
+        throw std::runtime_error(std::format("wrong message status type expected MSG_FROM_CART_TO_JOINT had {}", msg.header.message_type));
+
+    // Validate payload size to prevent buffer overruns
     if (msg.payload.size() != sizeof(position_angle_degree_payload_t))
-        throw std::runtime_error("incorrect status size");
+        throw std::runtime_error(std::format(
+            "incorrect angle payload size: expected {} bytes, got {} bytes", sizeof(position_angle_degree_payload_t), msg.payload.size()));
+
+    // Safe deserialization: verify alignment before reinterpret_cast
+    if (reinterpret_cast<uintptr_t>(msg.payload.data()) % alignof(position_angle_degree_payload_t) != 0)
+        throw std::runtime_error("angle payload data is not properly aligned");
+
     const position_angle_degree_payload_t* retPos = reinterpret_cast<const position_angle_degree_payload_t*>(msg.payload.data());
     pos.reserve(8);
     boost::copy(retPos->positionAngleDegree, std::back_inserter(pos));
@@ -136,8 +165,20 @@ AnglePosition::AnglePosition(std::vector<double> posRad) {
     pos.reserve(8);
     boost::copy(posRad, std::back_inserter(pos));
 }
+void AnglePosition::toRad() {
+    std::transform(pos.begin(), pos.end(), pos.begin(), [](double d) -> double { return d * (M_PI / 180.0); });
+}
+/// Convert angle position to string representation
+/// Validates that the position vector has at least 6 dimensions before formatting
 std::string AnglePosition::toString() noexcept {
-    return std::format("{} {} {} {} {} {}", pos[0], pos[1], pos[2], pos[3], pos[4], pos[5]);
+    // Validate that we have at least 6 joint angles
+    if (pos.size() < 6) {
+        return std::format("AnglePosition[invalid: only {} dimensions, expected at least 6]", pos.size());
+    }
+
+    // Format the first 6 joint angles (standard for 6-axis robot)
+    return std::format(
+        "AnglePosition[{:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}] (degrees)", pos[0], pos[1], pos[2], pos[3], pos[4], pos[5]);
 }
 
 StatusMessage::StatusMessage(const Message& msg) {
@@ -867,27 +908,28 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     }
 
     // desired sampling frequency. if the duration is small we will oversample but that should be fine.
-    constexpr double k_sampling_freq_hz = 1;
+    constexpr double k_sampling_freq_hz = 3;
     sampling_func(points, duration, k_sampling_freq_hz, [&](const double t, const double) {
         auto p_eigen = trajectory.getPosition(t);
         auto v_eigen = trajectory.getVelocity(t);
         auto secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::duration<double>(t));
         auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(t) - secs);
-        LOGGING(info) << std::format("Time {}.{} - P ({},{},{},{},{},{}) -  V ({},{},{},{},{},{})",
-                                     secs,
-                                     nanos,
-                                     p_eigen[0],
-                                     p_eigen[1],
-                                     p_eigen[2],
-                                     p_eigen[3],
-                                     p_eigen[4],
-                                     p_eigen[5],
-                                     v_eigen[0],
-                                     v_eigen[1],
-                                     v_eigen[2],
-                                     v_eigen[3],
-                                     v_eigen[4],
-                                     v_eigen[5]);
+        LOGGING(info) << std::format(
+            "Time {}.{} - P ({:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}) -  V ({:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f})",
+            secs,
+            nanos,
+            p_eigen[0],
+            p_eigen[1],
+            p_eigen[2],
+            p_eigen[3],
+            p_eigen[4],
+            p_eigen[5],
+            v_eigen[0],
+            v_eigen[1],
+            v_eigen[2],
+            v_eigen[3],
+            v_eigen[4],
+            v_eigen[5]);
         return trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
                                   {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
                                   {0},

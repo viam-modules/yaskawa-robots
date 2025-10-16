@@ -139,15 +139,46 @@ typedef PACK(struct {
 	     double torque[NUMBER_OF_DOF];	// Torque tolerances
 	     }) tolerance_t;
 
-// Move goal payload structure (uses malloc for dynamic allocation)
-typedef struct {
-    uint32_t number_of_axes_controlled;
-    uint32_t group_index;
-    uint32_t trajectory_size;	// Number of trajectory points
-    trajectory_point_t *trajectory_data;	// Pointer to trajectory array (malloc allocated)
-    uint32_t tolerance_size;	// Number of tolerance points  
-    tolerance_t *tolerance_data;	// Pointer to tolerance array (malloc allocated)
-} move_goal_payload_t;
+// Move goal payload structure (packed for zero-copy access)
+// Wire format:
+// [number_of_axes_controlled:4][group_index:4][trajectory_size:4][trajectory_data:trajectory_size*sizeof(trajectory_point_t)]
+// [tolerance_size:4][tolerance_data:tolerance_size*sizeof(tolerance_t)]
+//
+// To access this structure from payload buffer:
+//   move_goal_payload_t* goal = (move_goal_payload_t*)payload;
+//   // Access fixed header fields
+//   goal->number_of_axes_controlled, goal->group_index, goal->trajectory_size
+//   // Access variable-length arrays using helper macros
+//   trajectory_point_t* traj = MOVE_GOAL_GET_TRAJECTORY(goal);
+//   uint32_t* tol_size_ptr = MOVE_GOAL_GET_TOLERANCE_SIZE_PTR(goal);
+//   tolerance_t* tol = MOVE_GOAL_GET_TOLERANCE(goal);
+typedef PACK(struct {
+    uint32_t number_of_axes_controlled;  // 4 bytes
+    uint32_t group_index;                // 4 bytes
+    uint32_t trajectory_size;            // 4 bytes - Number of trajectory points
+    // Variable-length data follows:
+    // trajectory_point_t trajectory_data[trajectory_size];
+    // uint32_t tolerance_size;
+    // tolerance_t tolerance_data[tolerance_size];
+}) move_goal_payload_t;
+
+// Helper macros to access variable-length fields
+#define MOVE_GOAL_GET_TRAJECTORY(goal_ptr) \
+    ((trajectory_point_t*)((uint8_t*)(goal_ptr) + sizeof(move_goal_payload_t)))
+
+#define MOVE_GOAL_GET_TOLERANCE_SIZE_PTR(goal_ptr) \
+    ((uint32_t*)((uint8_t*)(goal_ptr) + sizeof(move_goal_payload_t) + \
+                 (goal_ptr)->trajectory_size * sizeof(trajectory_point_t)))
+
+#define MOVE_GOAL_GET_TOLERANCE(goal_ptr) \
+    ((tolerance_t*)((uint8_t*)MOVE_GOAL_GET_TOLERANCE_SIZE_PTR(goal_ptr) + sizeof(uint32_t)))
+
+// Calculate total size of move_goal payload
+#define MOVE_GOAL_CALC_SIZE(traj_size, tol_size) \
+    (sizeof(move_goal_payload_t) + \
+     (traj_size) * sizeof(trajectory_point_t) + \
+     sizeof(uint32_t) + \
+     (tol_size) * sizeof(tolerance_t))
 
 // Motion mode payload structure
 typedef PACK(struct {
@@ -219,11 +250,18 @@ typedef struct {
     int err = val; \
     MSG_ERR_RESPONSE(err);})
 
-void free_move_goal(move_goal_payload_t * goal);
+// Validate and cast payload buffer to move_goal_payload_t
+// Returns pointer to move_goal structure within payload buffer, or NULL if invalid
+// NOTE: Returned pointer points into payload buffer - do NOT free it separately
 move_goal_payload_t *move_goal_from_payload(void *data, uint32_t size);
+
+// Deep copy a move_goal from source buffer to destination buffer
+// dest_buffer must be at least MOVE_GOAL_CALC_SIZE(src->trajectory_size, tolerance_size) bytes
+// Returns pointer to move_goal structure within dest_buffer
+move_goal_payload_t *move_goal_deep_copy(const move_goal_payload_t *src, void *dest_buffer, uint32_t dest_size);
+
 command_response_context_t *allocate_response_context(uint32_t length, uint8_t type);
 void free_command_response_context(command_response_context_t * ctx);
-move_goal_payload_t *allocate_move_goal(uint32_t trajectory_len, uint32_t tolerance_len);
 
 
 #endif				// PROTOCOL_H
