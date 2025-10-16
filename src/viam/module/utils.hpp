@@ -25,14 +25,4 @@ std::optional<T> find_config_attribute(const viam::sdk::ResourceConfig& cfg, con
     return std::make_optional(*val);
 }
 
-template <typename T>
-[[nodiscard]] constexpr decltype(auto) degrees_to_radians(T&& degrees) {
-    return std::forward<T>(degrees) * (M_PI / 180.0);
-}
-
-template <typename T>
-[[nodiscard]] constexpr decltype(auto) radians_to_degrees(T&& radians) {
-    return std::forward<T>(radians) * (180.0 / M_PI);
-}
-
 Eigen::Vector3d transform_vector(const Eigen::Vector3d& vector, const Eigen::Matrix3d& rotation_matrix);

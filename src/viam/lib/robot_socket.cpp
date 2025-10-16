@@ -65,16 +65,6 @@ constexpr const char* goal_state_to_string(goal_state_t state) {
     }
 }
 
-template <typename T>
-[[nodiscard]] constexpr decltype(auto) degrees_to_radians(T&& degrees) {
-    return std::forward<T>(degrees) * (M_PI / 180.0);
-}
-
-template <typename T>
-[[nodiscard]] constexpr decltype(auto) radians_to_degrees(T&& radians) {
-    return std::forward<T>(radians) * (180.0 / M_PI);
-}
-
 template <typename Func>
 void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
     if (duration_sec <= 0.0 || sampling_frequency_hz <= 0.0) {
@@ -662,6 +652,7 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, double
     : io_context_(io_context), host_(host), robot_state_(State()), speed_(speed), acceleration_(acceleration) {
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
+    group_index_ = 0;
 }
 
 std::future<void> YaskawaController::connect() {

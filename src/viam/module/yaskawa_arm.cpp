@@ -159,8 +159,8 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
 
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
-    auto speed = find_config_attribute<double>(config, "speed_rads_per_sec").value();
-    auto acceleration = find_config_attribute<double>(config, "acceleration_rads_per_sec").value();
+    auto speed = find_config_attribute<double>(config, "speed_rad_per_sec").value();
+    auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec").value();
 
     robot_ = std::make_unique<YaskawaController>(io_context_, speed, acceleration, host);
 
