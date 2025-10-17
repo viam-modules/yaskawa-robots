@@ -130,8 +130,7 @@ std::vector<CartesianPosition> generateCirclePosition(double r, double lb, doubl
 }
 
 void example(asio::io_context& io_context) {
-    auto robot = std::make_shared<YaskawaController>(io_context, 1.8, 0.7, "10.1.11.177");
-
+    auto robot = std::make_shared<YaskawaController>(io_context, 1.1, 1.1, "10.1.11.177");
     try {
         std::cout << "Connecting to robot..." << std::endl;
         robot->connect().get();
@@ -161,11 +160,12 @@ void example(asio::io_context& io_context) {
         std::cout << "Reset errors " << robot->reset_errors().get() << std::endl;
         for (int i = 0; i < 1; i++) {
             auto currentCartPositon = CartesianPosition(robot->getCartPosition().get());
+            currentCartPositon.z -= 100;
             StatusMessage pos_vel_msg(robot->get_robot_position_velocity_torque().get());
             auto currentAnglePos = AnglePosition(pos_vel_msg.position);
             // currentAnglePos.toRad()
             auto currentAnglePosEigen = Eigen::VectorXd::Map(pos_vel_msg.position.data(), (long)pos_vel_msg.position.size()).eval();
-            auto circleWayPointCart = generateCirclePosition(809.647, -M_PI / 2, M_PI, 20, currentCartPositon);
+            auto circleWayPointCart = generateCirclePosition(1009.647, -M_PI / 2, M_PI, 20, currentCartPositon);
             auto circleWayPointAngle = std::list<Eigen::VectorXd>();
             std::transform(
                 circleWayPointCart.begin(), circleWayPointCart.end(), std::back_inserter(circleWayPointAngle), [&](CartesianPosition& pos) {

@@ -821,9 +821,15 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
 
 std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     if (!robot_state_.IsReady()) {
+        reset_errors().get();
         throw std::runtime_error(std::format(
             "cannot move the robot state is e_stopped {} in error {}", robot_state_.e_stopped.load(), robot_state_.in_error.load()));
     }
+    // TODO check servo on and & errors
+
+    turn_servo_power_on().get();
+    setMotionMode(1).get();
+
     auto response = make_goal_(std::move(waypoints), unix_time).get();
     LOGGING(info) << response;
     if (response.header.message_type != MSG_GOAL_ACCEPTED) {

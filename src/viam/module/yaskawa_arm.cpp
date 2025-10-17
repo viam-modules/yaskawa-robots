@@ -246,7 +246,7 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
 }
 
 void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
-    auto next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size()));
+    auto next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size())).eval();
     auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg));
     std::list<Eigen::VectorXd> waypoints;
     waypoints.emplace_back(std::move(next_waypoint_rad));
