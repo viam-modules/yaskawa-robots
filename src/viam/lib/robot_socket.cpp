@@ -673,6 +673,17 @@ std::future<void> YaskawaController::connect() {
             // Wait for first status update to ensure connection is fully established
             get_robot_status().get();
 
+            heartbeat_ = std::thread([self = shared_from_this()]() {
+                try {
+                    while (1) {
+                        self->send_heartbeat().get();
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                    }
+                } catch (const std::exception& e) {
+                    LOGGING(error) << "heartbeat thread terminated with " << e.what();
+                }
+            });
+
             // Start listening for broadcast messages from robot
             broadcast_listener_->start();
 

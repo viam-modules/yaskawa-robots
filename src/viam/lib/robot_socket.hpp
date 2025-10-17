@@ -21,6 +21,7 @@
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -384,6 +385,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     double speed_;
     double acceleration_;
     uint32_t group_index_;
+    std::thread heartbeat_;
 
     bool is_status_command(message_type_t type) const;
     Message create_status_response_from_cache(message_type_t requested_type) const;

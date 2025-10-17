@@ -27,7 +27,7 @@ class YaskawaArm final : public Arm, public Reconfigurable {
     /// @brief Returns a registration for each model of ARM supported by this class.
     static std::vector<std::shared_ptr<ModelRegistration>> create_model_registrations(boost::asio::io_context& io_context);
 
-  explicit YaskawaArm(Model model, const Dependencies& deps, const ResourceConfig& cfg, boost::asio::io_context& io_context);
+    explicit YaskawaArm(Model model, const Dependencies& deps, const ResourceConfig& cfg, boost::asio::io_context& io_context);
     ~YaskawaArm() override;
 
     void reconfigure(const Dependencies& deps, const ResourceConfig& cfg) override;
@@ -98,7 +98,7 @@ class YaskawaArm final : public Arm, public Reconfigurable {
     const Model model_;
 
     std::shared_mutex config_mutex_;
-    std::unique_ptr<YaskawaController> robot_;
+    std::shared_ptr<YaskawaController> robot_;
     std::optional<double> threshold_;
     boost::asio::io_context& io_context_;
 };

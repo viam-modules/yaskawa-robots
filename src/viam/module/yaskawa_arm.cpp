@@ -60,6 +60,27 @@ namespace {
 
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 
+pose cartesian_position_to_pose(CartesianPosition&& pos) {
+    const double norm = std::hypot(degrees_to_radians(pos.rx), degrees_to_radians(pos.ry), degrees_to_radians(pos.rz));
+    if (std::isnan(norm) || (norm == 0)) {
+        throw std::invalid_argument("Cannot normalize with NaN or zero norm");
+    }
+    auto q = std::unique_ptr<void, decltype(&free_quaternion_memory)>(
+        quaternion_from_axis_angle(
+            degrees_to_radians(pos.rx) / norm, degrees_to_radians(pos.ry) / norm, degrees_to_radians(pos.rz) / norm, norm),
+        &free_quaternion_memory);
+    auto ov = std::unique_ptr<void, decltype(&free_orientation_vector_memory)>(orientation_vector_from_quaternion(q.get()),
+                                                                               &free_orientation_vector_memory);
+
+    auto components = std::unique_ptr<double[], decltype(&free_orientation_vector_components)>(orientation_vector_get_components(ov.get()),
+                                                                                               &free_orientation_vector_components);
+    auto position = coordinates{pos.x, pos.y, pos.z};
+    auto orientation = pose_orientation{components[0], components[1], components[2]};
+    auto theta = radians_to_degrees(components[3]);
+
+    return {position, orientation, theta};
+}
+
 std::string unix_time_iso8601() {
     namespace chrono = std::chrono;
     std::stringstream stream;
@@ -160,9 +181,9 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
     auto speed = find_config_attribute<double>(config, "speed_rad_per_sec").value();
-    auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec").value();
+    auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
 
-    robot_ = std::make_unique<YaskawaController>(io_context_, speed, acceleration, host);
+    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, host);
 
     constexpr int k_max_connection_try = 5;
     int connection_try = 0;
@@ -224,8 +245,16 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
     }
 }
 
-void YaskawaArm::move_to_joint_positions(const std::vector<double>&, const ProtoStruct&) {
-    throw std::runtime_error(std::format("move-to_joint_position is unimplemented for arm model {}", model_.to_string()));
+void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
+    auto next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size()));
+    auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg));
+    std::list<Eigen::VectorXd> waypoints;
+    waypoints.emplace_back(std::move(next_waypoint_rad));
+
+    const auto unix_time = unix_time_iso8601();
+
+    // move will throw if an error occurs
+    robot_->move(std::move(waypoints), unix_time)->wait();
 }
 
 YaskawaArm::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
@@ -233,7 +262,7 @@ YaskawaArm::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
 }
 
 pose YaskawaArm::get_end_position(const ProtoStruct&) {
-    throw std::runtime_error(std::format("get_end_position is unimplemented for arm model {}", model_.to_string()));
+    return cartesian_position_to_pose(CartesianPosition(robot_->getCartPosition().get()));
 }
 
 void YaskawaArm::stop(const ProtoStruct&) {
