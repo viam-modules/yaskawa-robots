@@ -1,0 +1,15 @@
+{
+  "$schema": "https://dl.viam.dev/module.schema.json",
+  "module_id": "viam:yaskawa-robots",
+  "visibility": "public",
+  "url": "https://github.com/viam-modules/yaskawa-robots",
+  "description": "C++ module for Yaskawa Robots arms",
+  "models": [
+    {
+      "api": "rdk:component:arm",
+      "model": "viam:yaskawa-robots:gp12",
+      "markdown_link": "README.md#configuration-and-usage"
+    }
+  ],
+  "entrypoint": "@CMAKE_INSTALL_BINDIR@/yaskawa-robots"
+}
