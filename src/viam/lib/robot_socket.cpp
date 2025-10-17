@@ -70,7 +70,7 @@ void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec
     if (duration_sec <= 0.0 || sampling_frequency_hz <= 0.0) {
         throw std::invalid_argument("duration_sec and sampling_frequency_hz are not both positive");
     }
-    static constexpr std::size_t k_max_samples = 1000000;
+    static constexpr std::size_t k_max_samples = 200;
     const auto putative_samples = duration_sec * sampling_frequency_hz;
     if (!std::isfinite(putative_samples) || putative_samples > k_max_samples) {
         throw std::invalid_argument("duration_sec and sampling_frequency_hz exceed the maximum allowable samples");
@@ -922,22 +922,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         auto v_eigen = trajectory.getVelocity(t);
         auto secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::duration<double>(t));
         auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(t) - secs);
-        LOGGING(info) << std::format(
-            "Time {}.{} - P ({:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}) -  V ({:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f})",
-            secs,
-            nanos,
-            p_eigen[0],
-            p_eigen[1],
-            p_eigen[2],
-            p_eigen[3],
-            p_eigen[4],
-            p_eigen[5],
-            v_eigen[0],
-            v_eigen[1],
-            v_eigen[2],
-            v_eigen[3],
-            v_eigen[4],
-            v_eigen[5]);
+
         return trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
                                   {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
                                   {0},
