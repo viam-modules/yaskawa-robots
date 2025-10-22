@@ -141,9 +141,9 @@
             "orientation": {
                 "type": "euler_angles",
                 "value": {
-                    "pitch": -1.570796327,
-                    "roll": 3.14159265359,
-                    "yaw": 0
+                    "roll": -3.14159265359,
+                    "pitch": 1.570796327,
+                    "yaw": 3.14159265359
                 }
             }
         }
