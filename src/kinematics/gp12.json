@@ -116,7 +116,7 @@
                 }
             }
         },
-                {
+        {
             "id": "link_6_t",
             "parent": "joint_6_t",
             "translation": {
@@ -132,6 +132,18 @@
                     "x": 97,
                     "y": 0,
                     "z": 0
+                }
+            }
+        },
+        {
+            "id": "joint_6_t-tool0",
+            "parent": "link_6_t",
+            "orientation": {
+                "type": "euler_angles",
+                "value": {
+                    "pitch": -1.570796327,
+                    "roll": 3.14159265359,
+                    "yaw": 0
                 }
             }
         }
@@ -197,7 +209,7 @@
             "max": 149.9,
             "min": -149.9
         },
-                {
+        {
             "id": "joint_6_t",
             "type": "revolute",
             "parent": "link_5_b",
@@ -209,7 +221,5 @@
             "max": 454.9,
             "min": -454.9
         }
-
-
     ]
 }
