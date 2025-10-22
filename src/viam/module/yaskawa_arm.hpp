@@ -4,6 +4,7 @@
 #include <list>
 #include <memory>
 #include <shared_mutex>
+#include <filesystem>
 
 #include <Eigen/Core>
 #include <thread>

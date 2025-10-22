@@ -176,9 +176,9 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     const auto module_executable_path = boost::dll::program_location();
     const auto module_executable_directory = module_executable_path.parent_path();
 
-    auto resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "yaskawa-robots");
+    resource_root_ = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "yaskawa-robots");
     VIAM_SDK_LOG(info) << "Yaskawa robots module executable found in `" << module_executable_path << "; resources will be found in `"
-                       << resource_root << "`";
+                       << resource_root_ << "`";
 
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
