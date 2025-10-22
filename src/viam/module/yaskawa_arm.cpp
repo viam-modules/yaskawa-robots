@@ -10,7 +10,9 @@
 #include <exception>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <future>
+#include <iomanip>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -174,9 +176,9 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     const auto module_executable_path = boost::dll::program_location();
     const auto module_executable_directory = module_executable_path.parent_path();
 
-    auto resource_root = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "yaskawa-robots");
+    resource_root_ = std::filesystem::canonical(module_executable_directory / k_relpath_bindir_to_datadir / "yaskawa-robots");
     VIAM_SDK_LOG(info) << "Yaskawa robots module executable found in `" << module_executable_path << "; resources will be found in `"
-                       << resource_root << "`";
+                       << resource_root_ << "`";
 
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
@@ -258,7 +260,26 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 }
 
 YaskawaArm::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
-    throw std::runtime_error(std::format("get_kinematics is unimplemented for arm model {}", model_.to_string()));
+    const std::shared_lock rlock{config_mutex_};
+
+    const auto sva_file_path = resource_root_ / "kinematics/gp12.json";
+
+    // Open the file in binary mode
+    std::ifstream sva_file(sva_file_path, std::ios::binary);
+    if (!sva_file) {
+        throw std::runtime_error(
+        boost::str(boost::format("unable to open kinematics file '%1%'") % sva_file_path.string()));
+    }
+
+    // Read the entire file into a vector without computing size ahead of time
+    std::vector<char> temp_bytes(std::istreambuf_iterator<char>(sva_file), {});
+    if (sva_file.bad()) {
+        throw std::runtime_error(
+        boost::str(boost::format("error reading kinematics file '%1%'") % sva_file_path.string()));
+    }
+
+    // Convert to unsigned char vector
+    return KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
 }
 
 pose YaskawaArm::get_end_position(const ProtoStruct&) {
