@@ -864,7 +864,12 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             } catch (...) {
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+
+        while (RobotStatusMessage(self->get_robot_status().get()).in_motion)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        
     }).detach();
     return handle;
 }
