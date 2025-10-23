@@ -864,6 +864,12 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             } catch (...) {
             }
         }
+
+        while (RobotStatusMessage(self->get_robot_status().get()).in_motion)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        
     }).detach();
     return handle;
 }
@@ -878,7 +884,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         waypoints.emplace_front(std::move(curr_waypoint_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
-        throw std::runtime_error("arm is already at the desired joint positions");
+        throw std::invalid_argument("arm is already at the desired joint positions");
     }
 
     // set velocity/acceleration constraints
