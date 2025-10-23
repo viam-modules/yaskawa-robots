@@ -878,7 +878,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         waypoints.emplace_front(std::move(curr_waypoint_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
-        throw std::runtime_error("arm is already at the desired joint positions");
+        throw std::invalid_argument("arm is already at the desired joint positions");
     }
 
     // set velocity/acceleration constraints

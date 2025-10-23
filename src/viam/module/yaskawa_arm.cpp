@@ -254,7 +254,14 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
     const auto unix_time = unix_time_iso8601();
 
     // move will throw if an error occurs
-    robot_->move(std::move(waypoints), unix_time)->wait();
+    try{
+        robot_->move(std::move(waypoints), unix_time)->wait();
+    } catch (const std::invalid_argument& e) {
+        VIAM_SDK_LOG(debug) << "arm is already at the desired joint positions";
+        return;
+    } catch(std::exception& ex){
+        throw ex;
+    }
 }
 
 YaskawaArm::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
