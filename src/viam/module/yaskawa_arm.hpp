@@ -4,6 +4,7 @@
 #include <list>
 #include <memory>
 #include <shared_mutex>
+#include <filesystem>
 
 #include <Eigen/Core>
 #include <thread>
@@ -101,4 +102,5 @@ class YaskawaArm final : public Arm, public Reconfigurable {
     std::shared_ptr<YaskawaController> robot_;
     std::optional<double> threshold_;
     boost::asio::io_context& io_context_;
+    std::filesystem::path resource_root_;
 };
