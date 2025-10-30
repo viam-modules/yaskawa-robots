@@ -109,3 +109,12 @@ wget https://storage.googleapis.com/packages.viam.com/apps/viam-server/viam-serv
 chmod +x ./viam-server-stable-x86_64
 ./viam-server-stable-x86_64 -config {PATH_TO_VIAM_CONFIG}
 ```
+
+
+## Kinematics
+
+Our kinematics representation of the arm can be found at `src/kinematics`. Right now we only support the `gp12` model.
+We would like to call out that `link_4_r` is modeled as a smaller geometry than necessary and might lead to collions when there should be none. If a user runs into this please raise immediately and we will issue an appropriate fix.
+The motivation for shrinking the geometry is described next. Suppose a user has attached an end effector attachment. If it is long or wide enough and `joint_4_r` has a rotation of `-90` degrees this will result in a collision between the attachment and `link_4_r`.
+Below is an image to show exactly how undermodeled the geometry is at this point in time.
+<img width="1143" height="556" alt="image" src="https://github.com/user-attachments/assets/c2ea200c-ff88-4c65-833b-da59421dadab" />
