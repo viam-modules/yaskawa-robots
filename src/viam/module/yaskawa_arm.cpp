@@ -285,7 +285,7 @@ pose YaskawaArm::get_end_position(const ProtoStruct&) {
     
     // The controller is what provides is with a cartesian position. However, it is not aware of the
     // base links position, i.e. that is translated up by some amount.
-    const auto model_name = model_.name();
+    const auto model_name = model_.model_name();
     if (model_name == "gp12") {
         // For the gp12 model that translation is 450mm
         // https://github.com/ros-industrial/motoman/blob/noetic-devel/motoman_gp12_support/urdf/gp12_macro.xacro#L154
