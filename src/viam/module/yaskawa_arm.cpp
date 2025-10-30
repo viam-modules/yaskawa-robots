@@ -279,7 +279,22 @@ YaskawaArm::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
 }
 
 pose YaskawaArm::get_end_position(const ProtoStruct&) {
-    return cartesian_position_to_pose(CartesianPosition(robot_->getCartPosition().get()));
+    const std::shared_lock rlock{config_mutex_};
+
+    auto p = cartesian_position_to_pose(CartesianPosition(robot_->getCartPosition().get()));
+    
+    // The controller is what provides is with a cartesian position. However, it is not aware of the
+    // base links position, i.e. that is translated up by some amount.
+    const auto model_name = model_.name();
+    if (model_name == "gp12") {
+        // For the gp12 model that translation is 450mm
+        // https://github.com/ros-industrial/motoman/blob/noetic-devel/motoman_gp12_support/urdf/gp12_macro.xacro#L154
+        p.coordinates.z += 450;
+    } else {
+      VIAM_SDK_LOG(warn) << "No pose offset applied for model: " << model_name;
+    }
+
+    return p;
 }
 
 void YaskawaArm::stop(const ProtoStruct&) {
