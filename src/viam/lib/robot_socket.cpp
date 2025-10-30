@@ -230,6 +230,24 @@ RobotStatusMessage::RobotStatusMessage(const Message& msg) {
     std::memcpy(&size, data, sizeof(size));
 }
 
+CheckGroupMessage::CheckGroupMessage(const Message& msg) {
+    if (msg.header.message_type != MSG_CHECK_GROUP)
+        throw std::runtime_error(
+            std::format("wrong message status type expected {} had {}", (int)MSG_CHECK_GROUP, msg.header.message_type));
+
+    // Validate payload size to prevent buffer overruns
+    if (msg.payload.size() != sizeof(boolean_payload_t))
+        throw std::runtime_error(std::format(
+            "incorrect boolean_payload_t payload size: expected {} bytes, got {} bytes", sizeof(boolean_payload_t), msg.payload.size()));
+
+    // Safe deserialization: verify alignment before reinterpret_cast
+    if (reinterpret_cast<uintptr_t>(msg.payload.data()) % alignof(boolean_payload_t) != 0)
+        throw std::runtime_error("boolean payload data is not properly aligned");
+
+    const boolean_payload_t* group_check = reinterpret_cast<const boolean_payload_t*>(msg.payload.data());
+    is_valid = group_check->value;
+}
+
 Message::Message(message_type_t type, std::vector<uint8_t> data) {
     header.magic_number = PROTOCOL_MAGIC_NUMBER;
     header.version = PROTOCOL_VERSION;
@@ -712,6 +730,11 @@ void YaskawaController::disconnect() {
     }
 }
 
+uint32_t YaskawaController::get_group_index(){
+    return group_index_;
+}
+
+
 std::future<Message> YaskawaController::get_goal_status(int32_t goal_id) {
     std::vector<uint8_t> payload(sizeof(cancel_goal_payload_t));
     cancel_goal_payload_t* req = reinterpret_cast<cancel_goal_payload_t*>(payload.data());
@@ -980,6 +1003,13 @@ std::future<Message> YaskawaController::angleToCartPos(AnglePosition& pos) {
 
 bool YaskawaController::is_status_command(message_type_t type) const {
     return type == MSG_ROBOT_POSITION_VELOCITY_TORQUE || type == MSG_ROBOT_STATUS;
+}
+
+std::future<Message> YaskawaController::checkGroupIndex() {
+    std::vector<uint8_t> payload(sizeof(group_id_t));
+    group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
+    id->group_id = (int32_t)group_index_;
+    return tcp_socket_->send_request(Message(MSG_CHECK_GROUP, payload));
 }
 
 // GoalStatusMessage implementation

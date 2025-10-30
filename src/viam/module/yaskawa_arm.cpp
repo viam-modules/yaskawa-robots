@@ -213,6 +213,12 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
                 throw;
         }
     }
+    if (!CheckGroupMessage(robot_->checkGroupIndex().get()).is_valid){
+        robot_->disconnect();
+        std::ostringstream buffer;
+        buffer << std::format("group_index {} is not available on the arm", robot_->get_group_index());
+        throw std::invalid_argument(buffer.str());
+    }
 }
 void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     const std::unique_lock wlock{config_mutex_};

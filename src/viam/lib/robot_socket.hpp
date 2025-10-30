@@ -226,6 +226,12 @@ struct RobotStatusMessage {
     RobotStatusMessage(const Message&);
 };
 
+struct CheckGroupMessage {
+    bool is_valid; 
+    CheckGroupMessage() = default;
+    CheckGroupMessage(const Message&);
+};
+
 struct State {
     std::atomic<bool> e_stopped;
     std::atomic<bool> in_motion;
@@ -354,6 +360,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     std::future<void> connect();
     void disconnect();
+    uint32_t get_group_index();
 
     std::future<Message> send_test_trajectory();
     std::future<Message> turn_servo_power_on();
@@ -372,6 +379,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::future<Message> getCartPosition();
     std::future<Message> cartPosToAngle(CartesianPosition& pos);
     std::future<Message> angleToCartPos(AnglePosition& pos);
+    std::future<Message> checkGroupIndex();
 
     std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
 
