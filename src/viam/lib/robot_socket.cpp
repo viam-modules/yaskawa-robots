@@ -830,10 +830,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     turn_servo_power_on().get();
     setMotionMode(1).get();
 
-    // promise for the goal state
     auto promise = std::promise<goal_state_t>();
 
-    // future for the 
     auto make_goal_future = make_goal_(std::move(waypoints), unix_time);
     if (!make_goal_future.valid()){
         LOGGING(debug) << "already at desired position";
