@@ -802,6 +802,7 @@ std::future<Message> YaskawaController::get_robot_position_velocity_torque() {
 }
 
 std::future<Message> YaskawaController::get_robot_status() {
+    //TODO(RSDK-12470) account for group_id_ in request
     std::promise<Message> promise;
     auto future = promise.get_future();
     if (!udp_socket_) {
@@ -968,6 +969,7 @@ std::future<Message> YaskawaController::echo_trajectory() {
     return tcp_socket_->send_request(Message(MSG_ECHO_TRAJECTORY));
 }
 std::future<Message> YaskawaController::stop() {
+    //TODO(RSDK-12470) account for group_id_ in request
     return tcp_socket_->send_request(Message(MSG_STOP_MOTION));
 }
 std::future<Message> YaskawaController::getCartPosition() {
