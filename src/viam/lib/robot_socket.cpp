@@ -245,7 +245,7 @@ CheckGroupMessage::CheckGroupMessage(const Message& msg) {
         throw std::runtime_error("boolean payload data is not properly aligned");
 
     const boolean_payload_t* group_check = reinterpret_cast<const boolean_payload_t*>(msg.payload.data());
-    is_valid = group_check->value;
+    is_known_group = group_check->value;
 }
 
 Message::Message(message_type_t type, std::vector<uint8_t> data) {

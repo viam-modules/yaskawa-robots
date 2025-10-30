@@ -128,13 +128,13 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     }
 
     auto group_id = find_config_attribute<double>(cfg, "group_index");
-    constexpr int k_min_group_number = 0;
-    constexpr int k_max_group_number = 2; // only 3 arms total for the control box
-    if (group_id && (*group_id < k_min_group_number || *group_id > k_max_group_number || floor(*group_id) != *group_id)){
+    constexpr int k_min_group_index = 0;
+    constexpr int k_max_group_index = 2; // only 3 arms total for the control box
+    if (group_id && (*group_id < k_min_group_index || *group_id > k_max_group_index || floor(*group_id) != *group_id)){
         throw std::invalid_argument(
             std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
-                        k_min_group_number,
-                        k_max_group_number,
+                        k_min_group_index,
+                        k_max_group_index,
                         *group_id));
     }
 
@@ -213,7 +213,7 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
                 throw;
         }
     }
-    if (!CheckGroupMessage(robot_->checkGroupIndex().get()).is_valid){
+    if (!CheckGroupMessage(robot_->checkGroupIndex().get()).is_known_group){
         robot_->disconnect();
         std::ostringstream buffer;
         buffer << std::format("group_index {} is not available on the arm", robot_->get_group_index());
