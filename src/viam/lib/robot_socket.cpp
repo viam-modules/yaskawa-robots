@@ -833,6 +833,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     auto promise = std::promise<goal_state_t>();
 
     auto make_goal_future = make_goal_(std::move(waypoints), unix_time);
+    // we only want to move if the future was valid
     if (!make_goal_future.valid()){
         LOGGING(debug) << "already at desired position";
         promise.set_value(GOAL_STATE_SUCCEEDED);
@@ -885,7 +886,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         waypoints.emplace_front(std::move(curr_waypoint_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
-        // throw std::invalid_argument("arm is already at the desired joint positions");
+        // return an invalid future to signify no motion needs to be done
         return std::future<Message>();
     }
 
