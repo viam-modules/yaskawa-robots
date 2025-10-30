@@ -873,13 +873,6 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             } catch (...) {
             }
         }
-
-        // wait until the arm reports that motion has completed
-        while (RobotStatusMessage(self->get_robot_status().get()).in_motion)
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-        
     }).detach();
     return handle;
 }
