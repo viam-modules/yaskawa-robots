@@ -120,14 +120,22 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     constexpr double k_min_threshold = 0.0;
     constexpr double k_max_threshold = 2 * M_PI;
     if (threshold && (*threshold < k_min_threshold || *threshold > k_max_threshold)) {
-        std::stringstream sstream;
-        sstream << "attribute `reject_move_request_threshold_rad` should be between " << k_min_threshold << " and " << k_max_threshold
-                << ", it is : " << *threshold << " degrees";
         throw std::invalid_argument(
             std::format("attribute `reject_move_request_threshold_rad` should be between {} and {} , it is : {} radians",
                         k_min_threshold,
                         k_max_threshold,
                         *threshold));
+    }
+
+    auto group_id = find_config_attribute<double>(cfg, "group_index");
+    constexpr int k_min_group_number = 0;
+    constexpr int k_max_group_number = 2; // only 3 arms total for the control box
+    if (group_id && (*group_id < k_min_group_number || *group_id > k_max_group_number || floor(*group_id) != *group_id)){
+        throw std::invalid_argument(
+            std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
+                        k_min_group_number,
+                        k_max_group_number,
+                        *group_id));
     }
 
     return {};
@@ -184,8 +192,9 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
 
     auto speed = find_config_attribute<double>(config, "speed_rad_per_sec").value();
     auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
+    auto group_id = find_config_attribute<double>(config, "group_index");
 
-    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, host);
+    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, std::move(group_id), host);
 
     constexpr int k_max_connection_try = 5;
     int connection_try = 0;

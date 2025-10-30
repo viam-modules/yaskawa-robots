@@ -648,11 +648,15 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
 }
 
 // Robot Implementation
-YaskawaController::YaskawaController(boost::asio::io_context& io_context, double speed, double acceleration, const std::string& host)
-    : io_context_(io_context), host_(host), robot_state_(State()), speed_(speed), acceleration_(acceleration) {
+YaskawaController::YaskawaController(boost::asio::io_context& io_context, double speed, double acceleration, std::optional<double> group_index, const std::string& host)
+    : io_context_(io_context), host_(host), robot_state_(State()), speed_(speed), acceleration_(acceleration){
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
-    group_index_ = 0;
+    if (group_index) {
+        group_index_ = static_cast<std::uint32_t>(group_index.value());
+    } else{
+        group_index_ = 0;
+    }
 }
 
 std::future<void> YaskawaController::connect() {
