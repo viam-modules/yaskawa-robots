@@ -1037,8 +1037,9 @@ void GoalRequestHandle::cancel() {
 }
 
 bool GoalRequestHandle::is_done() const {
-    return (completion_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready && !RobotStatusMessage(controller_->get_robot_status().get()).in_motion);
-}
+  return (completion_future_.wait_for(std::chrono::milliseconds(0)) ==
+              std::future_status::ready &&
+          !RobotStatusMessage(controller_->get_robot_status().get()).in_motion);}
 
 State::State() : e_stopped(false), in_motion(false), drive_powered(false), in_error(true) {}
 void State::UpdateState(RobotStatusMessage msg) {
