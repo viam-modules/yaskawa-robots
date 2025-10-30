@@ -1,0 +1,4 @@
+.vscode/*
+logs
+build
+module.tar.gz
