@@ -830,7 +830,16 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     turn_servo_power_on().get();
     setMotionMode(1).get();
 
-    auto response = make_goal_(std::move(waypoints), unix_time).get();
+    auto promise = std::promise<goal_state_t>();
+
+    auto make_goal_future = make_goal_(std::move(waypoints), unix_time);
+    // we only want to move if the future was valid
+    if (!make_goal_future.valid()){
+        LOGGING(debug) << "already at desired position";
+        promise.set_value(GOAL_STATE_SUCCEEDED);
+        return std::make_unique<GoalRequestHandle>(0, shared_from_this(), promise.get_future());
+    }
+    auto response = make_goal_future.get();
     LOGGING(info) << response;
     if (response.header.message_type != MSG_GOAL_ACCEPTED) {
         throw std::runtime_error(std::format("Expected MSG_GOAL_ACCEPTED, got {}", (int)response.header.message_type));
@@ -841,7 +850,6 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             "Invalid goal accepted payload size expected {} got {}", sizeof(goal_accepted_payload_t), (int)response.payload.size()));
     }
     const goal_accepted_payload_t* accepted = reinterpret_cast<const goal_accepted_payload_t*>(response.payload.data());
-    auto promise = std::promise<goal_state_t>();
     auto handle = std::make_unique<GoalRequestHandle>(accepted->goal_id, shared_from_this(), promise.get_future());
 
     std::thread([promise = std::move(promise), self = shared_from_this(), goal_id = accepted->goal_id]() mutable {
@@ -878,7 +886,8 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         waypoints.emplace_front(std::move(curr_waypoint_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
-        throw std::runtime_error("arm is already at the desired joint positions");
+        // return an invalid future to signify no motion needs to be done
+        return std::future<Message>();
     }
 
     // set velocity/acceleration constraints
@@ -1028,8 +1037,9 @@ void GoalRequestHandle::cancel() {
 }
 
 bool GoalRequestHandle::is_done() const {
-    return completion_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
-}
+  return (completion_future_.wait_for(std::chrono::milliseconds(0)) ==
+              std::future_status::ready &&
+          !RobotStatusMessage(controller_->get_robot_status().get()).in_motion);}
 
 State::State() : e_stopped(false), in_motion(false), drive_powered(false), in_error(true) {}
 void State::UpdateState(RobotStatusMessage msg) {
