@@ -49,7 +49,7 @@
 #include "utils.hpp"
 
 // this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
-extern "C" void* quaternion_from_axis_angle(double x, double y, double z, double theta);
+extern "C" void* quaternion_from_euler_angles(double rx, double ry, double rz);
 extern "C" void free_quaternion_memory(void* q);
 
 extern "C" void* orientation_vector_from_quaternion(void* q);
@@ -63,13 +63,9 @@ namespace {
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 
 pose cartesian_position_to_pose(CartesianPosition&& pos) {
-    const double norm = std::hypot(degrees_to_radians(pos.rx), degrees_to_radians(pos.ry), degrees_to_radians(pos.rz));
-    if (std::isnan(norm) || (norm == 0)) {
-        throw std::invalid_argument("Cannot normalize with NaN or zero norm");
-    }
     auto q = std::unique_ptr<void, decltype(&free_quaternion_memory)>(
-        quaternion_from_axis_angle(
-            degrees_to_radians(pos.rx) / norm, degrees_to_radians(pos.ry) / norm, degrees_to_radians(pos.rz) / norm, norm),
+        quaternion_from_euler_angles(
+            degrees_to_radians(pos.rx), degrees_to_radians(pos.ry), degrees_to_radians(pos.rz)),
         &free_quaternion_memory);
     auto ov = std::unique_ptr<void, decltype(&free_orientation_vector_memory)>(orientation_vector_from_quaternion(q.get()),
                                                                                &free_orientation_vector_memory);
@@ -283,7 +279,22 @@ YaskawaArm::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
 }
 
 pose YaskawaArm::get_end_position(const ProtoStruct&) {
-    return cartesian_position_to_pose(CartesianPosition(robot_->getCartPosition().get()));
+    const std::shared_lock rlock{config_mutex_};
+
+    auto p = cartesian_position_to_pose(CartesianPosition(robot_->getCartPosition().get()));
+    
+    // The controller is what provides is with a cartesian position. However, it is not aware of the
+    // base links position, i.e. that is translated up by some amount.
+    const auto model_name = model_.model_name();
+    if (model_name == "gp12") {
+        // For the gp12 model that translation is 450mm
+        // https://github.com/ros-industrial/motoman/blob/noetic-devel/motoman_gp12_support/urdf/gp12_macro.xacro#L154
+        p.coordinates.z += 450;
+    } else {
+      VIAM_SDK_LOG(warn) << "No pose offset applied for model: " << model_name;
+    }
+
+    return p;
 }
 
 void YaskawaArm::stop(const ProtoStruct&) {
