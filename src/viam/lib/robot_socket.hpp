@@ -360,7 +360,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     std::future<void> connect();
     void disconnect();
-    uint32_t get_group_index();
+    uint32_t get_group_index() const;
 
     std::future<Message> send_test_trajectory();
     std::future<Message> turn_servo_power_on();

@@ -730,7 +730,7 @@ void YaskawaController::disconnect() {
     }
 }
 
-uint32_t YaskawaController::get_group_index(){
+uint32_t YaskawaController::get_group_index() const{
     return group_index_;
 }
 
