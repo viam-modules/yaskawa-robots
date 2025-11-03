@@ -354,7 +354,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     explicit YaskawaController(boost::asio::io_context& io_context,
                                double speed,
                                double acceleration,
-                               std::optional<uint32_t> group_index,
+                               uint32_t group_index,
                                const std::string& host = "127.0.0.1");
     ~YaskawaController() = default;
 

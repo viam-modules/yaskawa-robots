@@ -193,9 +193,9 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
 
     auto speed = find_config_attribute<double>(config, "speed_rad_per_sec").value();
     auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
-    auto group_index = boost::numeric_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index"));
+    auto group_index = static_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));
 
-    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, std::move(group_index), host);
+    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, group_index, host);
 
     constexpr int k_max_connection_try = 5;
     int connection_try = 0;
