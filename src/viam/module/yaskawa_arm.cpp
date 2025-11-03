@@ -127,15 +127,16 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
                         *threshold));
     }
 
-    auto group_id = find_config_attribute<double>(cfg, "group_index");
+    auto group_index = find_config_attribute<double>(cfg, "group_index");
     constexpr int k_min_group_index = 0;
-    constexpr int k_max_group_index = 2; // only 3 arms total for the control box
-    if (group_id && (*group_id < k_min_group_index || *group_id > k_max_group_index || floor(*group_id) != *group_id)){
+    //TODO(RSDK-12470) support multiple arms
+    constexpr int k_max_group_index = 0;
+    if (group_index && (*group_index < k_min_group_index || *group_index > k_max_group_index || floor(*group_index) != *group_index)){
         throw std::invalid_argument(
             std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
                         k_min_group_index,
                         k_max_group_index,
-                        *group_id));
+                        *group_index));
     }
 
     return {};
@@ -192,9 +193,9 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
 
     auto speed = find_config_attribute<double>(config, "speed_rad_per_sec").value();
     auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
-    auto group_id = find_config_attribute<double>(config, "group_index");
+    auto group_index = boost::numeric_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index"));
 
-    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, std::move(group_id), host);
+    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, std::move(group_index), host);
 
     constexpr int k_max_connection_try = 5;
     int connection_try = 0;
@@ -216,7 +217,7 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     if (!CheckGroupMessage(robot_->checkGroupIndex().get()).is_known_group){
         robot_->disconnect();
         std::ostringstream buffer;
-        buffer << std::format("group_index {} is not available on the arm", robot_->get_group_index());
+        buffer << std::format("group_index {} is not available on the arm controller", robot_->get_group_index());
         throw std::invalid_argument(buffer.str());
     }
 }
