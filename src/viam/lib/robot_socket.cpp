@@ -964,7 +964,7 @@ std::future<Message> YaskawaController::echo_trajectory() {
     return tcp_socket_->send_request(Message(MSG_ECHO_TRAJECTORY));
 }
 std::future<Message> YaskawaController::stop() {
-    //TODO(RSDK-12470) account for group_id_ in request
+    //TODO(RSDK-12470) account for group_index_ in request
     return tcp_socket_->send_request(Message(MSG_STOP_MOTION));
 }
 std::future<Message> YaskawaController::getCartPosition() {
