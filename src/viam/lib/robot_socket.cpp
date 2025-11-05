@@ -184,6 +184,7 @@ std::string AnglePosition::toString() noexcept {  // NOLINT(bugprone-exception-e
         return std::format("AnglePosition[invalid: only {} dimensions, expected at least 6]", pos.size());
     }
 
+    // Format the first 6 joint angles (standard for 6-axis robot)
     return std::format(
         "AnglePosition[{:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}] (degrees)", pos[0], pos[1], pos[2], pos[3], pos[4], pos[5]);
 }
