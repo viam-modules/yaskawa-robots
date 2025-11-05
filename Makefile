@@ -19,10 +19,10 @@ default: module.tar.gz
 
 # format the source code
 format:
-	ls src/viam/*/*.*pp | xargs clang-format -i --style=file
+	ls src/viam/*/*.*pp | xargs clang-format-19 -i --style=file
 
 format-check:
-	ls src/viam/*/*.*pp | xargs clang-format -i --style=file --dry-run --Werror
+	ls src/viam/*/*.*pp | xargs clang-format-19 -i --style=file --dry-run --Werror
 
 configure:
 	cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -G Ninja
