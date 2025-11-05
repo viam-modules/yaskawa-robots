@@ -79,7 +79,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     // immediately so in our case emplace returns void
     template <class... Args>
     void emplace(Args&&... args) {
-        if (closed_){
+        if (closed_) {
             throw std::runtime_error("cannot emplace on closed queue");
         }
 
@@ -90,7 +90,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         }
     }
     void push(T&& value) {
-        if (closed_){
+        if (closed_) {
             throw std::runtime_error("cannot push on closed queue");
         }
         {
@@ -100,7 +100,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         }
     }
     void push(const T& value) {
-        if (closed_){
+        if (closed_) {
             throw std::runtime_error("cannot push on closed queue");
         }
         {
@@ -111,7 +111,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     }
 
     T pop() {
-        if (closed_){
+        if (closed_) {
             throw std::runtime_error("cannot pop on closed queue");
         }
         {
@@ -124,7 +124,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
 
     template <typename CompletionToken>
     auto async_pop(CompletionToken&& token) {
-        if (closed_){
+        if (closed_) {
             throw std::runtime_error("cannot pop on closed queue");
         }
         return boost::asio::async_initiate<CompletionToken, void(std::optional<T>, boost::system::error_code ec)>(
@@ -177,7 +177,7 @@ struct Message {
     std::vector<uint8_t> payload;
 
     Message() = default;
-    Message(message_type_t type, const std::vector<uint8_t> &data = {});
+    Message(message_type_t type, const std::vector<uint8_t>& data = {});
     Message(protocol_header_t header, std::vector<uint8_t> payload);
     Message(Message&& msg) noexcept;
     Message(const Message&);
@@ -237,7 +237,7 @@ struct State {
     std::atomic<bool> drive_powered;
     std::atomic<bool> in_error;
     explicit State();
-    void UpdateState(const RobotStatusMessage &msg);
+    void UpdateState(const RobotStatusMessage& msg);
     bool IsReady() const;
 };
 

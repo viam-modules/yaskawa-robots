@@ -95,7 +95,7 @@ void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec
     samples.push_back(f(duration_sec, step));
 }
 
-} // namespace
+}  // namespace
 
 namespace robot {
 
@@ -105,7 +105,7 @@ using namespace boost::asio;
 /// Validates message type and payload size before extracting position data
 CartesianPosition::CartesianPosition(const Message& msg) {
     // Validate message type
-    if ((msg.header.message_type != MSG_GET_CART && msg.header.message_type != MSG_FROM_JOINT_TO_CART)){
+    if ((msg.header.message_type != MSG_GET_CART && msg.header.message_type != MSG_FROM_JOINT_TO_CART)) {
         throw std::runtime_error(
             std::format("wrong message status type expected MSG_GET_CART or "
                         "MSG_FROM_JOINT_TO_CART had {}",
@@ -113,13 +113,13 @@ CartesianPosition::CartesianPosition(const Message& msg) {
     }
 
     // Validate payload size to prevent buffer overruns
-    if (msg.payload.size() != sizeof(cartesian_payload_t)){
+    if (msg.payload.size() != sizeof(cartesian_payload_t)) {
         throw std::runtime_error(std::format(
             "incorrect cartesian payload size: expected {} bytes, got {} bytes", sizeof(cartesian_payload_t), msg.payload.size()));
     }
 
     // Safe deserialization: verify alignment before reinterpret_cast
-    if (reinterpret_cast<uintptr_t>(msg.payload.data()) % alignof(cartesian_payload_t) != 0){
+    if (reinterpret_cast<uintptr_t>(msg.payload.data()) % alignof(cartesian_payload_t) != 0) {
         throw std::runtime_error("cartesian payload data is not properly aligned");
     }
 
@@ -141,26 +141,25 @@ CartesianPosition::CartesianPosition(const CartesianPosition& other) {
 }
 std::string CartesianPosition::toString() const noexcept {
     std::ostringstream buffer;
-        buffer << " (" << x << "," << y << "," << z << ") - (" << rx << "," << ry << "," << rz << ") ";
+    buffer << " (" << x << "," << y << "," << z << ") - (" << rx << "," << ry << "," << rz << ") ";
     return buffer.str();
 }
 /// Parse joint angle position from a protocol message
 /// Validates message type and payload size before extracting angle data
 AnglePosition::AnglePosition(const Message& msg) {
     // Validate message type
-    if (!(msg.header.message_type == MSG_FROM_CART_TO_JOINT)){
+    if (!(msg.header.message_type == MSG_FROM_CART_TO_JOINT)) {
         throw std::runtime_error(std::format("wrong message status type expected MSG_FROM_CART_TO_JOINT had {}", msg.header.message_type));
     }
 
     // Validate payload size to prevent buffer overruns
-    if (msg.payload.size() != sizeof(position_angle_degree_payload_t)){
+    if (msg.payload.size() != sizeof(position_angle_degree_payload_t)) {
         throw std::runtime_error(std::format(
             "incorrect angle payload size: expected {} bytes, got {} bytes", sizeof(position_angle_degree_payload_t), msg.payload.size()));
     }
 
-
     // Safe deserialization: verify alignment before reinterpret_cast
-    if (reinterpret_cast<uintptr_t>(msg.payload.data()) % alignof(position_angle_degree_payload_t) != 0){
+    if (reinterpret_cast<uintptr_t>(msg.payload.data()) % alignof(position_angle_degree_payload_t) != 0) {
         throw std::runtime_error("angle payload data is not properly aligned");
     }
 
@@ -179,22 +178,22 @@ void AnglePosition::toRad() {
 /// Convert angle position to string representation
 /// Validates that the position vector has at least 6 dimensions before
 /// formatting
-std::string AnglePosition::toString() noexcept { //NOLINT(bugprone-exception-escape)
+std::string AnglePosition::toString() noexcept {  // NOLINT(bugprone-exception-escape)
     // Validate that we have at least 6 joint angles
     if (pos.size() < 6) {
         return std::format("AnglePosition[invalid: only {} dimensions, expected at least 6]", pos.size());
     }
 
     return std::format(
-        "AnglePosition[{:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}] (degrees)", pos[0], pos[1], pos[2], pos[3], pos[4], pos[5]); 
+        "AnglePosition[{:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}] (degrees)", pos[0], pos[1], pos[2], pos[3], pos[4], pos[5]);
 }
 
 StatusMessage::StatusMessage(const Message& msg) {
-    if (msg.header.message_type != MSG_ROBOT_POSITION_VELOCITY_TORQUE){
+    if (msg.header.message_type != MSG_ROBOT_POSITION_VELOCITY_TORQUE) {
         throw std::runtime_error(
             std::format("wrong message status type expected {} had {}", (int)MSG_ROBOT_POSITION_VELOCITY_TORQUE, msg.header.message_type));
     }
-    if (msg.header.payload_length != msg.payload.size()){
+    if (msg.header.payload_length != msg.payload.size()) {
         throw std::runtime_error("incorrect status size");
     }
 
@@ -209,17 +208,19 @@ StatusMessage::StatusMessage(const Message& msg) {
     boost::copy(arrays | boost::adaptors::sliced(MAX_AXES, static_cast<long>(2) * MAX_AXES), std::back_inserter(velocity));
 
     torque.reserve(MAX_AXES);
-    boost::copy(arrays | boost::adaptors::sliced(static_cast<long>(2) * MAX_AXES, static_cast<long>(3) * MAX_AXES), std::back_inserter(torque));
+    boost::copy(arrays | boost::adaptors::sliced(static_cast<long>(2) * MAX_AXES, static_cast<long>(3) * MAX_AXES),
+                std::back_inserter(torque));
     position_corrected.reserve(MAX_AXES);
-    boost::copy(arrays | boost::adaptors::sliced(static_cast<long>(3) * MAX_AXES, static_cast<long>(4) * MAX_AXES), std::back_inserter(position_corrected));
+    boost::copy(arrays | boost::adaptors::sliced(static_cast<long>(3) * MAX_AXES, static_cast<long>(4) * MAX_AXES),
+                std::back_inserter(position_corrected));
 }
 
 RobotStatusMessage::RobotStatusMessage(const Message& msg) {
-    if (msg.header.message_type != MSG_ROBOT_STATUS){
+    if (msg.header.message_type != MSG_ROBOT_STATUS) {
         throw std::runtime_error(
             std::format("wrong message status type expected {} had {}", (int)MSG_ROBOT_STATUS, msg.header.message_type));
     }
-    if (msg.header.payload_length != msg.payload.size()){
+    if (msg.header.payload_length != msg.payload.size()) {
         throw std::runtime_error("incorrect status size");
     }
 
@@ -252,7 +253,7 @@ RobotStatusMessage::RobotStatusMessage(const Message& msg) {
     std::memcpy(&size, data, sizeof(size));
 }
 
-Message::Message(message_type_t type, const std::vector<uint8_t> &data) {
+Message::Message(message_type_t type, const std::vector<uint8_t>& data) {
     header.magic_number = PROTOCOL_MAGIC_NUMBER;
     header.version = PROTOCOL_VERSION;
     header.message_type = static_cast<uint8_t>(type);
@@ -271,7 +272,7 @@ Message::Message(const Message& msg) : payload(msg.payload) {
     std::memcpy(&header, &msg.header, sizeof(protocol_header_t));
 }
 Message& Message::operator=(const Message& other) {
-    if (this == &other){
+    if (this == &other) {
         return *this;
     }
     this->header = other.header;
@@ -455,7 +456,7 @@ void UdpRobotSocket::disconnect() {
 }
 
 void UdpRobotSocket::get_status(std::promise<Message> promise) {
-    if (!connected_){
+    if (!connected_) {
         throw std::runtime_error("socket is disconnected");
     }
     const std::unique_lock lock(status_mutex_);
@@ -478,8 +479,8 @@ void UdpRobotSocket::get_status(std::promise<Message> promise) {
 }
 
 void UdpRobotSocket::get_robot_status(std::promise<Message> promise) {
-    if (!connected_){
-        throw std::runtime_error("socket is disconnected");        
+    if (!connected_) {
+        throw std::runtime_error("socket is disconnected");
     }
     const std::unique_lock lock(status_mutex_);
 
@@ -876,7 +877,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
         try {
             while (1) {
                 auto status_msg = GoalStatusMessage(self->get_goal_status(goal_id).get());
-                if (status_msg.state == GOAL_STATE_ACTIVE){
+                if (status_msg.state == GOAL_STATE_ACTIVE) {
                     continue;
                 }
                 if (status_msg.state == GOAL_STATE_SUCCEEDED) {
@@ -1013,10 +1014,10 @@ bool YaskawaController::is_status_command(message_type_t type) {
 
 // GoalStatusMessage implementation
 GoalStatusMessage::GoalStatusMessage(const Message& msg) {
-    if (msg.header.message_type != MSG_GOAL_STATUS){
+    if (msg.header.message_type != MSG_GOAL_STATUS) {
         throw std::runtime_error(std::format("wrong message type expected {} had {}", (int)MSG_GOAL_STATUS, msg.header.message_type));
     }
-    if (msg.payload.size() != sizeof(goal_status_payload_t)){
+    if (msg.payload.size() != sizeof(goal_status_payload_t)) {
         throw std::runtime_error(
             std::format("incorrect goal status payload size expected {} had {}", sizeof(goal_status_payload_t), msg.payload.size()));
     }
@@ -1067,7 +1068,7 @@ bool GoalRequestHandle::is_done() const {
 }
 
 State::State() : e_stopped(false), in_motion(false), drive_powered(false), in_error(true) {}
-void State::UpdateState(const RobotStatusMessage &msg) {
+void State::UpdateState(const RobotStatusMessage& msg) {
     e_stopped.store(msg.e_stopped);
     in_error.store(msg.in_error);
     drive_powered.store(msg.drives_powered);

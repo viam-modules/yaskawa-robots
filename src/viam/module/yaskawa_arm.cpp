@@ -130,7 +130,6 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
 
 }  // namespace
 
-
 const ModelFamily& YaskawaArm::model_family() {
     static const auto family = ModelFamily{"viam", "yaskawa-robots"};
     return family;
@@ -153,7 +152,7 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
             model,
             // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is
             // fixed by ModelRegistration.
-            [&, model](const auto &deps, const auto &config) { return std::make_shared<YaskawaArm>(model, deps, config, io_context); },
+            [&, model](const auto& deps, const auto& config) { return std::make_shared<YaskawaArm>(model, deps, config, io_context); },
             [](auto const& config) { return validate_config_(config); });
     };
 
@@ -199,7 +198,7 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
         } catch (std::exception& ex) {
             VIAM_SDK_LOG(error) << std::format(
                 "connection {} out of {} failed because {}", connection_try, k_max_connection_try, ex.what());
-            if (k_max_connection_try == connection_try){
+            if (k_max_connection_try == connection_try) {
                 throw std::runtime_error("failed to configure yaskawa arm: exceeded maximum connection attempts");
             }
         }

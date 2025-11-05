@@ -105,10 +105,10 @@ std::string Logger::get_timestamp() {
     localtime_s(&tm_buf, &now_time_t);
 #else
     auto* result_ptr = localtime_r(&now_time_t, &tm_buf);
-        if (result_ptr == NULL) {
-            perror("Error converting time with localtime_r");  // Print error message based on errno
-            return "Error converting time with localtime_r";   // Indicate error
-        }
+    if (result_ptr == NULL) {
+        perror("Error converting time with localtime_r");  // Print error message based on errno
+        return "Error converting time with localtime_r";   // Indicate error
+    }
 #endif
 
     oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << now_ms.count();
