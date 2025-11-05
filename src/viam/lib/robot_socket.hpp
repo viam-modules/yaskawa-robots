@@ -74,9 +74,9 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
 
    public:
     explicit AsyncQueue(boost::asio::any_io_executor exec) : executor_(exec) {}
-    // This is somewhat an issue to use standard emplace if there is a pending op, indeed
-    // c++17 wants a reference back however we are removing the item immediately so in our case emplace
-    // returns void
+    // This is somewhat an issue to use standard emplace if there is a pending op,
+    // indeed c++17 wants a reference back however we are removing the item
+    // immediately so in our case emplace returns void
     template <class... Args>
     void emplace(Args&&... args) {
         if (closed_)
@@ -155,8 +155,8 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         std::scoped_lock lock{mutex_};
         while (!pending_.empty()) {
             auto ops = std::move(pending_.front());
-            // probably incorrect, if io_context is already cancelled we might not be able to post
-            // todo look for a better implementation
+            // probably incorrect, if io_context is already cancelled we might not be
+            // able to post todo look for a better implementation
             boost::asio::post(
                 executor_, [handler = std::move(ops.handler_)]() mutable { handler(std::nullopt, boost::asio::error::operation_aborted); });
             pending_.pop();

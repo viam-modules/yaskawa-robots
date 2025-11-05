@@ -45,7 +45,8 @@
 constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 
 // Minimum timestep between trajectory points (seconds)
-// Determined experimentally: the arm appears to error when given timesteps ~2e-5 and lower
+// Determined experimentally: the arm appears to error when given timesteps
+// ~2e-5 and lower
 constexpr double k_min_timestep_sec = 1e-2;
 
 constexpr const char* goal_state_to_string(goal_state_t state) {
@@ -73,7 +74,9 @@ void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec
     static constexpr std::size_t k_max_samples = 200;
     const auto putative_samples = duration_sec * sampling_frequency_hz;
     if (!std::isfinite(putative_samples) || putative_samples > k_max_samples) {
-        throw std::invalid_argument("duration_sec and sampling_frequency_hz exceed the maximum allowable samples");
+        throw std::invalid_argument(
+            "duration_sec and sampling_frequency_hz exceed "
+            "the maximum allowable samples");
     }
     // Calculate the number of samples needed. this will always be at least 2.
     const auto num_samples = static_cast<std::size_t>(std::ceil(putative_samples) + 1);
@@ -100,7 +103,9 @@ CartesianPosition::CartesianPosition(const Message& msg) {
     // Validate message type
     if (!(msg.header.message_type == MSG_GET_CART || msg.header.message_type == MSG_FROM_JOINT_TO_CART))
         throw std::runtime_error(
-            std::format("wrong message status type expected MSG_GET_CART or MSG_FROM_JOINT_TO_CART had {}", msg.header.message_type));
+            std::format("wrong message status type expected MSG_GET_CART or "
+                        "MSG_FROM_JOINT_TO_CART had {}",
+                        msg.header.message_type));
 
     // Validate payload size to prevent buffer overruns
     if (msg.payload.size() != sizeof(cartesian_payload_t))
@@ -159,7 +164,8 @@ void AnglePosition::toRad() {
     std::transform(pos.begin(), pos.end(), pos.begin(), [](double d) -> double { return d * (M_PI / 180.0); });
 }
 /// Convert angle position to string representation
-/// Validates that the position vector has at least 6 dimensions before formatting
+/// Validates that the position vector has at least 6 dimensions before
+/// formatting
 std::string AnglePosition::toString() noexcept {
     // Validate that we have at least 6 joint angles
     if (pos.size() < 6) {
@@ -544,7 +550,8 @@ Message UdpRobotSocket::parse_message(const std::vector<uint8_t>& buffer) {
 
     if (message.header.magic_number != PROTOCOL_MAGIC_NUMBER || message.header.version != PROTOCOL_VERSION) {
         throw std::runtime_error(
-            std::format("invalid message: wrong magic number or version expected magic : {:X} version: {} got magic: {:X} version: {}",
+            std::format("invalid message: wrong magic number or version expected magic : {:X} "
+                        "version: {} got magic: {:X} version: {}",
                         PROTOCOL_MAGIC_NUMBER,
                         PROTOCOL_VERSION,
                         (int)message.header.magic_number,
@@ -734,9 +741,11 @@ std::future<Message> YaskawaController::setMotionMode(uint8_t mode) {
 
 std::future<Message> YaskawaController::send_test_trajectory() {
     if (!robot_state_.IsReady()) {
-        throw std::runtime_error(std::format("cannot send test trajectory the robot state is e_stopped {} in error {}",
-                                             robot_state_.e_stopped.load(),
-                                             robot_state_.in_error.load()));
+        throw std::runtime_error(
+            std::format("cannot send test trajectory the robot state is e_stopped {} in error "
+                        "{}",
+                        robot_state_.e_stopped.load(),
+                        robot_state_.in_error.load()));
     }
     return tcp_socket_->send_request(Message(MSG_TEST_TRAJECTORY_COMMAND));
 }
@@ -915,7 +924,8 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         throw std::runtime_error(std::format("duration {} lower than {} assuming arm is at goal", duration, k_min_timestep_sec));
     }
 
-    // desired sampling frequency. if the duration is small we will oversample but that should be fine.
+    // desired sampling frequency. if the duration is small we will oversample but
+    // that should be fine.
     constexpr double k_sampling_freq_hz = 3;
     sampling_func(points, duration, k_sampling_freq_hz, [&](const double t, const double) {
         auto p_eigen = trajectory.getPosition(t);

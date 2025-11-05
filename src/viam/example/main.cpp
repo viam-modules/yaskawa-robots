@@ -147,8 +147,11 @@ void example(asio::io_context& io_context) {
                               << pos_vel_msg.velocity[5] << "]" << std::endl;
 
                     // RobotStatusMessage robotStatus(robot->get_robot_status().get());
-                    // std::cout << " Robot status : Powered Drive" << robotStatus.drives_powered << "  InMotion " << robotStatus.in_motion
-                    //           << " EStopped " << robotStatus.e_stopped << " Mode " << robotStatus.mode << std::endl;
+                    // std::cout << " Robot status : Powered Drive" <<
+                    // robotStatus.drives_powered << "  InMotion " <<
+                    // robotStatus.in_motion
+                    //           << " EStopped " << robotStatus.e_stopped << " Mode " <<
+                    //           robotStatus.mode << std::endl;
                     robot->send_heartbeat().get();
                 }
             } catch (const std::exception& e) {
@@ -188,19 +191,21 @@ void example(asio::io_context& io_context) {
                       << std::endl;
 
             for (auto& p : finalPoints) {
-                std::cout << std::format(" P ({:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}) - P ({:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}) ",
-                                         p[0],
-                                         p[1],
-                                         p[2],
-                                         p[3],
-                                         p[4],
-                                         p[5],
-                                         p[0] * (180.0 / M_PI),
-                                         p[1] * (180.0 / M_PI),
-                                         p[2] * (180.0 / M_PI),
-                                         p[3] * (180.0 / M_PI),
-                                         p[4] * (180.0 / M_PI),
-                                         p[5] * (180.0 / M_PI))
+                std::cout << std::format(
+                                 " P ({:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}) - P "
+                                 "({:.3f},{:.3f},{:.3f},{:.3f},{:.3f},{:.3f}) ",
+                                 p[0],
+                                 p[1],
+                                 p[2],
+                                 p[3],
+                                 p[4],
+                                 p[5],
+                                 p[0] * (180.0 / M_PI),
+                                 p[1] * (180.0 / M_PI),
+                                 p[2] * (180.0 / M_PI),
+                                 p[3] * (180.0 / M_PI),
+                                 p[4] * (180.0 / M_PI),
+                                 p[5] * (180.0 / M_PI))
                           << std::endl;
             }
 
@@ -227,7 +232,9 @@ int main() {
         auto custom_logger = std::make_shared<FileAndConsoleLogger>("robot.log", viam::yaskawa::LogLevel::DEBUG);
         viam::yaskawa::set_global_logger(custom_logger);
 
-        std::cout << "Custom file and console logger initialized. Logs will be written to robot.log" << std::endl;
+        std::cout << "Custom file and console logger initialized. Logs will be "
+                     "written to robot.log"
+                  << std::endl;
 
         // Create io_context with concurrency hint for handling async operations
         constexpr int k_io_context_concurrency_hint = 2;

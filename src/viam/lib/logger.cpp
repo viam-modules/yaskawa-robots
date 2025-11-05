@@ -11,11 +11,7 @@ namespace yaskawa {
 // ============================================================================
 
 LogStream::LogStream(ILogger* logger, LogLevel level)
-    : logger_(logger)
-    , level_(level)
-    , stream_()
-    , active_(logger && level >= logger->get_min_level()) {
-}
+    : logger_(logger), level_(level), stream_(), active_(logger && level >= logger->get_min_level()) {}
 
 LogStream::~LogStream() {
     if (active_ && logger_) {
@@ -24,10 +20,7 @@ LogStream::~LogStream() {
 }
 
 LogStream::LogStream(LogStream&& other) noexcept
-    : logger_(other.logger_)
-    , level_(other.level_)
-    , stream_(std::move(other.stream_))
-    , active_(other.active_) {
+    : logger_(other.logger_), level_(other.level_), stream_(std::move(other.stream_)), active_(other.active_) {
     other.active_ = false;  // Prevent the moved-from object from logging
 }
 
@@ -51,9 +44,7 @@ LogStream& LogStream::operator=(LogStream&& other) noexcept {
 // Logger Implementation
 // ============================================================================
 
-Logger::Logger(LogLevel min_level)
-    : min_level_(min_level) {
-}
+Logger::Logger(LogLevel min_level) : min_level_(min_level) {}
 
 void Logger::set_min_level(LogLevel level) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -110,17 +101,16 @@ std::string Logger::get_timestamp() const {
 
     // Use std::put_time for thread-safe time formatting (C++20)
     std::tm tm_buf;
-    #if defined(_WIN32)
-        localtime_s(&tm_buf, &now_time_t);
-    #else
-        localtime_r(&now_time_t, &tm_buf);
-    #endif
+#if defined(_WIN32)
+    localtime_s(&tm_buf, &now_time_t);
+#else
+    localtime_r(&now_time_t, &tm_buf);
+#endif
 
-    oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S")
-        << '.' << std::setfill('0') << std::setw(3) << now_ms.count();
+    oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << now_ms.count();
 
     return oss.str();
 }
 
-} // namespace yaskawa
-} // namespace viam
+}  // namespace yaskawa
+}  // namespace viam
