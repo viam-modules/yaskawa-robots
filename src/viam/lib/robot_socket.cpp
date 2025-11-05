@@ -294,7 +294,11 @@ TcpRobotSocket::TcpRobotSocket(boost::asio::io_context& io_context, const std::s
     : RobotSocketBase(io_context, host, port), socket_(io_context), request_queue_(io_context.get_executor()) {}
 
 TcpRobotSocket::~TcpRobotSocket() {
-    disconnect();
+    try {
+        disconnect_tcp();
+    } catch (const std::exception& ex) {
+        LOGGING(error) << "error while closing TCP connection" << ex.what();
+    }
 }
 
 std::future<void> TcpRobotSocket::connect() {
@@ -337,7 +341,7 @@ std::future<Message> TcpRobotSocket::send_request(Message request) {
     return future;
 }
 
-void TcpRobotSocket::disconnect() {
+void TcpRobotSocket::disconnect_tcp() {
     if (connected_) {
         connected_ = false;
         running_ = false;
@@ -351,10 +355,13 @@ void TcpRobotSocket::disconnect() {
         }
     }
 }
+void TcpRobotSocket::disconnect() {
+    disconnect_tcp();
+}
 
 awaitable<void> TcpRobotSocket::process_requests() {
-    while (running_) {
-        auto [result, error] = co_await request_queue_.async_pop(boost::asio::use_awaitable);
+    while (running_) {  // NOLINT(clang-analyzer-core.NullDereference)
+        auto [result, error] = co_await request_queue_.async_pop(boost::asio::use_awaitable);  // NOLINT(clang-analyzer-core.NullDereference)
         if (error) {
             throw std::runtime_error("boost error " + error.message() + " while waiting for a request");
         }
@@ -414,7 +421,11 @@ UdpRobotSocket::UdpRobotSocket(boost::asio::io_context& io_context, State& state
     : RobotSocketBase(io_context, "127.0.0.1", 0), robot_state_(state), socket_(io_context) {}
 
 UdpRobotSocket::~UdpRobotSocket() {
-    disconnect();
+    try {
+        disconnect_udp();
+    } catch (const std::exception& ex) {
+        LOGGING(error) << "error while closing UDP connection" << ex.what();
+    }
 }
 
 std::future<void> UdpRobotSocket::connect() {
@@ -444,7 +455,7 @@ std::future<Message> UdpRobotSocket::send_request(Message /* request */) {
     return future;
 }
 
-void UdpRobotSocket::disconnect() {
+void UdpRobotSocket::disconnect_udp() {
     if (connected_) {
         connected_ = false;
         running_ = false;
@@ -454,6 +465,10 @@ void UdpRobotSocket::disconnect() {
             socket_.close();
         }
     }
+}
+
+void UdpRobotSocket::disconnect() {
+    disconnect_udp();
 }
 
 void UdpRobotSocket::get_status(std::promise<Message> promise) {

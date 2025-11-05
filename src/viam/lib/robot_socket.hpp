@@ -127,7 +127,9 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         if (closed_) {
             throw std::runtime_error("cannot pop on closed queue");
         }
-        return boost::asio::async_initiate<CompletionToken, void(std::optional<T>, boost::system::error_code ec)>(
+        return boost::asio::async_initiate<CompletionToken,
+                                           void(std::optional<T>,
+                                                boost::system::error_code ec)>(  // NOLINT(clang-analyzer-core.NullDereference)
             [this](auto&& handler) mutable {
                 const std::scoped_lock lock{mutex_};
                 if (!queue_.empty()) {
@@ -282,6 +284,7 @@ class TcpRobotSocket : public RobotSocketBase {
     std::future<void> connect() override;
     std::future<Message> send_request(Message request) override;
     void disconnect() override;
+    void disconnect_tcp();
 
    private:
     using tcp = boost::asio::ip::tcp;
@@ -303,6 +306,7 @@ class UdpRobotSocket : public RobotSocketBase {
     std::future<void> connect() override;
     std::future<Message> send_request(Message request) override;
     void disconnect() override;
+    void disconnect_udp();
 
     void get_status(std::promise<Message>);
     void get_robot_status(std::promise<Message>);
