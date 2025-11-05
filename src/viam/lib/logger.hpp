@@ -14,7 +14,7 @@ namespace viam {
 namespace yaskawa {
 
 /// Log levels in ascending order of severity
-enum class LogLevel { DEBUG, INFO, WARNING, ERROR, CRITICAL };
+enum class LogLevel : std::uint8_t { DEBUG, INFO, WARNING, ERROR, CRITICAL };
 
 /// Convert log level to string representation
 constexpr std::string_view to_string(LogLevel level) noexcept {
@@ -155,7 +155,7 @@ class Logger : public ILogger {
     std::string format_message(LogLevel level, std::string_view message) const;
 
     /// Get current timestamp as string
-    std::string get_timestamp() const;
+    static std::string get_timestamp();
 
     mutable std::mutex mutex_;
     LogLevel min_level_;
@@ -164,7 +164,7 @@ class Logger : public ILogger {
 
 /// Create a shared pointer to a Logger instance
 /// This is the recommended way to create logger instances
-inline std::shared_ptr<ILogger> make_logger(LogLevel min_level = LogLevel::INFO) {
+inline std::shared_ptr<ILogger> make_logger(LogLevel min_level = LogLevel::INFO) noexcept {
     return std::make_shared<Logger>(min_level);
 }
 
@@ -176,7 +176,7 @@ inline std::shared_ptr<ILogger> global_logger = make_logger();
 /// Set the global logger instance
 /// This allows users to provide custom logger implementations
 /// Thread-safe: should be called before any logging operations
-inline void set_global_logger(std::shared_ptr<ILogger> logger) {
+inline void set_global_logger(const std::shared_ptr<ILogger>& logger) {
     if (logger) {
         global_logger = logger;
     }

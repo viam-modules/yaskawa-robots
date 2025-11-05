@@ -19,7 +19,7 @@ int main(int argc, char** argv) {
 
     std::thread io_thread([&io_context]() {
         VIAM_SDK_LOG(info) << "io context running";
-        boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_guard(io_context.get_executor());
+        const boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_guard(io_context.get_executor());
         io_context.run();
         VIAM_SDK_LOG(info) << "IO thread shutting down \n";
     });

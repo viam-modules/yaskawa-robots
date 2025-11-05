@@ -11,7 +11,7 @@ namespace yaskawa {
 // ============================================================================
 
 LogStream::LogStream(ILogger* logger, LogLevel level)
-    : logger_(logger), level_(level), stream_(), active_(logger && level >= logger->get_min_level()) {}
+    : logger_(logger), level_(level), active_(logger && level >= logger->get_min_level()) {}
 
 LogStream::~LogStream() {
     if (active_ && logger_) {
@@ -47,22 +47,22 @@ LogStream& LogStream::operator=(LogStream&& other) noexcept {
 Logger::Logger(LogLevel min_level) : min_level_(min_level) {}
 
 void Logger::set_min_level(LogLevel level) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::lock_guard<std::mutex> lock(mutex_);
     min_level_ = level;
 }
 
 LogLevel Logger::get_min_level() const noexcept {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::lock_guard<std::mutex> lock(mutex_);
     return min_level_;
 }
 
 void Logger::set_show_timestamps(bool show) noexcept {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::lock_guard<std::mutex> lock(mutex_);
     show_timestamps_ = show;
 }
 
 bool Logger::get_show_timestamps() const noexcept {
-    std::lock_guard<std::mutex> lock(mutex_);
+    const std::lock_guard<std::mutex> lock(mutex_);
     return show_timestamps_;
 }
 
@@ -71,11 +71,11 @@ void Logger::write_log(LogLevel level, std::string_view message) {
         return;
     }
 
-    std::string formatted = format_message(level, message);
+    const std::string formatted = format_message(level, message);
 
     // Lock only for the actual output operation
-    std::lock_guard<std::mutex> lock(mutex_);
-    std::cout << formatted << std::endl;
+    const std::lock_guard<std::mutex> lock(mutex_);
+    std::cout << formatted << '\n';
 }
 
 std::string Logger::format_message(LogLevel level, std::string_view message) const {
@@ -90,7 +90,7 @@ std::string Logger::format_message(LogLevel level, std::string_view message) con
     return oss.str();
 }
 
-std::string Logger::get_timestamp() const {
+std::string Logger::get_timestamp() {
     using namespace std::chrono;
 
     auto now = system_clock::now();
@@ -104,7 +104,11 @@ std::string Logger::get_timestamp() const {
 #if defined(_WIN32)
     localtime_s(&tm_buf, &now_time_t);
 #else
-    localtime_r(&now_time_t, &tm_buf);
+    auto* result_ptr = localtime_r(&now_time_t, &tm_buf);
+        if (result_ptr == NULL) {
+            perror("Error converting time with localtime_r");  // Print error message based on errno
+            return "Error converting time with localtime_r";   // Indicate error
+        }
 #endif
 
     oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << now_ms.count();

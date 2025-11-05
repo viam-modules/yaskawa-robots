@@ -41,7 +41,7 @@ typedef struct {
 
 
 // Message types
-typedef enum {
+typedef enum { // NOLINT(performance-enum-size)
     MSG_TEST_TRAJECTORY_COMMAND = 0x01,
     MSG_TURN_SERVO_POWER_ON = 0x02,
     MSG_HEARTBEAT = 0x03,
@@ -69,7 +69,7 @@ typedef enum {
 } message_type_t;
 
 // Goal states
-typedef enum {
+typedef enum { // NOLINT(performance-enum-size)
     GOAL_STATE_PENDING = 0,	// Goal accepted but not started
     GOAL_STATE_ACTIVE = 1,	// Goal in progress
     GOAL_STATE_SUCCEEDED = 2,	// Goal reached successfully
@@ -108,11 +108,11 @@ typedef PACK(struct {
 typedef PACK(struct {
 	     int64_t ts;	// 8 bytes - timestamp
 	     int mode;		// 4 bytes - robot mode
-	     _Bool e_stopped;	// 1 byte - estop status
-	     _Bool drives_powered;	// 1 byte - drive power status  
-	     _Bool motion_possible;	// 1 byte - motion enabled
-	     _Bool in_motion;	// 1 byte - motion status
-	     _Bool in_error;	// 1 byte - error status
+	     bool e_stopped;	// 1 byte - estop status
+	     bool drives_powered;	// 1 byte - drive power status  
+	     bool motion_possible;	// 1 byte - motion enabled
+	     bool in_motion;	// 1 byte - motion status
+	     bool in_error;	// 1 byte - error status
 	     int error_codes[MAX_ALARM_COUNT + 1];	// (16+1)*4 = 68 bytes - error codes
 	     int size;		// 4 bytes - number of active error codes
 	     }) robot_status_payload_t;

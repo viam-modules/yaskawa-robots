@@ -73,14 +73,15 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     }
 
    public:
-    explicit AsyncQueue(boost::asio::any_io_executor exec) : executor_(exec) {}
+    explicit AsyncQueue(boost::asio::any_io_executor exec) : executor_(std::move(exec)) {}
     // This is somewhat an issue to use standard emplace if there is a pending op,
     // indeed c++17 wants a reference back however we are removing the item
     // immediately so in our case emplace returns void
     template <class... Args>
     void emplace(Args&&... args) {
-        if (closed_)
+        if (closed_){
             throw std::runtime_error("cannot emplace on closed queue");
+        }
 
         {
             std::scoped_lock lock{mutex_};
@@ -89,29 +90,32 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         }
     }
     void push(T&& value) {
-        if (closed_)
+        if (closed_){
             throw std::runtime_error("cannot push on closed queue");
+        }
         {
-            std::scoped_lock lock{mutex_};
+            const std::scoped_lock lock{mutex_};
             queue_.push(std::move(value));
             notify_one();
         }
     }
     void push(const T& value) {
-        if (closed_)
+        if (closed_){
             throw std::runtime_error("cannot push on closed queue");
+        }
         {
-            std::scoped_lock lock{mutex_};
+            const std::scoped_lock lock{mutex_};
             queue_.push(std::move(value));
             notify_one();
         }
     }
 
     T pop() {
-        if (closed_)
+        if (closed_){
             throw std::runtime_error("cannot pop on closed queue");
+        }
         {
-            std::scoped_lock lock{mutex_};
+            const std::scoped_lock lock{mutex_};
             T value = std::move(queue_.front());
             queue_.pop();
             return value;
@@ -120,15 +124,16 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
 
     template <typename CompletionToken>
     auto async_pop(CompletionToken&& token) {
-        if (closed_)
+        if (closed_){
             throw std::runtime_error("cannot pop on closed queue");
+        }
         return boost::asio::async_initiate<CompletionToken, void(std::optional<T>, boost::system::error_code ec)>(
             [this](auto&& handler) mutable {
-                std::scoped_lock lock{mutex_};
+                const std::scoped_lock lock{mutex_};
                 if (!queue_.empty()) {
                     T item = std::move(queue_.front());
                     queue_.pop();
-                    boost::asio::post(executor_, [handler = std::move(handler), item = std::move(item)]() mutable {
+                    boost::asio::post(executor_, [handler = std::forward<decltype(handler)>(handler), item = std::move(item)]() mutable {
                         handler(std::make_optional(std::move(item)), boost::system::error_code());
                     });
                 } else {
@@ -138,11 +143,11 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
             token);
     }
     size_t size() const {
-        std::scoped_lock lock{mutex_};
+        const std::scoped_lock lock{mutex_};
         return queue_.size();
     }
     bool empty() const {
-        std::scoped_lock lock{mutex_};
+        const std::scoped_lock lock{mutex_};
         return queue_.empty();
     }
     bool is_closed() const {
@@ -152,7 +157,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         closed_.store(true);
     }
     void clear() {
-        std::scoped_lock lock{mutex_};
+        const std::scoped_lock lock{mutex_};
         while (!pending_.empty()) {
             auto ops = std::move(pending_.front());
             // probably incorrect, if io_context is already cancelled we might not be
@@ -172,7 +177,7 @@ struct Message {
     std::vector<uint8_t> payload;
 
     Message() = default;
-    Message(message_type_t type, std::vector<uint8_t> data = {});
+    Message(message_type_t type, const std::vector<uint8_t> &data = {});
     Message(protocol_header_t header, std::vector<uint8_t> payload);
     Message(Message&& msg) noexcept;
     Message(const Message&);
@@ -187,7 +192,7 @@ struct CartesianPosition {
     CartesianPosition() = default;
     CartesianPosition(const Message&);
     CartesianPosition(const CartesianPosition&);
-    std::string toString() noexcept;
+    std::string toString() const noexcept;
 };
 
 struct AnglePosition {
@@ -232,8 +237,8 @@ struct State {
     std::atomic<bool> drive_powered;
     std::atomic<bool> in_error;
     explicit State();
-    void UpdateState(RobotStatusMessage msg);
-    bool IsReady();
+    void UpdateState(const RobotStatusMessage &msg);
+    bool IsReady() const;
 };
 
 struct GoalStatusMessage {
@@ -260,13 +265,13 @@ class RobotSocketBase {
     bool is_connected() const {
         return connected_.load();
     }
-
-   protected:
-    protocol_header_t parse_header(std::vector<uint8_t>& buffer);
     boost::asio::io_context& io_context_;
     std::string host_;
     uint16_t port_;
     std::atomic<bool> connected_{false};
+
+   protected:
+    static protocol_header_t parse_header(std::vector<uint8_t>& buffer);
 };
 
 class TcpRobotSocket : public RobotSocketBase {
@@ -318,7 +323,7 @@ class UdpRobotSocket : public RobotSocketBase {
     boost::asio::awaitable<void> receive_messages();
     void handle_status_message(const Message& message);
     void handle_robot_status_message(const Message& message);
-    Message parse_message(const std::vector<uint8_t>& buffer);
+    static Message parse_message(const std::vector<uint8_t>& buffer);
 };
 
 class UdpBroadcastListener {
@@ -387,7 +392,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     uint32_t group_index_;
     std::thread heartbeat_;
 
-    bool is_status_command(message_type_t type) const;
+    static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;
     std::future<Message> make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
     std::future<Message> send_goal_(uint32_t group_index,
@@ -398,7 +403,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
 class GoalRequestHandle {
    public:
-    GoalRequestHandle(int32_t goal_id, std::shared_ptr<YaskawaController> robot, std::shared_future<goal_state_t> completion_future);
+    GoalRequestHandle(int32_t goal_id, std::shared_ptr<YaskawaController> controller, std::shared_future<goal_state_t> completion_future);
     goal_state_t wait();
     std::optional<goal_state_t> wait_for(std::chrono::milliseconds);
     void cancel();

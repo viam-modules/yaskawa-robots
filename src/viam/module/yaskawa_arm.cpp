@@ -99,8 +99,6 @@ std::string unix_time_iso8601() {
     return stream.str();
 }
 
-}  // namespace
-
 std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     if (!find_config_attribute<std::string>(cfg, "host")) {
         throw std::invalid_argument("attribute `host` is required");
@@ -130,6 +128,9 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     return {};
 }
 
+}  // namespace
+
+
 const ModelFamily& YaskawaArm::model_family() {
     static const auto family = ModelFamily{"viam", "yaskawa-robots"};
     return family;
@@ -152,7 +153,7 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
             model,
             // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is
             // fixed by ModelRegistration.
-            [&, model](auto deps, auto config) { return std::make_shared<YaskawaArm>(model, deps, config, io_context); },
+            [&, model](const auto &deps, const auto &config) { return std::make_shared<YaskawaArm>(model, deps, config, io_context); },
             [](auto const& config) { return validate_config_(config); });
     };
 
@@ -198,8 +199,9 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
         } catch (std::exception& ex) {
             VIAM_SDK_LOG(error) << std::format(
                 "connection {} out of {} failed because {}", connection_try, k_max_connection_try, ex.what());
-            if (k_max_connection_try == connection_try)
-                throw;
+            if (k_max_connection_try == connection_try){
+                throw std::runtime_error("failed to configure yaskawa arm: exceeded maximum connection attempts");
+            }
         }
     }
 }
@@ -220,7 +222,7 @@ std::vector<double> YaskawaArm::get_joint_positions(const ProtoStruct&) {
 void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
                                               const MoveOptions&,
                                               const viam::sdk::ProtoStruct&) {
-    std::shared_lock rlock{config_mutex_};
+    const std::shared_lock rlock{config_mutex_};
 
     if (!positions.empty()) {
         std::list<Eigen::VectorXd> waypoints;
