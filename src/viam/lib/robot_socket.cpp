@@ -178,6 +178,7 @@ void AnglePosition::toRad() {
 /// Convert angle position to string representation
 /// Validates that the position vector has at least 6 dimensions before
 /// formatting
+// TODO(RSDK-12531) remove nolint
 std::string AnglePosition::toString() noexcept {  // NOLINT(bugprone-exception-escape)
     // Validate that we have at least 6 joint angles
     if (pos.size() < 6) {
@@ -360,8 +361,10 @@ void TcpRobotSocket::disconnect() {
 }
 
 awaitable<void> TcpRobotSocket::process_requests() {
+    // TODO(RSDK-12530) remove nolint
     while (running_) {  // NOLINT(clang-analyzer-core.NullDereference)
-        auto [result, error] = co_await request_queue_.async_pop(boost::asio::use_awaitable);  // NOLINT(clang-analyzer-core.NullDereference)
+        auto [result, error] =
+            co_await request_queue_.async_pop(boost::asio::use_awaitable);  // NOLINT(clang-analyzer-core.NullDereference)
         if (error) {
             throw std::runtime_error("boost error " + error.message() + " while waiting for a request");
         }

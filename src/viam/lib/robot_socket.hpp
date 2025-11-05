@@ -127,6 +127,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         if (closed_) {
             throw std::runtime_error("cannot pop on closed queue");
         }
+        // TODO(RSDK-12530) remove nolint
         return boost::asio::async_initiate<CompletionToken,
                                            void(std::optional<T>,
                                                 boost::system::error_code ec)>(  // NOLINT(clang-analyzer-core.NullDereference)
