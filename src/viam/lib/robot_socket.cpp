@@ -890,60 +890,122 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         throw std::runtime_error("arm is already at the desired joint positions");
     }
 
-    // set velocity/acceleration constraints
-    const auto max_velocity = Eigen::VectorXd::Constant(6, speed_);
-    const auto max_acceleration = Eigen::VectorXd::Constant(6, acceleration_);
-    LOGGING(info) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity[0]);
-
-    std::vector<trajectory_point_t> points;
-
-    const Trajectory trajectory(Path(waypoints, 0.1), max_velocity, max_acceleration);
-    if (!trajectory.isValid()) {
-        std::stringstream buffer;
-        buffer << "trajectory generation failed for path:";
-        for (const auto& position : waypoints) {
-            buffer << "{";
-            for (Eigen::Index j = 0; j < 6; j++) {
-                buffer << position[j] << " ";
-            }
-            buffer << "}";
+    std::vector<std::list<Eigen::VectorXd>> segments;
+    // Walk interior points and cut at 180° direction reversals (dot ≈ -1)
+    for (auto where = next(begin(waypoints)); where != prev(end(waypoints)); ++where) {
+        const auto segment_ab = *where - *prev(where);
+        const auto segment_bc = *next(where) - *where;
+        const auto dot = segment_ab.normalized().dot(segment_bc.normalized());
+        if (std::fabs(dot + 1.0) < 1e-3) {
+            LOGGING(info) << "we have entered the reversal conditional";
+            segments.emplace_back();
+            segments.back().splice(segments.back().begin(), waypoints, waypoints.begin(), where);
+            segments.back().push_back(*where);
         }
-        throw std::runtime_error(buffer.str());
     }
 
-    const double duration = trajectory.getDuration();
-    if (!std::isfinite(duration)) {
-        throw std::runtime_error("trajectory.getDuration() was not a finite number");
+    // Remainder becomes the last (or only) segment
+    segments.push_back(std::move(waypoints));
+
+    // Debug: log segment information
+    LOGGING(debug) << "Created " << segments.size() << " segments";
+    for (size_t i = 0; i < segments.size(); ++i) {
+        const auto& seg = segments[i];
+        LOGGING(debug) << "Segment " << i << " has " << seg.size() << " waypoints";
+        if (!seg.empty()) {
+            const auto& first = seg.front();
+            const auto& last = seg.back();
+            LOGGING(debug) << "  First waypoint: [" << first[0] << "," << first[1] << "," << first[2]
+                          << "," << first[3] << "," << first[4] << "," << first[5] << "]";
+            LOGGING(debug) << "  Last waypoint: [" << last[0] << "," << last[1] << "," << last[2]
+                          << "," << last[3] << "," << last[4] << "," << last[5] << "]";
+        }
     }
-    // TODO(RSDK-11069): Make this configurable
-    // https://viam.atlassian.net/browse/RSDK-11069
-    if (duration > 600) {  // if the duration is longer than 10 minutes
-        throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
+
+    // set velocity/acceleration constraints
+    const auto max_velocity_vec = Eigen::VectorXd::Constant(6, speed_);
+    const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, acceleration_);
+
+    std::vector<trajectory_point_t> samples;
+    double cumulative_time = 0.0;  // Track cumulative time across segments
+    bool first_segment = true;
+
+    for (const auto& segment : segments) {
+        const Trajectory trajectory(Path(segment, 0.1), max_velocity_vec, max_acceleration_vec);
+        if (!trajectory.isValid()) {
+            std::stringstream buffer;
+            buffer << "trajectory generation failed for path:";
+            for (const auto& position : segment) {
+                buffer << "{";
+                for (Eigen::Index j = 0; j < 6; j++) {
+                    buffer << position[j] << " ";
+                }
+                buffer << "}";
+            }
+            throw std::runtime_error(buffer.str());
+        }
+
+        const double duration = trajectory.getDuration();
+
+        if (!std::isfinite(duration)) {
+            throw std::runtime_error("trajectory.getDuration() was not a finite number");
+        }
+
+        // TODO(RSDK-11069): Make this configurable
+        // https://viam.atlassian.net/browse/RSDK-11069
+        if (duration > 600) {  // if the duration is longer than 10 minutes
+            throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
+        }
+
+        if (duration < k_min_timestep_sec) {
+            LOGGING(debug) << "duration of move is too small, assuming arm is at goal";
+            continue;
+        }
+
+        trajectory.outputPhasePlaneTrajectory();
+
+        // desired sampling frequency. if the duration is small we will oversample but that should be fine.
+        constexpr double k_sampling_freq_hz = 3;
+
+        // For segments after the first, we need to get the size before adding to skip the first sample
+        const size_t samples_before = samples.size();
+
+        sampling_func(samples, duration, k_sampling_freq_hz, [&](const double t, const double) {
+            auto p_eigen = trajectory.getPosition(t);
+            auto v_eigen = trajectory.getVelocity(t);
+            const double absolute_time = cumulative_time + t;
+            auto secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::duration<double>(absolute_time));
+            auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(absolute_time) - secs);
+
+            // Debug: log first sample of each segment
+            if (samples.size() == samples_before && t < 0.01) {
+                LOGGING(debug) << "First sample of segment: t=" << t
+                              << " abs_time=" << absolute_time
+                              << " pos=[" << p_eigen[0] << "," << p_eigen[1] << "," << p_eigen[2]
+                              << "," << p_eigen[3] << "," << p_eigen[4] << "," << p_eigen[5] << "]";
+            }
+
+            return trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                      {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+                                      {0},
+                                      {0},
+                                      {(int32_t)secs.count(), (int32_t)nanos.count()}};
+        });
+
+        // Remove the first sample of subsequent segments to avoid duplicate timestamps
+        // (last sample of previous segment has same position as first sample of current segment)
+        if (!first_segment && samples.size() > samples_before) {
+            samples.erase(samples.begin() + samples_before);
+        }
+
+        cumulative_time += duration;
+        first_segment = false;
     }
-    if (duration < k_min_timestep_sec) {
-        throw std::runtime_error(std::format("duration {} lower than {} assuming arm is at goal", duration, k_min_timestep_sec));
-    }
 
-    // desired sampling frequency. if the duration is small we will oversample but
-    // that should be fine.
-    constexpr double k_sampling_freq_hz = 3;
-    sampling_func(points, duration, k_sampling_freq_hz, [&](const double t, const double) {
-        auto p_eigen = trajectory.getPosition(t);
-        auto v_eigen = trajectory.getVelocity(t);
-        auto secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::duration<double>(t));
-        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(t) - secs);
+    LOGGING(info) << "move: compute_trajectory end " << unix_time << " samples.size() " << samples.size() << " segments "
+                  << segments.size();
 
-        return trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
-                                  {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
-                                  {0},
-                                  {0},
-                                  {(int32_t)secs.count(), (int32_t)nanos.count()}};
-    });
-
-    LOGGING(info) << "move: compute_trajectory end " << unix_time << " samples.size() " << points.size() << " segments "
-                  << waypoints.size() - 1;
-
-    return send_goal_(group_index_, 6, points, {});
+    return send_goal_(group_index_, 6, samples, {});
 }
 
 std::future<Message> YaskawaController::echo_trajectory() {
