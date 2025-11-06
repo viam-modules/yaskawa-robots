@@ -44,7 +44,7 @@ LogStream& LogStream::operator=(LogStream&& other) noexcept {
 // Logger Implementation
 // ============================================================================
 
-Logger::Logger(LogLevel min_level) : min_level_(min_level) {}
+Logger::Logger(LogLevel min_level) noexcept : min_level_(min_level) {}
 
 void Logger::set_min_level(LogLevel level) {
     const std::lock_guard<std::mutex> lock(mutex_);

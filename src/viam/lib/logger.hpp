@@ -48,7 +48,7 @@ class LogStream {
     LogStream(const LogStream&) = delete;
     LogStream& operator=(const LogStream&) = delete;
 
-    // Allow move operations
+    // Delete move operations because we have a mutex in the Logger implementation
     LogStream(LogStream&& other) noexcept;
     LogStream& operator=(LogStream&& other) noexcept;
 
@@ -122,7 +122,7 @@ class ILogger {
 class Logger : public ILogger {
    public:
     /// Construct a logger with the specified minimum log level
-    explicit Logger(LogLevel min_level = LogLevel::INFO);
+    explicit Logger(LogLevel min_level = LogLevel::INFO) noexcept;
 
     ~Logger() override = default;
 
@@ -176,9 +176,9 @@ inline std::shared_ptr<ILogger> global_logger = make_logger();
 /// Set the global logger instance
 /// This allows users to provide custom logger implementations
 /// Thread-safe: should be called before any logging operations
-inline void set_global_logger(const std::shared_ptr<ILogger>& logger) {
+inline void set_global_logger(std::shared_ptr<ILogger> logger) {
     if (logger) {
-        global_logger = logger;
+        global_logger = std::move(logger);
     }
 }
 

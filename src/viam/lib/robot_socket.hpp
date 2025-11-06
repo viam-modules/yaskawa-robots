@@ -180,8 +180,8 @@ struct Message {
     std::vector<uint8_t> payload;
 
     Message() = default;
-    Message(message_type_t type, const std::vector<uint8_t>& data = {});
-    Message(protocol_header_t header, std::vector<uint8_t> payload);
+    Message(message_type_t type, std::vector<uint8_t>&& data = {});
+    Message(protocol_header_t header, std::vector<uint8_t>&& payload);
     Message(Message&& msg) noexcept;
     Message(const Message&);
     Message& operator=(const Message&);
@@ -274,7 +274,7 @@ class RobotSocketBase {
     std::atomic<bool> connected_{false};
 
    protected:
-    static protocol_header_t parse_header(std::vector<uint8_t>& buffer);
+    static protocol_header_t parse_header(const std::vector<uint8_t>& buffer);
 };
 
 class TcpRobotSocket : public RobotSocketBase {

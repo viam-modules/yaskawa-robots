@@ -199,7 +199,7 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
             VIAM_SDK_LOG(error) << std::format(
                 "connection {} out of {} failed because {}", connection_try, k_max_connection_try, ex.what());
             if (k_max_connection_try == connection_try) {
-                throw std::runtime_error("failed to configure yaskawa arm: exceeded maximum connection attempts");
+                throw;
             }
         }
     }

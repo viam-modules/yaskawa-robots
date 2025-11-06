@@ -105,7 +105,7 @@ using namespace boost::asio;
 /// Validates message type and payload size before extracting position data
 CartesianPosition::CartesianPosition(const Message& msg) {
     // Validate message type
-    if ((msg.header.message_type != MSG_GET_CART && msg.header.message_type != MSG_FROM_JOINT_TO_CART)) {
+    if ((msg.header.message_type != MSG_GET_CART) && (msg.header.message_type != MSG_FROM_JOINT_TO_CART)) {
         throw std::runtime_error(
             std::format("wrong message status type expected MSG_GET_CART or "
                         "MSG_FROM_JOINT_TO_CART had {}",
@@ -139,10 +139,15 @@ CartesianPosition::CartesianPosition(const CartesianPosition& other) {
     ry = other.ry;
     rz = other.rz;
 }
+
+/// currently only used in example/main.cpp
 std::string CartesianPosition::toString() const noexcept {
-    std::ostringstream buffer;
-    buffer << " (" << x << "," << y << "," << z << ") - (" << rx << "," << ry << "," << rz << ") ";
-    return buffer.str();
+    try {
+        return std::format(" ({},{},{}) - ({},{},{}) ", x, y, z, rx, ry, rz);
+    } catch (const std::exception& ex) {
+        LOGGING(error) << "error during CartesianPosition::toString(): " << ex.what();
+        return "";
+    }
 }
 /// Parse joint angle position from a protocol message
 /// Validates message type and payload size before extracting angle data
@@ -177,17 +182,24 @@ void AnglePosition::toRad() {
 }
 /// Convert angle position to string representation
 /// Validates that the position vector has at least 6 dimensions before
-/// formatting
-// TODO(RSDK-12531) remove nolint
-std::string AnglePosition::toString() noexcept {  // NOLINT(bugprone-exception-escape)
+/// formatting.
+/// currently only used in example/main.cpp
+std::string AnglePosition::toString() noexcept { 
     // Validate that we have at least 6 joint angles
     if (pos.size() < 6) {
-        return std::format("AnglePosition[invalid: only {} dimensions, expected at least 6]", pos.size());
+        std::ostringstream buffer;
+        buffer << "AnglePosition[invalid: only " << pos.size() << " dimensions, expected at least 6]";
+        return buffer.str();
     }
 
-    // Format the first 6 joint angles (standard for 6-axis robot)
-    return std::format(
+    try {
+        // Format the first 6 joint angles (standard for 6-axis robot)
+        return std::format(
         "AnglePosition[{:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}] (degrees)", pos[0], pos[1], pos[2], pos[3], pos[4], pos[5]);
+    } catch (const std::exception& ex) {
+        LOGGING(error) << "error during AnglePosition::toString(): " << ex.what();
+        return "";
+    }
 }
 
 StatusMessage::StatusMessage(const Message& msg) {
@@ -202,18 +214,18 @@ StatusMessage::StatusMessage(const Message& msg) {
     std::memcpy(&timestamp, msg.payload.data(), sizeof(timestamp));
     std::memcpy(&num_axes, msg.payload.data() + sizeof(timestamp), sizeof(num_axes));
     boost::span<const double> arrays{reinterpret_cast<const double*>(msg.payload.data() + sizeof(timestamp) + sizeof(num_axes)),
-                                     static_cast<long>(4) * MAX_AXES};
+                                     static_cast<size_t>(4) * MAX_AXES};
     position.reserve(MAX_AXES);
     boost::copy(arrays | boost::adaptors::sliced(0, MAX_AXES), std::back_inserter(position));
 
     velocity.reserve(MAX_AXES);
-    boost::copy(arrays | boost::adaptors::sliced(MAX_AXES, static_cast<long>(2) * MAX_AXES), std::back_inserter(velocity));
+    boost::copy(arrays | boost::adaptors::sliced(MAX_AXES, static_cast<size_t>(2) * MAX_AXES), std::back_inserter(velocity));
 
     torque.reserve(MAX_AXES);
-    boost::copy(arrays | boost::adaptors::sliced(static_cast<long>(2) * MAX_AXES, static_cast<long>(3) * MAX_AXES),
+    boost::copy(arrays | boost::adaptors::sliced(static_cast<size_t>(2) * MAX_AXES, static_cast<size_t>(3) * MAX_AXES),
                 std::back_inserter(torque));
     position_corrected.reserve(MAX_AXES);
-    boost::copy(arrays | boost::adaptors::sliced(static_cast<long>(3) * MAX_AXES, static_cast<long>(4) * MAX_AXES),
+    boost::copy(arrays | boost::adaptors::sliced(static_cast<size_t>(3) * MAX_AXES, static_cast<size_t>(4) * MAX_AXES),
                 std::back_inserter(position_corrected));
 }
 
@@ -255,16 +267,16 @@ RobotStatusMessage::RobotStatusMessage(const Message& msg) {
     std::memcpy(&size, data, sizeof(size));
 }
 
-Message::Message(message_type_t type, const std::vector<uint8_t>& data) {
+Message::Message(message_type_t type, std::vector<uint8_t> &&data) {
     header.magic_number = PROTOCOL_MAGIC_NUMBER;
     header.version = PROTOCOL_VERSION;
     header.message_type = static_cast<uint8_t>(type);
     header.timestamp_ms =
         (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     header.payload_length = static_cast<uint32_t>(data.size());
-    payload = data;
+    payload = std::move(data);
 }
-Message::Message(protocol_header_t header, std::vector<uint8_t> payload) {
+Message::Message(protocol_header_t header, std::vector<uint8_t> &&payload) {
     this->header = header;
     this->payload = std::move(payload);
 }
@@ -397,7 +409,7 @@ awaitable<void> TcpRobotSocket::process_requests() {
 
             bytes_received = co_await socket_.async_read_some(boost::asio::buffer(payload_buffer), use_awaitable);
             payload_buffer.resize(bytes_received);
-            auto response = Message(header, payload_buffer);
+            auto response = Message(header, std::move(payload_buffer));
 
             request_pair.second.set_value(response);
 
@@ -407,7 +419,7 @@ awaitable<void> TcpRobotSocket::process_requests() {
     }
 }
 
-protocol_header_t RobotSocketBase::parse_header(std::vector<uint8_t>& buffer) {
+protocol_header_t RobotSocketBase::parse_header(const std::vector<uint8_t>& buffer) {
     if (buffer.size() < sizeof(protocol_header_t)) {
         throw std::runtime_error("Invalid message: too short");
     }
@@ -759,7 +771,7 @@ std::future<Message> YaskawaController::get_goal_status(int32_t goal_id) {
     cancel_goal_payload_t* req = reinterpret_cast<cancel_goal_payload_t*>(payload.data());
     req->goal_id = goal_id;
 
-    return tcp_socket_->send_request(Message(MSG_GET_GOAL_STATUS, payload));
+    return tcp_socket_->send_request(Message(MSG_GET_GOAL_STATUS, std::move(payload)));
 }
 
 std::future<Message> YaskawaController::cancel_goal(int32_t goal_id) {
@@ -767,7 +779,7 @@ std::future<Message> YaskawaController::cancel_goal(int32_t goal_id) {
     cancel_goal_payload_t* req = reinterpret_cast<cancel_goal_payload_t*>(payload.data());
     req->goal_id = goal_id;
 
-    return tcp_socket_->send_request(Message(MSG_CANCEL_GOAL, payload));
+    return tcp_socket_->send_request(Message(MSG_CANCEL_GOAL, std::move(payload)));
 }
 
 std::future<Message> YaskawaController::setMotionMode(uint8_t mode) {
@@ -775,7 +787,7 @@ std::future<Message> YaskawaController::setMotionMode(uint8_t mode) {
     motion_mode_payload_t* req = reinterpret_cast<motion_mode_payload_t*>(payload.data());
     req->motion_mode = mode;
 
-    return tcp_socket_->send_request(Message(MSG_SET_MOTION_MODE, payload));
+    return tcp_socket_->send_request(Message(MSG_SET_MOTION_MODE, std::move(payload)));
 }
 
 std::future<Message> YaskawaController::send_test_trajectory() {
@@ -839,7 +851,7 @@ std::future<Message> YaskawaController::register_udp_port(uint16_t port) {
     udp_port_registration_payload_t* port_payload = reinterpret_cast<udp_port_registration_payload_t*>(payload.data());
     port_payload->udp_port = port;
 
-    return tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, payload));
+    return tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload)));
 }
 
 std::future<Message> YaskawaController::reset_errors() {
@@ -864,7 +876,7 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
     append_to((uint32_t)tolerance.size());
     boost::for_each(tolerance, append_to);
 
-    return tcp_socket_->send_request(Message(MSG_MOVE_GOAL, payload));
+    return tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload)));
 }
 
 std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
@@ -910,10 +922,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
         } catch (std::exception& e) {
             try {
                 promise.set_exception_at_thread_exit(std::current_exception());
-            } catch (...) {
-                std::ostringstream buffer;
-                buffer << "goal failed - an unknown exception has occurred";
-                promise.set_exception_at_thread_exit(std::make_exception_ptr(std::runtime_error(buffer.str())));
+            } catch (...) { //NOLINT(bugprone-empty-catch)
             }
         }
     }).detach();
@@ -1000,7 +1009,7 @@ std::future<Message> YaskawaController::getCartPosition() {
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
     id->group_id = (int32_t)group_index_;
-    return tcp_socket_->send_request(Message(MSG_GET_CART, payload));
+    return tcp_socket_->send_request(Message(MSG_GET_CART, std::move(payload)));
 }
 std::future<Message> YaskawaController::cartPosToAngle(CartesianPosition& pos) {
     std::vector<uint8_t> payload(sizeof(cartesian_payload_t));
@@ -1012,7 +1021,7 @@ std::future<Message> YaskawaController::cartPosToAngle(CartesianPosition& pos) {
     cid->cartesianCoord[3] = pos.rx;
     cid->cartesianCoord[4] = pos.ry;
     cid->cartesianCoord[5] = pos.rz;
-    return tcp_socket_->send_request(Message(MSG_FROM_CART_TO_JOINT, payload));
+    return tcp_socket_->send_request(Message(MSG_FROM_CART_TO_JOINT, std::move(payload)));
 }
 std::future<Message> YaskawaController::angleToCartPos(AnglePosition& pos) {
     std::vector<uint8_t> payload(sizeof(position_angle_degree_payload_t));
@@ -1024,7 +1033,7 @@ std::future<Message> YaskawaController::angleToCartPos(AnglePosition& pos) {
     pid->positionAngleDegree[3] = pos.pos[3];
     pid->positionAngleDegree[4] = pos.pos[4];
     pid->positionAngleDegree[5] = pos.pos[5];
-    return tcp_socket_->send_request(Message(MSG_FROM_JOINT_TO_CART, payload));
+    return tcp_socket_->send_request(Message(MSG_FROM_JOINT_TO_CART, std::move(payload)));
 }
 
 bool YaskawaController::is_status_command(message_type_t type) {

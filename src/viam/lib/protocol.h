@@ -39,9 +39,9 @@ typedef struct {
 #include "utils.h"
 #endif
 
-
+//TODO(RSDK-12543) reduce the size of this message
 // Message types
-typedef enum { // NOLINT(performance-enum-size)
+typedef enum : std::uint32_t { // NOLINT(performance-enum-size)
     MSG_TEST_TRAJECTORY_COMMAND = 0x01,
     MSG_TURN_SERVO_POWER_ON = 0x02,
     MSG_HEARTBEAT = 0x03,
@@ -68,8 +68,9 @@ typedef enum { // NOLINT(performance-enum-size)
     MSG_GET_CART = 0x18
 } message_type_t;
 
+//TODO(RSDK-12543) reduce the size of this message
 // Goal states
-typedef enum { // NOLINT(performance-enum-size)
+typedef enum : std::uint32_t { // NOLINT(performance-enum-size)
     GOAL_STATE_PENDING = 0,	// Goal accepted but not started
     GOAL_STATE_ACTIVE = 1,	// Goal in progress
     GOAL_STATE_SUCCEEDED = 2,	// Goal reached successfully
@@ -104,6 +105,7 @@ typedef PACK(struct {
 	     char message[252];	// 252 bytes - error message string (null-terminated)
 	     }) error_payload_t;
 
+//TODO(RSDK-12543) do not use bool
 // Robot status payload structure  
 typedef PACK(struct {
 	     int64_t ts;	// 8 bytes - timestamp
