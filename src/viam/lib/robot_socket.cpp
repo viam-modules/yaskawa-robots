@@ -184,7 +184,7 @@ void AnglePosition::toRad() {
 /// Validates that the position vector has at least 6 dimensions before
 /// formatting.
 /// currently only used in example/main.cpp
-std::string AnglePosition::toString() noexcept { 
+std::string AnglePosition::toString() noexcept {
     // Validate that we have at least 6 joint angles
     if (pos.size() < 6) {
         std::ostringstream buffer;
@@ -195,7 +195,7 @@ std::string AnglePosition::toString() noexcept {
     try {
         // Format the first 6 joint angles (standard for 6-axis robot)
         return std::format(
-        "AnglePosition[{:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}] (degrees)", pos[0], pos[1], pos[2], pos[3], pos[4], pos[5]);
+            "AnglePosition[{:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}] (degrees)", pos[0], pos[1], pos[2], pos[3], pos[4], pos[5]);
     } catch (const std::exception& ex) {
         LOGGING(error) << "error during AnglePosition::toString(): " << ex.what();
         return "";
@@ -267,7 +267,7 @@ RobotStatusMessage::RobotStatusMessage(const Message& msg) {
     std::memcpy(&size, data, sizeof(size));
 }
 
-Message::Message(message_type_t type, std::vector<uint8_t> &&data) {
+Message::Message(message_type_t type, std::vector<uint8_t>&& data) {
     header.magic_number = PROTOCOL_MAGIC_NUMBER;
     header.version = PROTOCOL_VERSION;
     header.message_type = static_cast<uint8_t>(type);
@@ -276,7 +276,7 @@ Message::Message(message_type_t type, std::vector<uint8_t> &&data) {
     header.payload_length = static_cast<uint32_t>(data.size());
     payload = std::move(data);
 }
-Message::Message(protocol_header_t header, std::vector<uint8_t> &&payload) {
+Message::Message(protocol_header_t header, std::vector<uint8_t>&& payload) {
     this->header = header;
     this->payload = std::move(payload);
 }
@@ -922,7 +922,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
         } catch (std::exception& e) {
             try {
                 promise.set_exception_at_thread_exit(std::current_exception());
-            } catch (...) { //NOLINT(bugprone-empty-catch)
+            } catch (...) {  // NOLINT(bugprone-empty-catch)
             }
         }
     }).detach();
