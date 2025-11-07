@@ -900,7 +900,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     }
 
     std::vector<std::list<Eigen::VectorXd>> segments;
-    // Walk interior points and cut at 180° direction reversals (dot ≈ -1)
+    // Walk interior points and cut at 180 degree direction reversals (dot == -1)
     for (auto where = next(begin(waypoints)); where != prev(end(waypoints)); ++where) {
         const auto segment_ab = *where - *prev(where);
         const auto segment_bc = *next(where) - *where;
