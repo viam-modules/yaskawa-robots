@@ -880,6 +880,15 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     LOGGING(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
 
+    // Wait for robot to stop moving before reading current position
+    while (1) {
+        auto robot_status = RobotStatusMessage(get_robot_status().get());
+        if (!robot_status.in_motion) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
     auto curr_joint_pos = StatusMessage(get_robot_position_velocity_torque().get()).position;
 
     auto curr_waypoint_rad = Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
@@ -897,7 +906,6 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         const auto segment_bc = *next(where) - *where;
         const auto dot = segment_ab.normalized().dot(segment_bc.normalized());
         if (std::fabs(dot + 1.0) < 1e-3) {
-            LOGGING(info) << "we have entered the reversal conditional";
             segments.emplace_back();
             segments.back().splice(segments.back().begin(), waypoints, waypoints.begin(), where);
             segments.back().push_back(*where);
@@ -906,21 +914,6 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
 
     // Remainder becomes the last (or only) segment
     segments.push_back(std::move(waypoints));
-
-    // Debug: log segment information
-    LOGGING(debug) << "Created " << segments.size() << " segments";
-    for (size_t i = 0; i < segments.size(); ++i) {
-        const auto& seg = segments[i];
-        LOGGING(debug) << "Segment " << i << " has " << seg.size() << " waypoints";
-        if (!seg.empty()) {
-            const auto& first = seg.front();
-            const auto& last = seg.back();
-            LOGGING(debug) << "  First waypoint: [" << first[0] << "," << first[1] << "," << first[2]
-                          << "," << first[3] << "," << first[4] << "," << first[5] << "]";
-            LOGGING(debug) << "  Last waypoint: [" << last[0] << "," << last[1] << "," << last[2]
-                          << "," << last[3] << "," << last[4] << "," << last[5] << "]";
-        }
-    }
 
     // set velocity/acceleration constraints
     const auto max_velocity_vec = Eigen::VectorXd::Constant(6, speed_);
@@ -976,15 +969,6 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
             const double absolute_time = cumulative_time + t;
             auto secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::duration<double>(absolute_time));
             auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(absolute_time) - secs);
-
-            // Debug: log first sample of each segment
-            if (samples.size() == samples_before && t < 0.01) {
-                LOGGING(debug) << "First sample of segment: t=" << t
-                              << " abs_time=" << absolute_time
-                              << " pos=[" << p_eigen[0] << "," << p_eigen[1] << "," << p_eigen[2]
-                              << "," << p_eigen[3] << "," << p_eigen[4] << "," << p_eigen[5] << "]";
-            }
-
             return trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
                                       {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
                                       {0},
@@ -1001,9 +985,6 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         cumulative_time += duration;
         first_segment = false;
     }
-
-    LOGGING(info) << "move: compute_trajectory end " << unix_time << " samples.size() " << samples.size() << " segments "
-                  << segments.size();
 
     return send_goal_(group_index_, 6, samples, {});
 }
