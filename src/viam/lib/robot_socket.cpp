@@ -308,7 +308,7 @@ TcpRobotSocket::TcpRobotSocket(boost::asio::io_context& io_context, const std::s
 
 TcpRobotSocket::~TcpRobotSocket() {
     try {
-        disconnect_tcp();
+        disconnect();
     } catch (const std::exception& ex) {
         LOGGING(error) << "error while closing TCP connection" << ex.what();
     }
@@ -354,7 +354,7 @@ std::future<Message> TcpRobotSocket::send_request(Message request) {
     return future;
 }
 
-void TcpRobotSocket::disconnect_tcp() {
+void TcpRobotSocket::disconnect() {
     if (connected_) {
         connected_ = false;
         running_ = false;
@@ -367,9 +367,6 @@ void TcpRobotSocket::disconnect_tcp() {
             promise.set_exception(std::make_exception_ptr(std::runtime_error("Connection closed")));
         }
     }
-}
-void TcpRobotSocket::disconnect() {
-    disconnect_tcp();
 }
 
 awaitable<void> TcpRobotSocket::process_requests() {
@@ -437,7 +434,7 @@ UdpRobotSocket::UdpRobotSocket(boost::asio::io_context& io_context, State& state
 
 UdpRobotSocket::~UdpRobotSocket() {
     try {
-        disconnect_udp();
+        disconnect();
     } catch (const std::exception& ex) {
         LOGGING(error) << "error while closing UDP connection" << ex.what();
     }
@@ -470,7 +467,7 @@ std::future<Message> UdpRobotSocket::send_request(Message /* request */) {
     return future;
 }
 
-void UdpRobotSocket::disconnect_udp() {
+void UdpRobotSocket::disconnect() {
     if (connected_) {
         connected_ = false;
         running_ = false;
@@ -480,10 +477,6 @@ void UdpRobotSocket::disconnect_udp() {
             socket_.close();
         }
     }
-}
-
-void UdpRobotSocket::disconnect() {
-    disconnect_udp();
 }
 
 void UdpRobotSocket::get_status(std::promise<Message> promise) {

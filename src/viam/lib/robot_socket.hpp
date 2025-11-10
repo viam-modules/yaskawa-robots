@@ -284,8 +284,7 @@ class TcpRobotSocket : public RobotSocketBase {
 
     std::future<void> connect() override;
     std::future<Message> send_request(Message request) override;
-    void disconnect() override;
-    void disconnect_tcp();
+    void disconnect() final;
 
    private:
     using tcp = boost::asio::ip::tcp;
@@ -306,8 +305,7 @@ class UdpRobotSocket : public RobotSocketBase {
 
     std::future<void> connect() override;
     std::future<Message> send_request(Message request) override;
-    void disconnect() override;
-    void disconnect_udp();
+    void disconnect() final;
 
     void get_status(std::promise<Message>);
     void get_robot_status(std::promise<Message>);

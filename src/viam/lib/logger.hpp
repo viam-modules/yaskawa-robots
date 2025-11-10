@@ -48,7 +48,7 @@ class LogStream {
     LogStream(const LogStream&) = delete;
     LogStream& operator=(const LogStream&) = delete;
 
-    // Delete move operations because we have a mutex in the Logger implementation
+    // Allow move operations
     LogStream(LogStream&& other) noexcept;
     LogStream& operator=(LogStream&& other) noexcept;
 
@@ -130,7 +130,7 @@ class Logger : public ILogger {
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
 
-    // Allow move operations
+    // Delete move operations because we have a mutex in the Logger implementation
     Logger(Logger&&) noexcept = delete;
     Logger& operator=(Logger&&) noexcept = delete;
 
@@ -164,6 +164,8 @@ class Logger : public ILogger {
 
 /// Create a shared pointer to a Logger instance
 /// This is the recommended way to create logger instances
+/// Note: make_shared can throw a std::bad_alloc, which would result in a call to std::terminate.
+/// if we are already out of memory at this point then things are already really bad, so terminating is okay.
 inline std::shared_ptr<ILogger> make_logger(LogLevel min_level = LogLevel::INFO) noexcept {
     return std::make_shared<Logger>(min_level);
 }
