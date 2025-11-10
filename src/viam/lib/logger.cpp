@@ -107,6 +107,7 @@ std::string Logger::get_timestamp() {
     auto* result_ptr = localtime_r(&now_time_t, &tm_buf);
     if (result_ptr == NULL) {
         perror("Error converting time with localtime_r");  // Print error message based on errno
+        //TODO(RSDK-12309) evaluate if returning a string here is ok
         return "Error converting time with localtime_r";   // Indicate error
     }
 #endif
