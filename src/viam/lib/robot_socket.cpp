@@ -880,15 +880,6 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     LOGGING(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
 
-    // Wait for robot to stop moving before reading current position
-    while (1) {
-        auto robot_status = RobotStatusMessage(get_robot_status().get());
-        if (!robot_status.in_motion) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-
     auto curr_joint_pos = StatusMessage(get_robot_position_velocity_torque().get()).position;
 
     auto curr_waypoint_rad = Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
@@ -901,6 +892,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
 
     std::vector<std::list<Eigen::VectorXd>> segments;
     // Walk interior points and cut at 180 degree direction reversals (dot == -1)
+    // github.com/viam-modules/universal-robots/blob/2eaa3243984a299b6565920f4dc60c6fe0ddc8ef/src/viam/ur/module/ur_arm.cpp#L684
     for (auto where = next(begin(waypoints)); where != prev(end(waypoints)); ++where) {
         const auto segment_ab = *where - *prev(where);
         const auto segment_bc = *next(where) - *where;
@@ -921,7 +913,6 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
 
     std::vector<trajectory_point_t> samples;
     double cumulative_time = 0.0;  // Track cumulative time across segments
-    bool first_segment = true;
 
     for (const auto& segment : segments) {
         const Trajectory trajectory(Path(segment, 0.1), max_velocity_vec, max_acceleration_vec);
@@ -944,8 +935,8 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
             throw std::runtime_error("trajectory.getDuration() was not a finite number");
         }
 
-        // TODO(RSDK-11069): Make this configurable
-        // https://viam.atlassian.net/browse/RSDK-11069
+        // TODO(RSDK-12566): Make this configurable
+        // viam.atlassian.net/browse/RSDK-12566
         if (duration > 600) {  // if the duration is longer than 10 minutes
             throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
         }
@@ -960,9 +951,6 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         // desired sampling frequency. if the duration is small we will oversample but that should be fine.
         constexpr double k_sampling_freq_hz = 3;
 
-        // For segments after the first, we need to get the size before adding to skip the first sample
-        const size_t samples_before = samples.size();
-
         sampling_func(samples, duration, k_sampling_freq_hz, [&](const double t, const double) {
             auto p_eigen = trajectory.getPosition(t);
             auto v_eigen = trajectory.getVelocity(t);
@@ -976,14 +964,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
                                       {(int32_t)secs.count(), (int32_t)nanos.count()}};
         });
 
-        // Remove the first sample of subsequent segments to avoid duplicate timestamps
-        // (last sample of previous segment has same position as first sample of current segment)
-        if (!first_segment && samples.size() > samples_before) {
-            samples.erase(samples.begin() + samples_before);
-        }
-
         cumulative_time += duration;
-        first_segment = false;
     }
 
     return send_goal_(group_index_, 6, samples, {});
