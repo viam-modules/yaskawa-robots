@@ -75,7 +75,7 @@ void Logger::write_log(LogLevel level, std::string_view message) {
 
     // Lock only for the actual output operation
     const std::lock_guard<std::mutex> lock(mutex_);
-    std::cout << formatted << std::endl; // NOLINT(performance-avoid-endl)
+    std::cout << formatted << std::endl;  // NOLINT(performance-avoid-endl)
 }
 
 std::string Logger::format_message(LogLevel level, std::string_view message) const {
