@@ -864,13 +864,15 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     std::thread([promise = std::move(promise), self = shared_from_this(), goal_id = accepted->goal_id]() mutable {
         try {
             while (1) {
-                // this blocks until we receive the goal status from the yaskawa-controller
+                // this blocks until we receive the goal status from the yaskawa-controller. 
+                // this will not block for long unless we have connection problems.
                 auto status_msg = GoalStatusMessage(self->get_goal_status(goal_id).get());
                 
                 if (status_msg.state == GOAL_STATE_ACTIVE)
                     continue;
                 if (status_msg.state == GOAL_STATE_SUCCEEDED) {
                     // this blocks while we read from the cached robot status or read a new status
+                    // this will not block for long unless we have connection problems.
                     if(RobotStatusMessage(self->get_robot_status().get()).in_motion){
                         continue;
                     }
