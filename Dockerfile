@@ -1,4 +1,4 @@
-FROM ubuntu:jammy
+FROM ubuntu:noble
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -46,10 +46,10 @@ RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/nul
 
 
 RUN bash -c 'wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key|apt-key add -'
-RUN apt-add-repository -y 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main'
-RUN apt-add-repository -y 'deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main'
+RUN apt-add-repository -y 'deb http://apt.llvm.org/noble/ llvm-toolchain-noble-19 main'
+RUN apt-add-repository -y 'deb http://apt.llvm.org/noble/ llvm-toolchain-noble-19 main'
 RUN apt-get update
-RUN apt-get -y --no-install-recommends install -t llvm-toolchain-jammy-19 \
+RUN apt-get -y --no-install-recommends install -t llvm-toolchain-noble-19 \
     clang-19 \
     clang-format-19 \
     clang-tidy-19 \

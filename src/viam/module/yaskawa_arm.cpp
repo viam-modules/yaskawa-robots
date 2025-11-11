@@ -48,7 +48,8 @@
 
 #include "utils.hpp"
 
-// this chunk of code uses the rust FFI to handle the spatialmath calculations to turn a UR vector to a pose
+// this chunk of code uses the rust FFI to handle the spatialmath calculations
+// to turn a UR vector to a pose
 extern "C" void* quaternion_from_euler_angles(double rx, double ry, double rz);
 extern "C" void free_quaternion_memory(void* q);
 
@@ -64,8 +65,7 @@ constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
 
 pose cartesian_position_to_pose(CartesianPosition&& pos) {
     auto q = std::unique_ptr<void, decltype(&free_quaternion_memory)>(
-        quaternion_from_euler_angles(
-            degrees_to_radians(pos.rx), degrees_to_radians(pos.ry), degrees_to_radians(pos.rz)),
+        quaternion_from_euler_angles(degrees_to_radians(pos.rx), degrees_to_radians(pos.ry), degrees_to_radians(pos.rz)),
         &free_quaternion_memory);
     auto ov = std::unique_ptr<void, decltype(&free_orientation_vector_memory)>(orientation_vector_from_quaternion(q.get()),
                                                                                &free_orientation_vector_memory);
@@ -117,7 +117,8 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     constexpr double k_max_threshold = 2 * M_PI;
     if (threshold && (*threshold < k_min_threshold || *threshold > k_max_threshold)) {
         throw std::invalid_argument(
-            std::format("attribute `reject_move_request_threshold_rad` should be between {} and {} , it is : {} radians",
+            std::format("attribute `reject_move_request_threshold_rad` should be "
+                        "between {} and {} , it is : {} radians",
                         k_min_threshold,
                         k_max_threshold,
                         *threshold));
@@ -158,7 +159,8 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
         return std::make_shared<ModelRegistration>(
             arm,
             model,
-            // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is fixed by ModelRegistration.
+            // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is
+            // fixed by ModelRegistration.
             [&, model](auto deps, auto config) { return std::make_shared<YaskawaArm>(model, deps, config, io_context); },
             [](auto const& config) { return validate_config_(config); });
     };
@@ -241,12 +243,14 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
     if (!positions.empty()) {
         std::list<Eigen::VectorXd> waypoints;
 
-        // Convert joint positions from degrees to radians and filter duplicate waypoints
+        // Convert joint positions from degrees to radians and filter duplicate
+        // waypoints
         for (const auto& position : positions) {
             auto next_waypoint_deg = Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
             auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg)).eval();
 
-            // Skip waypoints that are too close to the previous one to avoid redundant motion
+            // Skip waypoints that are too close to the previous one to avoid
+            // redundant motion
             if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), k_waypoint_equivalancy_epsilon_rad))) {
                 continue;
             }
@@ -281,15 +285,13 @@ YaskawaArm::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
     // Open the file in binary mode
     std::ifstream sva_file(sva_file_path, std::ios::binary);
     if (!sva_file) {
-        throw std::runtime_error(
-        boost::str(boost::format("unable to open kinematics file '%1%'") % sva_file_path.string()));
+        throw std::runtime_error(boost::str(boost::format("unable to open kinematics file '%1%'") % sva_file_path.string()));
     }
 
     // Read the entire file into a vector without computing size ahead of time
     std::vector<char> temp_bytes(std::istreambuf_iterator<char>(sva_file), {});
     if (sva_file.bad()) {
-        throw std::runtime_error(
-        boost::str(boost::format("error reading kinematics file '%1%'") % sva_file_path.string()));
+        throw std::runtime_error(boost::str(boost::format("error reading kinematics file '%1%'") % sva_file_path.string()));
     }
 
     // Convert to unsigned char vector
@@ -300,16 +302,17 @@ pose YaskawaArm::get_end_position(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
 
     auto p = cartesian_position_to_pose(CartesianPosition(robot_->getCartPosition().get()));
-    
-    // The controller is what provides is with a cartesian position. However, it is not aware of the
-    // base links position, i.e. that is translated up by some amount.
+
+    // The controller is what provides is with a cartesian position. However, it
+    // is not aware of the base links position, i.e. that is translated up by some
+    // amount.
     const auto model_name = model_.model_name();
     if (model_name == "gp12") {
         // For the gp12 model that translation is 450mm
         // https://github.com/ros-industrial/motoman/blob/noetic-devel/motoman_gp12_support/urdf/gp12_macro.xacro#L154
         p.coordinates.z += 450;
     } else {
-      VIAM_SDK_LOG(warn) << "No pose offset applied for model: " << model_name;
+        VIAM_SDK_LOG(warn) << "No pose offset applied for model: " << model_name;
     }
 
     return p;

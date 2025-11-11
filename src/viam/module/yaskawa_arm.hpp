@@ -1,10 +1,10 @@
 #pragma once
 
 #include <boost/asio/io_context.hpp>
+#include <filesystem>
 #include <list>
 #include <memory>
 #include <shared_mutex>
-#include <filesystem>
 
 #include <Eigen/Core>
 #include <thread>
@@ -25,7 +25,8 @@ class YaskawaArm final : public Arm, public Reconfigurable {
     /// @brief Returns a Model in the correct family for the given model name.
     static Model model(std::string model_name);
 
-    /// @brief Returns a registration for each model of ARM supported by this class.
+    /// @brief Returns a registration for each model of ARM supported by this
+    /// class.
     static std::vector<std::shared_ptr<ModelRegistration>> create_model_registrations(boost::asio::io_context& io_context);
 
     explicit YaskawaArm(Model model, const Dependencies& deps, const ResourceConfig& cfg, boost::asio::io_context& io_context);
@@ -61,18 +62,18 @@ class YaskawaArm final : public Arm, public Reconfigurable {
 
     /// @brief Get the kinematics data associated with the arm.
     /// @param extra Any additional arguments to the method.
-    /// @return A variant of kinematics data, with bytes field containing the raw bytes of the file
-    /// and the object's type indicating the file format.
+    /// @return A variant of kinematics data, with bytes field containing the raw
+    /// bytes of the file and the object's type indicating the file format.
     KinematicsData get_kinematics(const ProtoStruct& extra) override;
 
     /// @brief Stops the Arm.
     /// @param extra Extra arguments to pass to the resource's `stop` method.
     void stop(const ProtoStruct& extra) override;
 
-    /// @brief This is being used as a proxy to move_to_joint_positions except with support for
-    /// multiple waypoints
-    /// @param command Will contain a std::vector<std::vector<double>> called positions that will
-    /// contain joint waypoints
+    /// @brief This is being used as a proxy to move_to_joint_positions except
+    /// with support for multiple waypoints
+    /// @param command Will contain a std::vector<std::vector<double>> called
+    /// positions that will contain joint waypoints
     ProtoStruct do_command(const ProtoStruct& command) override;
 
     // --------------- UNIMPLEMENTED FUNCTIONS ---------------
@@ -80,7 +81,8 @@ class YaskawaArm final : public Arm, public Reconfigurable {
         throw std::runtime_error("unimplemented");
     }
 
-    // the arm server within RDK will reconstruct the geometries from the kinematics and joint positions if left unimplemented
+    // the arm server within RDK will reconstruct the geometries from the
+    // kinematics and joint positions if left unimplemented
     std::vector<GeometryConfig> get_geometries(const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
     }

@@ -14,22 +14,21 @@ namespace viam {
 namespace yaskawa {
 
 /// Log levels in ascending order of severity
-enum class LogLevel {
-    DEBUG,
-    INFO,
-    WARNING,
-    ERROR,
-    CRITICAL
-};
+enum class LogLevel { DEBUG, INFO, WARNING, ERROR, CRITICAL };
 
 /// Convert log level to string representation
 constexpr std::string_view to_string(LogLevel level) noexcept {
     switch (level) {
-        case LogLevel::DEBUG:    return "DEBUG";
-        case LogLevel::INFO:     return "INFO";
-        case LogLevel::WARNING:  return "WARNING";
-        case LogLevel::ERROR:    return "ERROR";
-        case LogLevel::CRITICAL: return "CRITICAL";
+        case LogLevel::DEBUG:
+            return "DEBUG";
+        case LogLevel::INFO:
+            return "INFO";
+        case LogLevel::WARNING:
+            return "WARNING";
+        case LogLevel::ERROR:
+            return "ERROR";
+        case LogLevel::CRITICAL:
+            return "CRITICAL";
     }
     return "UNKNOWN";
 }
@@ -41,7 +40,7 @@ class Logger;
 /// RAII proxy object for stream-style logging
 /// Accumulates log messages and writes them when destroyed
 class LogStream {
-public:
+   public:
     LogStream(ILogger* logger, LogLevel level);
     ~LogStream();
 
@@ -54,7 +53,7 @@ public:
     LogStream& operator=(LogStream&& other) noexcept;
 
     /// Stream insertion operator for any type that supports operator<<
-    template<typename T>
+    template <typename T>
     LogStream& operator<<(const T& value) {
         if (active_) {
             stream_ << value;
@@ -63,9 +62,11 @@ public:
     }
 
     /// Check if this log stream is active (level >= min_level)
-    bool is_active() const noexcept { return active_; }
+    bool is_active() const noexcept {
+        return active_;
+    }
 
-private:
+   private:
     ILogger* logger_;
     LogLevel level_;
     std::ostringstream stream_;
@@ -75,7 +76,7 @@ private:
 /// Abstract interface for logging
 /// Users can inherit from this class to provide custom logging implementations
 class ILogger {
-public:
+   public:
     virtual ~ILogger() = default;
 
     /// Create a log stream for the specified level
@@ -109,7 +110,7 @@ public:
     virtual void set_min_level(LogLevel level) = 0;
     virtual LogLevel get_min_level() const noexcept = 0;
 
-protected:
+   protected:
     friend class LogStream;
 
     /// Internal method called by LogStream to write the final message
@@ -119,7 +120,7 @@ protected:
 /// Default logger implementation that writes to stdout
 /// This class is thread-safe and uses modern C++20 features
 class Logger : public ILogger {
-public:
+   public:
     /// Construct a logger with the specified minimum log level
     explicit Logger(LogLevel min_level = LogLevel::INFO);
 
@@ -145,11 +146,11 @@ public:
     /// Check if timestamps are enabled
     bool get_show_timestamps() const noexcept;
 
-protected:
+   protected:
     /// Write a log message (called by LogStream)
     void write_log(LogLevel level, std::string_view message) override;
 
-private:
+   private:
     /// Format a log message with timestamp and level
     std::string format_message(LogLevel level, std::string_view message) const;
 
@@ -168,7 +169,8 @@ inline std::shared_ptr<ILogger> make_logger(LogLevel min_level = LogLevel::INFO)
 }
 
 /// Global logger instance used by the library
-/// Users can replace this with their own logger implementation using set_global_logger()
+/// Users can replace this with their own logger implementation using
+/// set_global_logger()
 inline std::shared_ptr<ILogger> global_logger = make_logger();
 
 /// Set the global logger instance
@@ -185,8 +187,8 @@ inline std::shared_ptr<ILogger> get_global_logger() {
     return global_logger;
 }
 
-} // namespace yaskawa
-} // namespace viam
+}  // namespace yaskawa
+}  // namespace viam
 
 /// Convenience macro for logging
 /// Usage: LOGGING(info) << "message";

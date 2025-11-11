@@ -9,7 +9,8 @@
 
 void configure_logger(const viam::sdk::ResourceConfig& cfg);
 
-// helper function to extract an attribute value from its key within a ResourceConfig
+// helper function to extract an attribute value from its key within a
+// ResourceConfig
 template <class T>
 std::optional<T> find_config_attribute(const viam::sdk::ResourceConfig& cfg, const std::string& attribute) {
     auto key = cfg.attributes().find(attribute);
