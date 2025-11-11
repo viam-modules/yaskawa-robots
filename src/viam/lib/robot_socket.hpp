@@ -410,6 +410,7 @@ class GoalRequestHandle {
     std::atomic<bool> is_done_;
     std::shared_ptr<YaskawaController> controller_;
     std::shared_future<goal_state_t> completion_future_;
+    std::future<Message> is_done_future_;
     mutable std::mutex mutex_;
 };
 
