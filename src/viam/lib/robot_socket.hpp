@@ -362,7 +362,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::future<Message> get_robot_position_velocity_torque();
     std::future<Message> get_robot_status();
     std::future<Message> register_udp_port(uint16_t port);
-    std::future<Message> reset_errors();
+    void reset_errors();
     std::future<Message> echo_trajectory();
     std::future<Message> get_goal_status(int32_t id);
     std::future<Message> cancel_goal(int32_t id);
