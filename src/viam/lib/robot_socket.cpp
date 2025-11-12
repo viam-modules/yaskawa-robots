@@ -830,11 +830,7 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
 
 std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     if (!robot_state_.IsReady()) {
-        auto msg = reset_errors().get();
-        if (msg.header.message_type == MSG_ERROR) {
-            const error_payload_t* err_msg = reinterpret_cast<const error_payload_t*>(msg.payload.data());
-            throw std::runtime_error(std::format("failed to reset error code {}", err_msg->error_code));
-        }
+        reset_errors().get();
         throw std::runtime_error(std::format(
             "cannot move the robot state is e_stopped {} in error {}", robot_state_.e_stopped.load(), robot_state_.in_error.load()));
     }
