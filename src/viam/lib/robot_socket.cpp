@@ -236,6 +236,24 @@ RobotStatusMessage::RobotStatusMessage(const Message& msg) {
     std::memcpy(&size, data, sizeof(size));
 }
 
+CheckGroupMessage::CheckGroupMessage(const Message& msg) {
+    if (msg.header.message_type != MSG_CHECK_GROUP)
+        throw std::runtime_error(
+            std::format("wrong message status type expected {} had {}", (int)MSG_CHECK_GROUP, msg.header.message_type));
+
+    // Validate payload size to prevent buffer overruns
+    if (msg.payload.size() != sizeof(boolean_payload_t))
+        throw std::runtime_error(std::format(
+            "incorrect boolean_payload_t payload size: expected {} bytes, got {} bytes", sizeof(boolean_payload_t), msg.payload.size()));
+
+    // Safe deserialization: verify alignment before reinterpret_cast
+    if (reinterpret_cast<uintptr_t>(msg.payload.data()) % alignof(boolean_payload_t) != 0)
+        throw std::runtime_error("boolean payload data is not properly aligned");
+
+    const boolean_payload_t* group_check = reinterpret_cast<const boolean_payload_t*>(msg.payload.data());
+    is_known_group = group_check->value;
+}
+
 Message::Message(message_type_t type, std::vector<uint8_t> data) {
     header.magic_number = PROTOCOL_MAGIC_NUMBER;
     header.version = PROTOCOL_VERSION;
@@ -655,11 +673,10 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
 }
 
 // Robot Implementation
-YaskawaController::YaskawaController(boost::asio::io_context& io_context, double speed, double acceleration, const std::string& host)
-    : io_context_(io_context), host_(host), robot_state_(State()), speed_(speed), acceleration_(acceleration) {
+YaskawaController::YaskawaController(boost::asio::io_context& io_context, double speed, double acceleration, uint32_t group_index, const std::string& host)
+    : io_context_(io_context), host_(host), robot_state_(State()), speed_(speed), acceleration_(acceleration), group_index_(group_index){
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
-    group_index_ = 0;
 }
 
 std::future<void> YaskawaController::connect() {
@@ -714,6 +731,11 @@ void YaskawaController::disconnect() {
         udp_socket_->disconnect();
     }
 }
+
+uint32_t YaskawaController::get_group_index() const{
+    return group_index_;
+}
+
 
 std::future<Message> YaskawaController::get_goal_status(int32_t goal_id) {
     std::vector<uint8_t> payload(sizeof(cancel_goal_payload_t));
@@ -784,6 +806,7 @@ std::future<Message> YaskawaController::get_robot_position_velocity_torque() {
 }
 
 std::future<Message> YaskawaController::get_robot_status() {
+    //TODO(RSDK-12470) account for group_id_ in request
     std::promise<Message> promise;
     auto future = promise.get_future();
     if (!udp_socket_) {
@@ -975,6 +998,7 @@ std::future<Message> YaskawaController::echo_trajectory() {
     return tcp_socket_->send_request(Message(MSG_ECHO_TRAJECTORY));
 }
 std::future<Message> YaskawaController::stop() {
+    //TODO(RSDK-12470) account for group_index_ in request
     return tcp_socket_->send_request(Message(MSG_STOP_MOTION));
 }
 std::future<Message> YaskawaController::getCartPosition() {
@@ -1010,6 +1034,13 @@ std::future<Message> YaskawaController::angleToCartPos(AnglePosition& pos) {
 
 bool YaskawaController::is_status_command(message_type_t type) const {
     return type == MSG_ROBOT_POSITION_VELOCITY_TORQUE || type == MSG_ROBOT_STATUS;
+}
+
+std::future<Message> YaskawaController::checkGroupIndex() {
+    std::vector<uint8_t> payload(sizeof(group_id_t));
+    group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
+    id->group_id = (int32_t)group_index_;
+    return tcp_socket_->send_request(Message(MSG_CHECK_GROUP, payload));
 }
 
 // GoalStatusMessage implementation
