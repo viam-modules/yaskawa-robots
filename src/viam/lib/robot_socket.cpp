@@ -935,7 +935,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, acceleration_);
 
     std::vector<trajectory_point_t> samples;
-    std::chrono::seconds<double> cumulative_time{0};
+    std::chrono::duration<double> cumulative_time{0};
 
     for (const auto& segment : segments) {
         const Trajectory trajectory(Path(segment, 0.1), max_velocity_vec, max_acceleration_vec);
