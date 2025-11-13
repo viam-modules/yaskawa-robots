@@ -227,7 +227,7 @@ struct RobotStatusMessage {
 };
 
 struct CheckGroupMessage {
-    bool is_known_group = false; 
+    bool is_known_group = false;
     CheckGroupMessage() = default;
     CheckGroupMessage(const Message&);
 };

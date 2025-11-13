@@ -126,14 +126,13 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
 
     auto group_index = find_config_attribute<double>(cfg, "group_index");
     constexpr int k_min_group_index = 0;
-    //TODO(RSDK-12470) support multiple arms
+    // TODO(RSDK-12470) support multiple arms
     constexpr int k_max_group_index = 0;
-    if (group_index && (*group_index < k_min_group_index || *group_index > k_max_group_index || floor(*group_index) != *group_index)){
-        throw std::invalid_argument(
-            std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
-                        k_min_group_index,
-                        k_max_group_index,
-                        *group_index));
+    if (group_index && (*group_index < k_min_group_index || *group_index > k_max_group_index || floor(*group_index) != *group_index)) {
+        throw std::invalid_argument(std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
+                                                k_min_group_index,
+                                                k_max_group_index,
+                                                *group_index));
     }
 
     return {};
@@ -212,9 +211,9 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
                 throw;
         }
     }
-    if (!CheckGroupMessage(robot_->checkGroupIndex().get()).is_known_group){
+    if (!CheckGroupMessage(robot_->checkGroupIndex().get()).is_known_group) {
         // added the disconnect so the yaskawa can successfully reconfigure if this error occurs.
-        //TODO investigate the need for disconnect. 
+        // TODO investigate the need for disconnect.
         robot_->disconnect();
         std::ostringstream buffer;
         buffer << std::format("group_index {} is not available on the arm controller", robot_->get_group_index());

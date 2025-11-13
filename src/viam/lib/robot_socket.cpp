@@ -673,8 +673,9 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
 }
 
 // Robot Implementation
-YaskawaController::YaskawaController(boost::asio::io_context& io_context, double speed, double acceleration, uint32_t group_index, const std::string& host)
-    : io_context_(io_context), host_(host), robot_state_(State()), speed_(speed), acceleration_(acceleration), group_index_(group_index){
+YaskawaController::YaskawaController(
+    boost::asio::io_context& io_context, double speed, double acceleration, uint32_t group_index, const std::string& host)
+    : io_context_(io_context), host_(host), robot_state_(State()), speed_(speed), acceleration_(acceleration), group_index_(group_index) {
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
 }
@@ -732,10 +733,9 @@ void YaskawaController::disconnect() {
     }
 }
 
-uint32_t YaskawaController::get_group_index() const{
+uint32_t YaskawaController::get_group_index() const {
     return group_index_;
 }
-
 
 std::future<Message> YaskawaController::get_goal_status(int32_t goal_id) {
     std::vector<uint8_t> payload(sizeof(cancel_goal_payload_t));
@@ -806,7 +806,7 @@ std::future<Message> YaskawaController::get_robot_position_velocity_torque() {
 }
 
 std::future<Message> YaskawaController::get_robot_status() {
-    //TODO(RSDK-12470) account for group_id_ in request
+    // TODO(RSDK-12470) account for group_id_ in request
     std::promise<Message> promise;
     auto future = promise.get_future();
     if (!udp_socket_) {
@@ -1005,7 +1005,7 @@ std::future<Message> YaskawaController::echo_trajectory() {
     return tcp_socket_->send_request(Message(MSG_ECHO_TRAJECTORY));
 }
 std::future<Message> YaskawaController::stop() {
-    //TODO(RSDK-12470) account for group_index_ in request
+    // TODO(RSDK-12470) account for group_index_ in request
     return tcp_socket_->send_request(Message(MSG_STOP_MOTION));
 }
 std::future<Message> YaskawaController::getCartPosition() {
