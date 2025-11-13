@@ -195,7 +195,7 @@ struct CartesianPosition {
     CartesianPosition() = default;
     CartesianPosition(const Message&);
     CartesianPosition(const CartesianPosition&);
-    std::string toString() const noexcept;
+    std::string toString() const;
 };
 
 struct AnglePosition {
@@ -203,7 +203,7 @@ struct AnglePosition {
     AnglePosition() = default;
     AnglePosition(const Message&);
     AnglePosition(std::vector<double> posRad);
-    std::string toString() noexcept;
+    std::string toString();
     void toRad();
 };
 
@@ -274,12 +274,16 @@ class RobotSocketBase {
     bool is_connected() const {
         return connected_.load();
     }
+
+   protected:
+    // TODO(RSDK-12628) make these variables private
+    // NOLINTBEGIN(misc-non-private-member-variables-in-classes)
     boost::asio::io_context& io_context_;
     std::string host_;
     uint16_t port_;
     std::atomic<bool> connected_{false};
+    // NOLINTEND(misc-non-private-member-variables-in-classes)
 
-   protected:
     static protocol_header_t parse_header(const std::vector<uint8_t>& buffer);
 };
 

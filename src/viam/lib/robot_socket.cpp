@@ -141,13 +141,8 @@ CartesianPosition::CartesianPosition(const CartesianPosition& other) {
 }
 
 /// currently only used in example/main.cpp
-std::string CartesianPosition::toString() const noexcept {
-    try {
-        return std::format(" ({},{},{}) - ({},{},{}) ", x, y, z, rx, ry, rz);
-    } catch (const std::exception& ex) {
-        LOGGING(error) << "error during CartesianPosition::toString(): " << ex.what();
-        return "";
-    }
+std::string CartesianPosition::toString() const {
+    return std::format(" ({},{},{}) - ({},{},{}) ", x, y, z, rx, ry, rz);
 }
 /// Parse joint angle position from a protocol message
 /// Validates message type and payload size before extracting angle data
@@ -184,7 +179,7 @@ void AnglePosition::toRad() {
 /// Validates that the position vector has at least 6 dimensions before
 /// formatting.
 /// currently only used in example/main.cpp
-std::string AnglePosition::toString() noexcept {
+std::string AnglePosition::toString() {
     // Validate that we have at least 6 joint angles
     if (pos.size() < 6) {
         std::ostringstream buffer;
@@ -192,14 +187,9 @@ std::string AnglePosition::toString() noexcept {
         return buffer.str();
     }
 
-    try {
-        // Format the first 6 joint angles (standard for 6-axis robot)
-        return std::format(
-            "AnglePosition[{:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}] (degrees)", pos[0], pos[1], pos[2], pos[3], pos[4], pos[5]);
-    } catch (const std::exception& ex) {
-        LOGGING(error) << "error during AnglePosition::toString(): " << ex.what();
-        return "";
-    }
+    // Format the first 6 joint angles (standard for 6-axis robot)
+    return std::format(
+        "AnglePosition[{:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}, {:.3f}] (degrees)", pos[0], pos[1], pos[2], pos[3], pos[4], pos[5]);
 }
 
 StatusMessage::StatusMessage(const Message& msg) {
@@ -288,19 +278,15 @@ CheckGroupMessage::CheckGroupMessage(const Message& msg) {
     is_known_group = group_check->value;
 }
 
-Message::Message(message_type_t type, std::vector<uint8_t>&& data) {
+Message::Message(message_type_t type, std::vector<uint8_t>&& data) : payload(std::move(data)) {
     header.magic_number = PROTOCOL_MAGIC_NUMBER;
     header.version = PROTOCOL_VERSION;
     header.message_type = static_cast<uint8_t>(type);
     header.timestamp_ms =
         (uint64_t)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    header.payload_length = static_cast<uint32_t>(data.size());
-    payload = std::move(data);
+    header.payload_length = static_cast<uint32_t>(payload.size());
 }
-Message::Message(protocol_header_t header, std::vector<uint8_t>&& payload) {
-    this->header = header;
-    this->payload = std::move(payload);
-}
+Message::Message(protocol_header_t header, std::vector<uint8_t>&& payload) : header(header), payload(std::move(payload)) {}
 
 Message::Message(Message&& msg) noexcept : header(std::move(msg.header)), payload(std::move(msg.payload)) {}
 Message::Message(const Message& msg) : payload(msg.payload) {
