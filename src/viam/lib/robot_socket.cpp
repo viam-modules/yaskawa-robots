@@ -236,6 +236,24 @@ RobotStatusMessage::RobotStatusMessage(const Message& msg) {
     std::memcpy(&size, data, sizeof(size));
 }
 
+CheckGroupMessage::CheckGroupMessage(const Message& msg) {
+    if (msg.header.message_type != MSG_CHECK_GROUP)
+        throw std::runtime_error(
+            std::format("wrong message status type expected {} had {}", (int)MSG_CHECK_GROUP, msg.header.message_type));
+
+    // Validate payload size to prevent buffer overruns
+    if (msg.payload.size() != sizeof(boolean_payload_t))
+        throw std::runtime_error(std::format(
+            "incorrect boolean_payload_t payload size: expected {} bytes, got {} bytes", sizeof(boolean_payload_t), msg.payload.size()));
+
+    // Safe deserialization: verify alignment before reinterpret_cast
+    if (reinterpret_cast<uintptr_t>(msg.payload.data()) % alignof(boolean_payload_t) != 0)
+        throw std::runtime_error("boolean payload data is not properly aligned");
+
+    const boolean_payload_t* group_check = reinterpret_cast<const boolean_payload_t*>(msg.payload.data());
+    is_known_group = group_check->value;
+}
+
 Message::Message(message_type_t type, std::vector<uint8_t> data) {
     header.magic_number = PROTOCOL_MAGIC_NUMBER;
     header.version = PROTOCOL_VERSION;
@@ -655,11 +673,10 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
 }
 
 // Robot Implementation
-YaskawaController::YaskawaController(boost::asio::io_context& io_context, double speed, double acceleration, const std::string& host)
-    : io_context_(io_context), host_(host), robot_state_(State()), speed_(speed), acceleration_(acceleration) {
+YaskawaController::YaskawaController(boost::asio::io_context& io_context, double speed, double acceleration, uint32_t group_index, const std::string& host)
+    : io_context_(io_context), host_(host), robot_state_(State()), speed_(speed), acceleration_(acceleration), group_index_(group_index){
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
-    group_index_ = 0;
 }
 
 std::future<void> YaskawaController::connect() {
@@ -714,6 +731,11 @@ void YaskawaController::disconnect() {
         udp_socket_->disconnect();
     }
 }
+
+uint32_t YaskawaController::get_group_index() const{
+    return group_index_;
+}
+
 
 std::future<Message> YaskawaController::get_goal_status(int32_t goal_id) {
     std::vector<uint8_t> payload(sizeof(cancel_goal_payload_t));
@@ -784,6 +806,7 @@ std::future<Message> YaskawaController::get_robot_position_velocity_torque() {
 }
 
 std::future<Message> YaskawaController::get_robot_status() {
+    //TODO(RSDK-12470) account for group_id_ in request
     std::promise<Message> promise;
     auto future = promise.get_future();
     if (!udp_socket_) {
@@ -897,60 +920,84 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         throw std::runtime_error("arm is already at the desired joint positions");
     }
 
-    // set velocity/acceleration constraints
-    const auto max_velocity = Eigen::VectorXd::Constant(6, speed_);
-    const auto max_acceleration = Eigen::VectorXd::Constant(6, acceleration_);
-    LOGGING(info) << "generating trajectory with max speed: " << radians_to_degrees(max_velocity[0]);
-
-    std::vector<trajectory_point_t> points;
-
-    const Trajectory trajectory(Path(waypoints, 0.1), max_velocity, max_acceleration);
-    if (!trajectory.isValid()) {
-        std::stringstream buffer;
-        buffer << "trajectory generation failed for path:";
-        for (const auto& position : waypoints) {
-            buffer << "{";
-            for (Eigen::Index j = 0; j < 6; j++) {
-                buffer << position[j] << " ";
-            }
-            buffer << "}";
+    std::vector<std::list<Eigen::VectorXd>> segments;
+    // Walk interior points and cut at 180 degree direction reversals (dot == -1)
+    // github.com/viam-modules/universal-robots/blob/2eaa3243984a299b6565920f4dc60c6fe0ddc8ef/src/viam/ur/module/ur_arm.cpp#L684
+    for (auto where = next(begin(waypoints)); where != prev(end(waypoints)); ++where) {
+        const auto segment_ab = *where - *prev(where);
+        const auto segment_bc = *next(where) - *where;
+        const auto dot = segment_ab.normalized().dot(segment_bc.normalized());
+        if (std::fabs(dot + 1.0) < 1e-3) {
+            segments.emplace_back();
+            segments.back().splice(segments.back().begin(), waypoints, waypoints.begin(), where);
+            segments.back().push_back(*where);
         }
-        throw std::runtime_error(buffer.str());
     }
 
-    const double duration = trajectory.getDuration();
-    if (!std::isfinite(duration)) {
-        throw std::runtime_error("trajectory.getDuration() was not a finite number");
+    // Remainder becomes the last (or only) segment
+    segments.push_back(std::move(waypoints));
+
+    // set velocity/acceleration constraints
+    const auto max_velocity_vec = Eigen::VectorXd::Constant(6, speed_);
+    const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, acceleration_);
+
+    std::vector<trajectory_point_t> samples;
+    std::chrono::duration<double> cumulative_time{0};
+
+    for (const auto& segment : segments) {
+        const Trajectory trajectory(Path(segment, 0.1), max_velocity_vec, max_acceleration_vec);
+        if (!trajectory.isValid()) {
+            std::stringstream buffer;
+            buffer << "trajectory generation failed for path:";
+            for (const auto& position : segment) {
+                buffer << "{";
+                for (Eigen::Index j = 0; j < 6; j++) {
+                    buffer << position[j] << " ";
+                }
+                buffer << "}";
+            }
+            throw std::runtime_error(buffer.str());
+        }
+
+        const double duration = trajectory.getDuration();
+
+        if (!std::isfinite(duration)) {
+            throw std::runtime_error("trajectory.getDuration() was not a finite number");
+        }
+
+        // TODO(RSDK-12566): Make this configurable
+        // viam.atlassian.net/browse/RSDK-12566
+        if (duration > 600) {  // if the duration is longer than 10 minutes
+            throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
+        }
+
+        if (duration < k_min_timestep_sec) {
+            LOGGING(debug) << "duration of move is too small, assuming arm is at goal";
+            continue;
+        }
+
+        trajectory.outputPhasePlaneTrajectory();
+
+        // desired sampling frequency. if the duration is small we will oversample but that should be fine.
+        constexpr double k_sampling_freq_hz = 3;
+
+        sampling_func(samples, duration, k_sampling_freq_hz, [&](const double t, const double) {
+            auto p_eigen = trajectory.getPosition(t);
+            auto v_eigen = trajectory.getVelocity(t);
+            const auto absolute_time = cumulative_time + std::chrono::duration<double>(t);
+            auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
+            auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
+            return trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                      {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+                                      {0},
+                                      {0},
+                                      {static_cast<int32_t>(secs.count()), static_cast<int32_t>(nanos.count())}};
+        });
+
+        cumulative_time += std::chrono::duration<double>(duration);
     }
-    // TODO(RSDK-11069): Make this configurable
-    // https://viam.atlassian.net/browse/RSDK-11069
-    if (duration > 600) {  // if the duration is longer than 10 minutes
-        throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
-    }
-    if (duration < k_min_timestep_sec) {
-        throw std::runtime_error(std::format("duration {} lower than {} assuming arm is at goal", duration, k_min_timestep_sec));
-    }
 
-    // desired sampling frequency. if the duration is small we will oversample but
-    // that should be fine.
-    constexpr double k_sampling_freq_hz = 3;
-    sampling_func(points, duration, k_sampling_freq_hz, [&](const double t, const double) {
-        auto p_eigen = trajectory.getPosition(t);
-        auto v_eigen = trajectory.getVelocity(t);
-        auto secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::duration<double>(t));
-        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(t) - secs);
-
-        return trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
-                                  {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
-                                  {0},
-                                  {0},
-                                  {(int32_t)secs.count(), (int32_t)nanos.count()}};
-    });
-
-    LOGGING(info) << "move: compute_trajectory end " << unix_time << " samples.size() " << points.size() << " segments "
-                  << waypoints.size() - 1;
-
-    return send_goal_(group_index_, 6, points, {});
+    return send_goal_(group_index_, 6, samples, {});
 }
 
 std::future<Message> YaskawaController::echo_trajectory() {
@@ -958,6 +1005,7 @@ std::future<Message> YaskawaController::echo_trajectory() {
     return tcp_socket_->send_request(Message(MSG_ECHO_TRAJECTORY));
 }
 std::future<Message> YaskawaController::stop() {
+    //TODO(RSDK-12470) account for group_index_ in request
     return tcp_socket_->send_request(Message(MSG_STOP_MOTION));
 }
 std::future<Message> YaskawaController::getCartPosition() {
@@ -993,6 +1041,13 @@ std::future<Message> YaskawaController::angleToCartPos(AnglePosition& pos) {
 
 bool YaskawaController::is_status_command(message_type_t type) const {
     return type == MSG_ROBOT_POSITION_VELOCITY_TORQUE || type == MSG_ROBOT_STATUS;
+}
+
+std::future<Message> YaskawaController::checkGroupIndex() {
+    std::vector<uint8_t> payload(sizeof(group_id_t));
+    group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
+    id->group_id = (int32_t)group_index_;
+    return tcp_socket_->send_request(Message(MSG_CHECK_GROUP, payload));
 }
 
 // GoalStatusMessage implementation
