@@ -912,7 +912,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, acceleration_);
 
     std::vector<trajectory_point_t> samples;
-    double cumulative_time = 0.0;  // Track cumulative time across segments
+    std::chrono::seconds cumulative_time{0};
 
     for (const auto& segment : segments) {
         const Trajectory trajectory(Path(segment, 0.1), max_velocity_vec, max_acceleration_vec);
@@ -954,17 +954,17 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         sampling_func(samples, duration, k_sampling_freq_hz, [&](const double t, const double) {
             auto p_eigen = trajectory.getPosition(t);
             auto v_eigen = trajectory.getVelocity(t);
-            const double absolute_time = cumulative_time + t;
-            auto secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::duration<double>(absolute_time));
-            auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(absolute_time) - secs);
+            const auto absolute_time = cumulative_time + std::chrono::duration<double>(t);
+            auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
+            auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
             return trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
                                       {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
                                       {0},
                                       {0},
-                                      {(int32_t)secs.count(), (int32_t)nanos.count()}};
+                                      {static_cast<int32_t>(secs.count()), static_cast<int32_t>(nanos.count())}};
         });
 
-        cumulative_time += duration;
+        cumulative_time += std::chrono::duration<double>(duration);
     }
 
     return send_goal_(group_index_, 6, samples, {});
