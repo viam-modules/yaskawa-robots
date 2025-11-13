@@ -114,15 +114,23 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     constexpr double k_min_threshold = 0.0;
     constexpr double k_max_threshold = 2 * M_PI;
     if (threshold && (*threshold < k_min_threshold || *threshold > k_max_threshold)) {
-        std::stringstream sstream;
-        sstream << "attribute `reject_move_request_threshold_rad` should be between " << k_min_threshold << " and " << k_max_threshold
-                << ", it is : " << *threshold << " degrees";
         throw std::invalid_argument(
             std::format("attribute `reject_move_request_threshold_rad` should be "
                         "between {} and {} , it is : {} radians",
                         k_min_threshold,
                         k_max_threshold,
                         *threshold));
+    }
+
+    auto group_index = find_config_attribute<double>(cfg, "group_index");
+    constexpr int k_min_group_index = 0;
+    // TODO(RSDK-12470) support multiple arms
+    constexpr int k_max_group_index = 0;
+    if (group_index && (*group_index < k_min_group_index || *group_index > k_max_group_index || floor(*group_index) != *group_index)) {
+        throw std::invalid_argument(std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
+                                                k_min_group_index,
+                                                k_max_group_index,
+                                                *group_index));
     }
 
     return {};
@@ -182,8 +190,9 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
 
     auto speed = find_config_attribute<double>(config, "speed_rad_per_sec").value();
     auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
+    auto group_index = static_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));
 
-    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, host);
+    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, group_index, host);
 
     constexpr int k_max_connection_try = 5;
     int connection_try = 0;
@@ -202,6 +211,14 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
                 throw;
             }
         }
+    }
+    if (!CheckGroupMessage(robot_->checkGroupIndex().get()).is_known_group) {
+        // added the disconnect so the yaskawa can successfully reconfigure if this error occurs.
+        // TODO investigate the need for disconnect.
+        robot_->disconnect();
+        std::ostringstream buffer;
+        buffer << std::format("group_index {} is not available on the arm controller", robot_->get_group_index());
+        throw std::invalid_argument(buffer.str());
     }
 }
 void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {

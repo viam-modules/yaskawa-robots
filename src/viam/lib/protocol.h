@@ -65,7 +65,8 @@ typedef enum : std::uint8_t {
     MSG_GET_GOAL_STATUS = 0x15,	// Query status of a goal
     MSG_FROM_JOINT_TO_CART = 0x16,
     MSG_FROM_CART_TO_JOINT = 0x17,
-    MSG_GET_CART = 0x18
+    MSG_GET_CART = 0x18,
+    MSG_CHECK_GROUP = 0x19,
 } message_type_t;
 
 //TODO(RSDK-12543) update this size in yaskawa-controller

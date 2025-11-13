@@ -135,7 +135,7 @@ std::vector<CartesianPosition> generateCirclePosition(double r, double lb, doubl
 }
 
 void example(asio::io_context& io_context) {
-    auto robot = std::make_shared<YaskawaController>(io_context, 1.1, 1.1, "10.1.11.177");
+    auto robot = std::make_shared<YaskawaController>(io_context, 1.1, 1.1, 0, "10.1.11.177");
     try {
         std::cout << "Connecting to robot..." << '\n';
         robot->connect().get();
