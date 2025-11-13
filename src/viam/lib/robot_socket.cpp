@@ -805,13 +805,15 @@ std::future<Message> YaskawaController::register_udp_port(uint16_t port) {
 
 void YaskawaController::reset_errors() {
     auto msg = tcp_socket_->send_request(Message(MSG_RESET_ERRORS)).get();
-    if (msg.header.message_type == MSG_OK){
+    if (msg.header.message_type == MSG_OK) {
         return;
     }
     if (msg.header.message_type == MSG_ERROR) {
-            const error_payload_t* err_msg = reinterpret_cast<const error_payload_t*>(msg.payload.data());
-            throw std::runtime_error(std::format("failed to reset arm, error code {}", err_msg->error_code));
-    }   
+        error_payload_t err_msg;
+        const error_payload_t* err_msg = reinterpret_cast<const error_payload_t*>(msg.payload.data());
+        std::memcpy(&err_msg, msg.payload.data(), sizeof(err_msg));
+        throw std::runtime_error(std::format("failed to reset arm, error code {}", err_msg->error_code));
+    }
     throw std::runtime_error(std::format("failed to reset arm, got unexpected message type", msg.header.message_type));
 }
 
