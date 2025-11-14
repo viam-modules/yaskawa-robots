@@ -867,7 +867,7 @@ void YaskawaController::reset_errors() {
     if (msg.header.message_type == MSG_ERROR) {
         error_payload_t err_msg;
         std::memcpy(&err_msg, msg.payload.data(), sizeof(err_msg));
-        throw std::runtime_error(std::format("failed to reset arm, error code {}", err_msg.error_code));
+        throw std::runtime_error(std::format("failed to reset arm, error code {}", static_cast<const int&>(err_msg.error_code)));
     }
     throw std::runtime_error(std::format("failed to reset arm, got unexpected message type", msg.header.message_type));
 }
