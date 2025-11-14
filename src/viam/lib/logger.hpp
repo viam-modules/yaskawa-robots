@@ -14,7 +14,7 @@ namespace viam {
 namespace yaskawa {
 
 /// Log levels in ascending order of severity
-enum class LogLevel { DEBUG, INFO, WARNING, ERROR, CRITICAL };
+enum class LogLevel : std::uint8_t { DEBUG, INFO, WARNING, ERROR, CRITICAL };
 
 /// Convert log level to string representation
 constexpr std::string_view to_string(LogLevel level) noexcept {
@@ -122,7 +122,7 @@ class ILogger {
 class Logger : public ILogger {
    public:
     /// Construct a logger with the specified minimum log level
-    explicit Logger(LogLevel min_level = LogLevel::INFO);
+    explicit Logger(LogLevel min_level = LogLevel::INFO) noexcept;
 
     ~Logger() override = default;
 
@@ -130,9 +130,9 @@ class Logger : public ILogger {
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
 
-    // Allow move operations
-    Logger(Logger&&) noexcept = default;
-    Logger& operator=(Logger&&) noexcept = default;
+    // Delete move operations because we have a mutex in the Logger implementation
+    Logger(Logger&&) noexcept = delete;
+    Logger& operator=(Logger&&) noexcept = delete;
 
     /// Set the minimum log level
     void set_min_level(LogLevel level) override;
@@ -155,7 +155,7 @@ class Logger : public ILogger {
     std::string format_message(LogLevel level, std::string_view message) const;
 
     /// Get current timestamp as string
-    std::string get_timestamp() const;
+    static std::string get_timestamp();
 
     mutable std::mutex mutex_;
     LogLevel min_level_;
@@ -164,7 +164,9 @@ class Logger : public ILogger {
 
 /// Create a shared pointer to a Logger instance
 /// This is the recommended way to create logger instances
-inline std::shared_ptr<ILogger> make_logger(LogLevel min_level = LogLevel::INFO) {
+/// Note: make_shared can throw a std::bad_alloc, which would result in a call to std::terminate.
+/// if we are already out of memory at this point then things are already really bad, so terminating is okay.
+inline std::shared_ptr<ILogger> make_logger(LogLevel min_level = LogLevel::INFO) noexcept {
     return std::make_shared<Logger>(min_level);
 }
 
@@ -178,7 +180,7 @@ inline std::shared_ptr<ILogger> global_logger = make_logger();
 /// Thread-safe: should be called before any logging operations
 inline void set_global_logger(std::shared_ptr<ILogger> logger) {
     if (logger) {
-        global_logger = logger;
+        global_logger = std::move(logger);
     }
 }
 
