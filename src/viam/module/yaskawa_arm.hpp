@@ -88,7 +88,7 @@ class YaskawaArm final : public Arm, public Reconfigurable {
     }
 
    private:
-    void configure_(const Dependencies& deps, const ResourceConfig& cfg);
+    void configure_(const Dependencies& deps, const ResourceConfig& config);
 
     template <template <typename> typename lock_type>
     void check_configured_(const lock_type<std::shared_mutex>&);
