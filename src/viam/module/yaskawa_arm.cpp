@@ -99,8 +99,6 @@ std::string unix_time_iso8601() {
     return stream.str();
 }
 
-}  // namespace
-
 std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     if (!find_config_attribute<std::string>(cfg, "host")) {
         throw std::invalid_argument("attribute `host` is required");
@@ -126,18 +124,19 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
 
     auto group_index = find_config_attribute<double>(cfg, "group_index");
     constexpr int k_min_group_index = 0;
-    //TODO(RSDK-12470) support multiple arms
+    // TODO(RSDK-12470) support multiple arms
     constexpr int k_max_group_index = 0;
-    if (group_index && (*group_index < k_min_group_index || *group_index > k_max_group_index || floor(*group_index) != *group_index)){
-        throw std::invalid_argument(
-            std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
-                        k_min_group_index,
-                        k_max_group_index,
-                        *group_index));
+    if (group_index && (*group_index < k_min_group_index || *group_index > k_max_group_index || floor(*group_index) != *group_index)) {
+        throw std::invalid_argument(std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
+                                                k_min_group_index,
+                                                k_max_group_index,
+                                                *group_index));
     }
 
     return {};
 }
+
+}  // namespace
 
 const ModelFamily& YaskawaArm::model_family() {
     static const auto family = ModelFamily{"viam", "yaskawa-robots"};
@@ -161,7 +160,7 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
             model,
             // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is
             // fixed by ModelRegistration.
-            [&, model](auto deps, auto config) { return std::make_shared<YaskawaArm>(model, deps, config, io_context); },
+            [&, model](const auto& deps, const auto& config) { return std::make_shared<YaskawaArm>(model, deps, config, io_context); },
             [](auto const& config) { return validate_config_(config); });
     };
 
@@ -208,13 +207,14 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
         } catch (std::exception& ex) {
             VIAM_SDK_LOG(error) << std::format(
                 "connection {} out of {} failed because {}", connection_try, k_max_connection_try, ex.what());
-            if (k_max_connection_try == connection_try)
+            if (k_max_connection_try == connection_try) {
                 throw;
+            }
         }
     }
-    if (!CheckGroupMessage(robot_->checkGroupIndex().get()).is_known_group){
+    if (!CheckGroupMessage(robot_->checkGroupIndex().get()).is_known_group) {
         // added the disconnect so the yaskawa can successfully reconfigure if this error occurs.
-        //TODO investigate the need for disconnect. 
+        // TODO investigate the need for disconnect.
         robot_->disconnect();
         std::ostringstream buffer;
         buffer << std::format("group_index {} is not available on the arm controller", robot_->get_group_index());
@@ -238,7 +238,7 @@ std::vector<double> YaskawaArm::get_joint_positions(const ProtoStruct&) {
 void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
                                               const MoveOptions&,
                                               const viam::sdk::ProtoStruct&) {
-    std::shared_lock rlock{config_mutex_};
+    const std::shared_lock rlock{config_mutex_};
 
     if (!positions.empty()) {
         std::list<Eigen::VectorXd> waypoints;
