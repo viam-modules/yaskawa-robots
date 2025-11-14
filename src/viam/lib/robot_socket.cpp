@@ -402,17 +402,14 @@ awaitable<void> TcpRobotSocket::process_requests() {
             co_await async_write(socket_, boost::asio::buffer(buffer), use_awaitable);
             // Try to read response
             std::vector<uint8_t> header_buffer(sizeof(protocol_header_t));
-            size_t bytes_received = co_await socket_.async_read_some(boost::asio::buffer(header_buffer), use_awaitable);
-            header_buffer.resize(bytes_received);
-            if (bytes_received != sizeof(protocol_header_t)) {
-                throw std::runtime_error("TCP failed to read header");
-            }
+            co_await async_read(socket_, boost::asio::buffer(header_buffer), use_awaitable);
 
             const protocol_header_t header = parse_header(header_buffer);
             std::vector<uint8_t> payload_buffer(header.payload_length);
 
-            bytes_received = co_await socket_.async_read_some(boost::asio::buffer(payload_buffer), use_awaitable);
-            payload_buffer.resize(bytes_received);
+            if (header.payload_length > 0) {
+                co_await async_read(socket_, boost::asio::buffer(payload_buffer), use_awaitable);
+            }
             auto response = Message(header, std::move(payload_buffer));
 
             request_pair.second.set_value(response);
