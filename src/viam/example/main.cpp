@@ -23,101 +23,6 @@
 
 using namespace robot;
 namespace asio = boost::asio;
-
-/// Custom logger that writes to both file and console
-class FileAndConsoleLogger : public viam::yaskawa::ILogger {
-   public:
-    explicit FileAndConsoleLogger(const std::string& filename, viam::yaskawa::LogLevel min_level = viam::yaskawa::LogLevel::INFO)
-        : min_level_(min_level), show_timestamps_(true) {
-        file_.open(filename, std::ios::out | std::ios::app);
-        if (!file_.is_open()) {
-            throw std::runtime_error("Failed to open log file: " + filename);
-        }
-    }
-
-    ~FileAndConsoleLogger() override {
-        if (file_.is_open()) {
-            file_.close();
-        }
-    }
-
-    // Delete copy operations
-    FileAndConsoleLogger(const FileAndConsoleLogger&) = delete;
-    FileAndConsoleLogger& operator=(const FileAndConsoleLogger&) = delete;
-
-    void set_min_level(viam::yaskawa::LogLevel level) override {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        min_level_ = level;
-    }
-
-    viam::yaskawa::LogLevel get_min_level() const noexcept override {
-        const std::lock_guard<std::mutex> lock(mutex_);
-        return min_level_;
-    }
-
-   protected:
-    void write_log(viam::yaskawa::LogLevel level, std::string_view message) override {
-        if (level < get_min_level()) {
-            return;
-        }
-
-        const std::string formatted = format_message(level, message);
-
-        const std::lock_guard<std::mutex> lock(mutex_);
-
-        // Write to console
-        std::cout << formatted << '\n';
-
-        // Write to file
-        if (file_.is_open()) {
-            file_ << formatted << '\n';
-            file_.flush();  // Ensure it's written immediately
-        }
-    }
-
-   private:
-    std::string format_message(viam::yaskawa::LogLevel level, std::string_view message) const {
-        std::ostringstream oss;
-
-        if (show_timestamps_) {
-            oss << "[" << get_timestamp() << "] ";
-        }
-
-        oss << "[" << viam::yaskawa::to_string(level) << "] " << message;
-
-        return oss.str();
-    }
-
-    static std::string get_timestamp() {
-        using namespace std::chrono;
-
-        auto now = system_clock::now();
-        auto now_time_t = system_clock::to_time_t(now);
-        auto now_ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
-
-        std::ostringstream oss;
-
-        std::tm tm_buf;
-#if defined(_WIN32)
-        localtime_s(&tm_buf, &now_time_t);
-#else
-        auto* result_ptr = localtime_r(&now_time_t, &tm_buf);
-        if (result_ptr == NULL) {
-            perror("Error converting time with localtime_r");  // Print error message based on errno
-            return "Error converting time with localtime_r";   // Indicate error
-        }
-#endif
-
-        oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << now_ms.count();
-
-        return oss.str();
-    }
-
-    mutable std::mutex mutex_;
-    viam::yaskawa::LogLevel min_level_;
-    bool show_timestamps_;
-    std::ofstream file_;
-};
 namespace {
 
 std::vector<CartesianPosition> generateCirclePosition(double r, double lb, double hb, int steps, const CartesianPosition& seed) {
@@ -230,6 +135,101 @@ void example(asio::io_context& io_context) {
     }
 }
 }  // namespace
+
+/// Custom logger that writes to both file and console
+class FileAndConsoleLogger : public viam::yaskawa::ILogger {
+   public:
+    explicit FileAndConsoleLogger(const std::string& filename, viam::yaskawa::LogLevel min_level = viam::yaskawa::LogLevel::INFO)
+        : min_level_(min_level), show_timestamps_(true) {
+        file_.open(filename, std::ios::out | std::ios::app);
+        if (!file_.is_open()) {
+            throw std::runtime_error("Failed to open log file: " + filename);
+        }
+    }
+
+    ~FileAndConsoleLogger() override {
+        if (file_.is_open()) {
+            file_.close();
+        }
+    }
+
+    // Delete copy operations
+    FileAndConsoleLogger(const FileAndConsoleLogger&) = delete;
+    FileAndConsoleLogger& operator=(const FileAndConsoleLogger&) = delete;
+
+    void set_min_level(viam::yaskawa::LogLevel level) override {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        min_level_ = level;
+    }
+
+    viam::yaskawa::LogLevel get_min_level() const noexcept override {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return min_level_;
+    }
+
+   protected:
+    void write_log(viam::yaskawa::LogLevel level, std::string_view message) override {
+        if (level < get_min_level()) {
+            return;
+        }
+
+        const std::string formatted = format_message(level, message);
+
+        const std::lock_guard<std::mutex> lock(mutex_);
+
+        // Write to console
+        std::cout << formatted << '\n';
+
+        // Write to file
+        if (file_.is_open()) {
+            file_ << formatted << '\n';
+            file_.flush();  // Ensure it's written immediately
+        }
+    }
+
+   private:
+    std::string format_message(viam::yaskawa::LogLevel level, std::string_view message) const {
+        std::ostringstream oss;
+
+        if (show_timestamps_) {
+            oss << "[" << get_timestamp() << "] ";
+        }
+
+        oss << "[" << viam::yaskawa::to_string(level) << "] " << message;
+
+        return oss.str();
+    }
+
+    static std::string get_timestamp() {
+        using namespace std::chrono;
+
+        auto now = system_clock::now();
+        auto now_time_t = system_clock::to_time_t(now);
+        auto now_ms = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+
+        std::ostringstream oss;
+
+        std::tm tm_buf;
+#if defined(_WIN32)
+        localtime_s(&tm_buf, &now_time_t);
+#else
+        auto* result_ptr = localtime_r(&now_time_t, &tm_buf);
+        if (result_ptr == NULL) {
+            perror("Error converting time with localtime_r");  // Print error message based on errno
+            return "Error converting time with localtime_r";   // Indicate error
+        }
+#endif
+
+        oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << now_ms.count();
+
+        return oss.str();
+    }
+
+    mutable std::mutex mutex_;
+    viam::yaskawa::LogLevel min_level_;
+    bool show_timestamps_;
+    std::ofstream file_;
+};
 
 int main() {
     try {
