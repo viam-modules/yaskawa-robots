@@ -907,12 +907,16 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     }
     const goal_accepted_payload_t* accepted = reinterpret_cast<const goal_accepted_payload_t*>(response.payload.data());
     auto promise = std::promise<goal_state_t>();
-    auto handle = std::make_unique<GoalRequestHandle>(accepted->goal_id, shared_from_this(), promise.get_future());
+    auto handle = std::make_unique<GoalRequestHandle>(accepted->goal_id, weak_from_this(), promise.get_future());
 
-    std::thread([promise = std::move(promise), self = shared_from_this(), goal_id = accepted->goal_id]() mutable {
+    std::thread([promise = std::move(promise), self = weak_from_this(), goal_id = accepted->goal_id]() mutable {
         try {
             while (1) {
-                auto status_msg = GoalStatusMessage(self->get_goal_status(goal_id).get());
+                auto shared = self.lock();
+                if (!shared) {
+                    throw std::runtime_error("YaskawaController no longer exists");
+                }
+                auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
                 if (status_msg.state == GOAL_STATE_ACTIVE) {
                     continue;
                 }
@@ -1096,7 +1100,7 @@ GoalStatusMessage::GoalStatusMessage(const Message& msg) {
 
 // GoalHandle implementation
 GoalRequestHandle::GoalRequestHandle(int32_t goal_id,
-                                     std::shared_ptr<YaskawaController> controller,
+                                     std::weak_ptr<YaskawaController> controller,
                                      std::shared_future<goal_state_t> completion_future)
     : goal_id_(goal_id), is_done_(false), controller_(std::move(controller)), completion_future_(std::move(completion_future)) {}
 
@@ -1113,7 +1117,11 @@ std::optional<goal_state_t> GoalRequestHandle::wait_for(std::chrono::millisecond
 
 std::future<GoalStatusMessage> GoalRequestHandle::get_status() {
     return std::async(std::launch::async, [this]() mutable -> GoalStatusMessage {
-        auto response = controller_->get_goal_status(goal_id_).get();
+        auto shared = controller_.lock();
+        if (!shared) {
+            throw std::runtime_error("YaskawaController no longer exists");
+        }
+        auto response = shared->get_goal_status(goal_id_).get();
         if (response.header.message_type == MSG_ERROR) {
             throw std::runtime_error(std::format("received an error message while getting status for goal id {}", goal_id_));
         }
@@ -1122,9 +1130,12 @@ std::future<GoalStatusMessage> GoalRequestHandle::get_status() {
 }
 
 void GoalRequestHandle::cancel() {
-    auto response = controller_->cancel_goal(goal_id_).get();
-    if (response.header.message_type == MSG_ERROR) {
-        throw std::runtime_error(std::format("received an error message while cancelling  goal id {}", goal_id_));
+    auto shared = controller_.lock();
+    if (shared) {
+        auto response = shared->cancel_goal(goal_id_).get();
+        if (response.header.message_type == MSG_ERROR) {
+            throw std::runtime_error(std::format("received an error message while cancelling  goal id {}", goal_id_));
+        }
     }
 }
 
