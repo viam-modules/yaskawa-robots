@@ -317,7 +317,7 @@ pose YaskawaArm::get_end_position(const ProtoStruct&) {
         // For the gp180-120 model that translation is 650mm
         // https://github.com/Yaskawa-Global/motoman_ros2_support_packages/blob/3187e27b9e59615b7bb4d25ca406e4280e8ebe26/motoman_gp180_support/urdf/gp180_120_macro.xacro#L148
         p.coordinates.z += 650;
-    } else{
+    } else {
         VIAM_SDK_LOG(warn) << "No pose offset applied for model: " << model_name;
     }
 
