@@ -3,6 +3,7 @@
 This repo is a [module](https://docs.viam.com/registry/#modular-resources) that implements the [`rdk:component:arm` API](https://docs.viam.com/components/arm/) resource to allow control over [Yaskawa Robots](https://www.yaskawa.com/) arms. Currently the following models are supported:
 
 - GP12, as `viam:yaskawa-robots:gp12`
+- GP180-120, as `viam:yaskawa-robots:gp180-120`
 
 ## Configuration and Usage
 

@@ -9,6 +9,11 @@
       "api": "rdk:component:arm",
       "model": "viam:yaskawa-robots:gp12",
       "markdown_link": "README.md#configuration-and-usage"
+    },
+    {
+      "api": "rdk:component:arm",
+      "model": "viam:yaskawa-robots:gp180-120",
+      "markdown_link": "README.md#configuration-and-usage"
     }
   ],
   "entrypoint": "@CMAKE_INSTALL_BINDIR@/yaskawa-robots"
