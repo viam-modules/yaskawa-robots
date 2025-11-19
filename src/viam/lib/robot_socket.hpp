@@ -287,7 +287,7 @@ class RobotSocketBase {
     static protocol_header_t parse_header(const std::vector<uint8_t>& buffer);
 };
 
-class TcpRobotSocket : public RobotSocketBase {
+class TcpRobotSocket : public RobotSocketBase, std::enable_shared_from_this<TcpRobotSocket>  {
    public:
     TcpRobotSocket(boost::asio::io_context& io_context, const std::string& host = "127.0.0.1", uint16_t port = TCP_PORT);
     ~TcpRobotSocket() override;

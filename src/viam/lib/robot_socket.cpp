@@ -314,6 +314,7 @@ TcpRobotSocket::TcpRobotSocket(boost::asio::io_context& io_context, const std::s
     : RobotSocketBase(io_context, host, port), socket_(io_context), request_queue_(io_context.get_executor()) {}
 
 TcpRobotSocket::~TcpRobotSocket() {
+    LOGGING(info) << "yo yo yo disconnect tcp";
     try {
         disconnect();
     } catch (const std::exception& ex) {
@@ -420,7 +421,10 @@ awaitable<void> TcpRobotSocket::process_requests() {
         } catch (const std::exception& e) {
             request_pair.second.set_exception(std::current_exception());
         }
+        LOGGING(info) << "yo TCP process_requests()";
     }
+            LOGGING(info) << "yo yo TCP process_requests() end";
+
 }
 
 protocol_header_t RobotSocketBase::parse_header(const std::vector<uint8_t>& buffer) {
@@ -440,6 +444,7 @@ UdpRobotSocket::UdpRobotSocket(boost::asio::io_context& io_context, State& state
     : RobotSocketBase(io_context, "127.0.0.1", 0), robot_state_(state), socket_(io_context) {}
 
 UdpRobotSocket::~UdpRobotSocket() {
+    LOGGING(info) << "yo yo yo disconnect udp";
     try {
         disconnect();
     } catch (const std::exception& ex) {
@@ -562,7 +567,11 @@ awaitable<void> UdpRobotSocket::receive_messages() {
             robot_state_.in_error.store(true);
             LOGGING(error) << "error " << e.what() << " while waiting on UDP messages";
         }
+        LOGGING(info) << "yo UDP receive_messages()";
     }
+    LOGGING(info) << "yo yo UDP receive_messages() end";
+
+    
 }
 
 void UdpRobotSocket::handle_status_message(const Message& message) {
@@ -654,6 +663,8 @@ void UdpBroadcastListener::start() {
 }
 
 void UdpBroadcastListener::stop() {
+    LOGGING(info) << "yo yo UDP stop()";
+
     if (!running_.exchange(false)) {
         return;  // Already stopped
     }
@@ -702,7 +713,10 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
             }
             break;
         }
+        LOGGING(info) << "yo UDP receive_broadcasts()";
     }
+    LOGGING(info) << "yo yo UDP receive_broadcasts() end";
+
 }
 
 // Robot Implementation
@@ -731,10 +745,14 @@ std::future<void> YaskawaController::connect() {
             // Wait for first status update to ensure connection is fully established
             get_robot_status().get();
 
-            heartbeat_ = std::thread([self = shared_from_this()]() {
+            heartbeat_ = std::thread([self = weak_from_this()]() {
                 try {
                     while (1) {
-                        self->send_heartbeat().get();
+                        auto shared = self.lock();
+                        if (!shared){
+                            throw std::runtime_error("YaskawaController no longer exists");
+                        }
+                        shared->send_heartbeat().get();
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
                 } catch (const std::exception& e) {
@@ -755,12 +773,15 @@ std::future<void> YaskawaController::connect() {
 }
 
 void YaskawaController::disconnect() {
+    LOGGING(info) << "yo yo yo yo disconnect listener ";
     if (broadcast_listener_) {
         broadcast_listener_->stop();
     }
+    LOGGING(info) << "yo yo yo yo disconnect tcp ";
     if (tcp_socket_) {
         tcp_socket_->disconnect();
     }
+    LOGGING(info) << "yo yo yo yo disconnect udp ";
     if (udp_socket_) {
         udp_socket_->disconnect();
     }
