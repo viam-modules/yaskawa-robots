@@ -915,8 +915,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             "Invalid goal accepted payload size expected {} got {}", sizeof(goal_accepted_payload_t), (int)response.payload.size()));
     }
     const goal_accepted_payload_t* accepted = reinterpret_cast<const goal_accepted_payload_t*>(response.payload.data());
-    auto promise = std::promise<goal_state_t>();
-    auto handle = std::make_unique<GoalRequestHandle>(accepted->goal_id, weak_from_this(), promise.get_future());
+    auto handle = std::make_unique<GoalRequestHandle>(accepted->goal_id, shared_from_this(), promise.get_future());
 
     std::thread([promise = std::move(promise), self = weak_from_this(), goal_id = accepted->goal_id]() mutable {
         try {
@@ -934,7 +933,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                 if (status_msg.state == GOAL_STATE_SUCCEEDED) {
                     // this blocks while we read from the cached robot status or read a new status
                     // this will not block for long unless we have connection problems.
-                    if (RobotStatusMessage(self->get_robot_status().get()).in_motion) {
+                    if (RobotStatusMessage(shared->get_robot_status().get()).in_motion) {
                         continue;
                     }
                     promise.set_value_at_thread_exit(status_msg.state);
@@ -1118,9 +1117,9 @@ GoalStatusMessage::GoalStatusMessage(const Message& msg) {
 
 // GoalHandle implementation
 GoalRequestHandle::GoalRequestHandle(int32_t goal_id,
-                                     std::weak_ptr<YaskawaController> controller,
+                                     std::shared_ptr<YaskawaController> controller,
                                      std::shared_future<goal_state_t> completion_future)
-    : goal_id_(goal_id), is_done_(false), controller_(std::move(controller)), completion_future_(std::move(completion_future)) {}
+    : goal_id_(goal_id), is_done_(false), controller_(controller), completion_future_(std::move(completion_future)) {}
 
 goal_state_t GoalRequestHandle::wait() {
     return completion_future_.get();
