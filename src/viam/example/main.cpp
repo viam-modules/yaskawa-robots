@@ -70,8 +70,7 @@ void example(asio::io_context& io_context) {
                 std::cerr << "Monitoring thread encountered unknown error" << '\n';
             }
         }).detach();
-        std::cout << "Reset errors " << '\n';
-        robot->reset_errors();
+        std::cout << "Reset errors " << robot->reset_errors().get() << '\n';
         for (int i = 0; i < 1; i++) {
             auto currentCartPositon = CartesianPosition(robot->getCartPosition().get());
             currentCartPositon.z -= 100;

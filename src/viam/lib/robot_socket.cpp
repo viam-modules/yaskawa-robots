@@ -859,17 +859,8 @@ std::future<Message> YaskawaController::register_udp_port(uint16_t port) {
     return tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload)));
 }
 
-void YaskawaController::reset_errors() {
-    auto msg = tcp_socket_->send_request(Message(MSG_RESET_ERRORS)).get();
-    if (msg.header.message_type == MSG_OK) {
-        return;
-    }
-    if (msg.header.message_type == MSG_ERROR) {
-        error_payload_t err_msg;
-        std::memcpy(&err_msg, msg.payload.data(), sizeof(err_msg));
-        throw std::runtime_error(std::format("failed to reset arm, error code {}", static_cast<const int&>(err_msg.error_code)));
-    }
-    throw std::runtime_error(std::format("failed to reset arm, got unexpected message type", msg.header.message_type));
+std::future<Message> YaskawaController::reset_errors() {
+    return tcp_socket_->send_request(Message(MSG_RESET_ERRORS));
 }
 
 std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
@@ -895,7 +886,15 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
 
 std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     if (!robot_state_.IsReady()) {
-        reset_errors();
+        auto msg = reset_errors().get();
+        if (msg.header.message_type == MSG_ERROR) {
+            error_payload_t err_msg;
+            std::memcpy(&err_msg, msg.payload.data(), sizeof(err_msg));
+            throw std::runtime_error(std::format("failed to reset arm, error code {}", static_cast<const int&>(err_msg.error_code)));
+        }
+        if (msg.header.message_type != MSG_OK) {
+            throw std::runtime_error(std::format("failed to reset arm, got unexpected message type", msg.header.message_type));
+        }
     }
     // TODO check servo on and & errors
     turn_servo_power_on().get();
