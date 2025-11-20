@@ -79,43 +79,52 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     // immediately so in our case emplace returns void
     template <class... Args>
     void emplace(Args&&... args) {
-        if (closed_) {
-            throw std::runtime_error("cannot emplace on closed queue");
-        }
+        
 
         {
+            LOGGING(info) << "yo emplace start";
             std::scoped_lock lock{mutex_};
+            if (closed_) {
+                throw std::runtime_error("cannot emplace on closed queue");
+            }
             queue_.emplace(std::forward<Args>(args)...);
             notify_one();
         }
     }
     void push(T&& value) {
-        if (closed_) {
-            throw std::runtime_error("cannot push on closed queue");
-        }
+        LOGGING(info) << "yo push 1 start";
         {
             const std::scoped_lock lock{mutex_};
+            LOGGING(info) << "yo push 1 lock";
+            if (closed_) {
+                throw std::runtime_error("cannot push on closed queue");
+            }
+            LOGGING(info) << "yo push 1 queue";
             queue_.push(std::move(value));
+            LOGGING(info) << "yo push 1 notify";
             notify_one();
+            LOGGING(info) << "yo push 1 done";
         }
     }
     void push(const T& value) {
-        if (closed_) {
-            throw std::runtime_error("cannot push on closed queue");
-        }
+        LOGGING(info) << "yo push 2 start";
         {
             const std::scoped_lock lock{mutex_};
+            if (closed_) {
+                throw std::runtime_error("cannot push on closed queue");
+            }
             queue_.push(std::move(value));
             notify_one();
         }
     }
 
     T pop() {
-        if (closed_) {
-            throw std::runtime_error("cannot pop on closed queue");
-        }
+        LOGGING(info) << "yo pop start";
         {
             const std::scoped_lock lock{mutex_};
+            if (closed_) {
+            throw std::runtime_error("cannot pop on closed queue");
+        }
             T value = std::move(queue_.front());
             queue_.pop();
             return value;
@@ -124,23 +133,36 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
 
     template <typename CompletionToken>
     auto async_pop(CompletionToken&& token) {
+        LOGGING(info) << "yo async_pop start";
+
         if (closed_) {
             throw std::runtime_error("cannot pop on closed queue");
         }
+
         // TODO(RSDK-12530) remove nolint
         return boost::asio::async_initiate<CompletionToken,
                                            void(std::optional<T>,
-                                                boost::system::error_code ec)>(  // NOLINT(clang-analyzer-core.NullDereference)
-            [this](auto&& handler) mutable {
-                const std::scoped_lock lock{mutex_};
-                if (!queue_.empty()) {
-                    T item = std::move(queue_.front());
-                    queue_.pop();
-                    boost::asio::post(executor_, [handler = std::forward<decltype(handler)>(handler), item = std::move(item)]() mutable {
+                                                boost::system::error_code ec)>( 
+            [weak = this->weak_from_this()](auto&& handler) mutable {
+                LOGGING(info) << "yo async_pop initiated";
+                auto self = weak.lock();
+                if(!self){
+                    throw std::runtime_error("cannot pop on closed queue");
+                }
+                LOGGING(info) << "yo async_pop got self";
+                const std::scoped_lock lock{self->mutex_};
+                LOGGING(info) << "yo async_pop locked";
+                if (self->closed_) {
+                    throw std::runtime_error("cannot pop on closed queue");
+                }
+                if (!self->queue_.empty()) {
+                    T item = std::move(self->queue_.front());
+                    self->queue_.pop();
+                    boost::asio::post(self->executor_, [handler = std::forward<decltype(handler)>(handler), item = std::move(item)]() mutable {
                         handler(std::make_optional(std::move(item)), boost::system::error_code());
                     });
                 } else {
-                    pending_.push(PendingPopOperation{std::forward<decltype(handler)>(handler)});
+                    self->pending_.push(PendingPopOperation{std::forward<decltype(handler)>(handler)});
                 }
             },
             token);
@@ -160,6 +182,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         closed_.store(true);
     }
     void clear() {
+        LOGGING(info) << "yo clear start";
         const std::scoped_lock lock{mutex_};
         while (!pending_.empty()) {
             auto ops = std::move(pending_.front());
@@ -287,7 +310,7 @@ class RobotSocketBase {
     static protocol_header_t parse_header(const std::vector<uint8_t>& buffer);
 };
 
-class TcpRobotSocket : public RobotSocketBase, std::enable_shared_from_this<TcpRobotSocket>  {
+class TcpRobotSocket : public RobotSocketBase {
    public:
     TcpRobotSocket(boost::asio::io_context& io_context, const std::string& host = "127.0.0.1", uint16_t port = TCP_PORT);
     ~TcpRobotSocket() override;
@@ -302,6 +325,7 @@ class TcpRobotSocket : public RobotSocketBase, std::enable_shared_from_this<TcpR
     tcp::socket socket_;
     AsyncQueue<std::pair<Message, std::promise<Message>>> request_queue_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> done_{false};
 
     boost::asio::awaitable<void> process_requests();
     std::future<void> async_send(Message message);
