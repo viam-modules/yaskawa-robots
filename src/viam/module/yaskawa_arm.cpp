@@ -328,6 +328,7 @@ ProtoStruct YaskawaArm::do_command(const ProtoStruct&) {
 }
 
 YaskawaArm::~YaskawaArm() {
+    LOGGING(info) << "yo yo yo disconnect robot";
     robot_->disconnect();
 }
 
