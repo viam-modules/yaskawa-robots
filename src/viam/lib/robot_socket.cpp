@@ -895,7 +895,16 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     turn_servo_power_on().get();
     setMotionMode(1).get();
 
-    auto response = make_goal_(std::move(waypoints), unix_time).get();
+    auto promise = std::promise<goal_state_t>();
+
+    auto make_goal_future = make_goal_(std::move(waypoints), unix_time);
+    // we only want to move if the future was valid
+    if (!make_goal_future.valid()) {
+        LOGGING(debug) << "already at desired position";
+        promise.set_value(GOAL_STATE_SUCCEEDED);
+        return std::make_unique<GoalRequestHandle>(0, shared_from_this(), promise.get_future());
+    }
+    auto response = make_goal_future.get();
     LOGGING(info) << response;
     if (response.header.message_type != MSG_GOAL_ACCEPTED) {
         throw std::runtime_error(std::format("Expected MSG_GOAL_ACCEPTED, got {}", (int)response.header.message_type));
@@ -916,16 +925,24 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                 if (!shared) {
                     throw std::runtime_error("YaskawaController no longer exists");
                 }
+                // this blocks until we receive the goal status from the yaskawa-controller.
+                // this will not block for long unless we have connection problems.
                 auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
                 if (status_msg.state == GOAL_STATE_ACTIVE) {
                     continue;
                 }
                 if (status_msg.state == GOAL_STATE_SUCCEEDED) {
+                    // this blocks while we read from the cached robot status or read a new status
+                    // this will not block for long unless we have connection problems.
+                    if (RobotStatusMessage(self->get_robot_status().get()).in_motion) {
+                        continue;
+                    }
                     promise.set_value_at_thread_exit(status_msg.state);
                     break;
                 } else {
                     throw std::runtime_error(std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
                 }
+                // TODO: can we reduce this?
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
         } catch (std::exception& e) {
@@ -948,7 +965,8 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         waypoints.emplace_front(std::move(curr_waypoint_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
-        throw std::runtime_error("arm is already at the desired joint positions");
+        // return an invalid future to signify no motion needs to be done
+        return std::future<Message>();
     }
 
     std::vector<std::list<Eigen::VectorXd>> segments;
