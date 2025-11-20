@@ -429,7 +429,7 @@ class GoalRequestHandle {
    private:
     int32_t goal_id_;
     std::atomic<bool> is_done_;
-    std::shared_ptr<YaskawaController> controller_;
+    std::weak_ptr<YaskawaController> controller_;
     std::shared_future<goal_state_t> completion_future_;
     mutable std::mutex mutex_;
 };
