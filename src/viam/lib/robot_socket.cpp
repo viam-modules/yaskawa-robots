@@ -893,7 +893,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             throw std::runtime_error(std::format("failed to reset arm, error code {}", static_cast<const int&>(err_msg.error_code)));
         }
         if (msg.header.message_type != MSG_OK) {
-            throw std::runtime_error(std::format("failed to reset arm, got unexpected message type", msg.header.message_type));
+            throw std::runtime_error(std::format("failed to reset arm, got unexpected message type {}", msg.header.message_type));
         }
     }
     // TODO check servo on and & errors
