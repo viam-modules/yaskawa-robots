@@ -79,10 +79,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     // immediately so in our case emplace returns void
     template <class... Args>
     void emplace(Args&&... args) {
-        
-
         {
-            LOGGING(info) << "yo emplace start";
             std::scoped_lock lock{mutex_};
             if (closed_) {
                 throw std::runtime_error("cannot emplace on closed queue");
@@ -116,8 +113,8 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         {
             const std::scoped_lock lock{mutex_};
             if (closed_) {
-            throw std::runtime_error("cannot pop on closed queue");
-        }
+                throw std::runtime_error("cannot pop on closed queue");
+            }
             T value = std::move(queue_.front());
             queue_.pop();
             return value;
@@ -131,12 +128,10 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         }
 
         // TODO(RSDK-12530) remove nolint
-        return boost::asio::async_initiate<CompletionToken,
-                                           void(std::optional<T>,
-                                                boost::system::error_code ec)>( 
+        return boost::asio::async_initiate<CompletionToken, void(std::optional<T>, boost::system::error_code ec)>(
             [weak = this->weak_from_this()](auto&& handler) mutable {
                 auto self = weak.lock();
-                if(!self){
+                if (!self) {
                     throw std::runtime_error("cannot pop on closed queue");
                 }
                 const std::scoped_lock lock{self->mutex_};
@@ -146,13 +141,13 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
                 if (!self->queue_.empty()) {
                     T item = std::move(self->queue_.front());
                     self->queue_.pop();
-                    boost::asio::post(self->executor_, [handler = std::forward<decltype(handler)>(handler), item = std::move(item)]() mutable {
-                        handler(std::make_optional(std::move(item)), boost::system::error_code());
-                    });
+                    boost::asio::post(self->executor_,
+                                      [handler = std::forward<decltype(handler)>(handler), item = std::move(item)]() mutable {
+                                          handler(std::make_optional(std::move(item)), boost::system::error_code());
+                                      });
                 } else {
                     self->pending_.push(PendingPopOperation{std::forward<decltype(handler)>(handler)});
                 }
-                // LOGGING(info) << "yo async_pop done";
             },
             token);
     }
@@ -161,9 +156,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         return queue_.size();
     }
     bool empty() const {
-        LOGGING(info) << "yo empty() try lock";
         const std::scoped_lock lock{mutex_};
-        LOGGING(info) << "yo empty() locked lock";
         return queue_.empty();
     }
     bool is_closed() const {
@@ -173,7 +166,6 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         closed_.store(true);
     }
     void clear() {
-        LOGGING(info) << "yo clear start";
         const std::scoped_lock lock{mutex_};
         while (!pending_.empty()) {
             auto ops = std::move(pending_.front());
@@ -316,7 +308,6 @@ class TcpRobotSocket : public RobotSocketBase {
     tcp::socket socket_;
     std::shared_ptr<AsyncQueue<std::pair<Message, std::promise<Message>>>> request_queue_;
     std::atomic<bool> running_{false};
-    std::atomic<bool> done_{false};
 
     boost::asio::awaitable<void> process_requests();
     std::future<void> async_send(Message message);
@@ -343,8 +334,6 @@ class UdpRobotSocket : public RobotSocketBase {
 
     udp::socket socket_;
     std::atomic<bool> running_{false};
-    std::atomic<bool> done_{false};
-
 
     mutable std::shared_mutex status_mutex_;
     std::variant<std::monostate, Message, std::promise<Message>> cached_status_;
@@ -371,7 +360,6 @@ class UdpBroadcastListener {
     udp::socket socket_;
     uint16_t port_;
     std::atomic<bool> running_{false};
-    std::atomic<bool> done_{false};
     std::array<char, 1024> recv_buffer_;
 
     boost::asio::awaitable<void> receive_broadcasts();
