@@ -92,22 +92,16 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         }
     }
     void push(T&& value) {
-        LOGGING(info) << "yo push 1 start";
         {
             const std::scoped_lock lock{mutex_};
-            LOGGING(info) << "yo push 1 lock";
             if (closed_) {
                 throw std::runtime_error("cannot push on closed queue");
             }
-            LOGGING(info) << "yo push 1 queue";
             queue_.push(std::move(value));
-            LOGGING(info) << "yo push 1 notify";
             notify_one();
-            LOGGING(info) << "yo push 1 done";
         }
     }
     void push(const T& value) {
-        LOGGING(info) << "yo push 2 start";
         {
             const std::scoped_lock lock{mutex_};
             if (closed_) {
@@ -119,7 +113,6 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     }
 
     T pop() {
-        LOGGING(info) << "yo pop start";
         {
             const std::scoped_lock lock{mutex_};
             if (closed_) {
@@ -133,8 +126,6 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
 
     template <typename CompletionToken>
     auto async_pop(CompletionToken&& token) {
-        LOGGING(info) << "yo async_pop start";
-
         if (closed_) {
             throw std::runtime_error("cannot pop on closed queue");
         }
@@ -144,14 +135,11 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
                                            void(std::optional<T>,
                                                 boost::system::error_code ec)>( 
             [weak = this->weak_from_this()](auto&& handler) mutable {
-                LOGGING(info) << "yo async_pop initiated";
                 auto self = weak.lock();
                 if(!self){
                     throw std::runtime_error("cannot pop on closed queue");
                 }
-                LOGGING(info) << "yo async_pop got self";
                 const std::scoped_lock lock{self->mutex_};
-                LOGGING(info) << "yo async_pop locked";
                 if (self->closed_) {
                     throw std::runtime_error("cannot pop on closed queue");
                 }
@@ -164,6 +152,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
                 } else {
                     self->pending_.push(PendingPopOperation{std::forward<decltype(handler)>(handler)});
                 }
+                // LOGGING(info) << "yo async_pop done";
             },
             token);
     }
@@ -172,7 +161,9 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         return queue_.size();
     }
     bool empty() const {
+        LOGGING(info) << "yo empty() try lock";
         const std::scoped_lock lock{mutex_};
+        LOGGING(info) << "yo empty() locked lock";
         return queue_.empty();
     }
     bool is_closed() const {
@@ -323,7 +314,7 @@ class TcpRobotSocket : public RobotSocketBase {
     using tcp = boost::asio::ip::tcp;
 
     tcp::socket socket_;
-    AsyncQueue<std::pair<Message, std::promise<Message>>> request_queue_;
+    std::shared_ptr<AsyncQueue<std::pair<Message, std::promise<Message>>>> request_queue_;
     std::atomic<bool> running_{false};
     std::atomic<bool> done_{false};
 
@@ -352,6 +343,8 @@ class UdpRobotSocket : public RobotSocketBase {
 
     udp::socket socket_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> done_{false};
+
 
     mutable std::shared_mutex status_mutex_;
     std::variant<std::monostate, Message, std::promise<Message>> cached_status_;
@@ -378,6 +371,7 @@ class UdpBroadcastListener {
     udp::socket socket_;
     uint16_t port_;
     std::atomic<bool> running_{false};
+    std::atomic<bool> done_{false};
     std::array<char, 1024> recv_buffer_;
 
     boost::asio::awaitable<void> receive_broadcasts();

@@ -311,10 +311,10 @@ std::ostream& operator<<(std::ostream& os, const Message& msg) {
 
 // TcpRobotSocket Implementation
 TcpRobotSocket::TcpRobotSocket(boost::asio::io_context& io_context, const std::string& host, uint16_t port)
-    : RobotSocketBase(io_context, host, port), socket_(io_context), request_queue_(io_context.get_executor()) {}
+    : RobotSocketBase(io_context, host, port), socket_(io_context), request_queue_(std::make_shared<AsyncQueue<std::pair<Message, std::promise<Message>>>>(io_context.get_executor())) {}
 
 TcpRobotSocket::~TcpRobotSocket() {
-    LOGGING(info) << "yo yo yo disconnect tcp";
+    LOGGING(info) << "yo yo yo disconnect tcp actual";
     try {
         disconnect();
     } catch (const std::exception& ex) {
@@ -345,6 +345,7 @@ std::future<void> TcpRobotSocket::connect() {
                 connected_ = false;
                 promise->set_exception(std::current_exception());
             }
+            LOGGING(info) << "yo yo yo yo yo process_requests() cospawn ";
         },
         detached);
     LOGGING(info) << "yo yo yo yo yo process_requests() done connect ";
@@ -353,16 +354,14 @@ std::future<void> TcpRobotSocket::connect() {
 }
 
 std::future<Message> TcpRobotSocket::send_request(Message request) {
-     LOGGING(info) << "yo yo yo tcp send_request start";
 
     std::promise<Message> promise;
     auto future = promise.get_future();
     if (!connected_) {
         promise.set_exception(std::make_exception_ptr(std::runtime_error("Not connected")));
     } else {
-        request_queue_.push(std::make_pair(std::move(request), std::move(promise)));
+        request_queue_->push(std::make_pair(std::move(request), std::move(promise)));
     }
-    LOGGING(info) << "yo yo yo tcp send_request end";
     return future;
 }
 
@@ -370,24 +369,27 @@ void TcpRobotSocket::disconnect() {
     LOGGING(info) << "yo yo yo disconnect tcp 2";
 
     if (connected_) {
+
         // stop processing requests
         running_.store(false);
-        connected_ = false;
-        
-        LOGGING(info) << "yo yo yo disconnect tcp set wait for requests";
-        while (!request_queue_.empty()) {
-            LOGGING(info) << "yo yo yo disconnect tcp clear requests";
-            auto promise = request_queue_.pop().second;
-            promise.set_exception(std::make_exception_ptr(std::runtime_error("Connection closed")));
+        while (!done_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
+        connected_ = false;
         LOGGING(info) << "yo yo yo disconnect tcp set close socket";
         if (socket_.is_open()) {
             socket_.close();
         }
-               // wait until we stop processing
-        while (!done_) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        LOGGING(info) << "yo yo yo disconnect tcp set wait for requests";
+        while (!request_queue_->empty()) {
+            LOGGING(info) << "yo yo yo disconnect tcp clear requests";
+            auto promise = request_queue_->pop().second;
+            promise.set_exception(std::make_exception_ptr(std::runtime_error("Connection closed")));
         }
+        LOGGING(info) << "yo yo yo disconnect tcp wait for done";
+               // wait until we stop processing
+        
     }
     LOGGING(info) << "yo yo yo disconnect tcp done";
 }
@@ -395,22 +397,21 @@ void TcpRobotSocket::disconnect() {
 awaitable<void> TcpRobotSocket::process_requests() {
     // TODO(RSDK-12530) remove nolint
     while (running_.load()) {
-        LOGGING(info) << "yo TCP process_requests()";
-
-        auto [result, error] = co_await request_queue_.async_pop(boost::asio::use_awaitable);
+        // LOGGING(info) << "yo yo TCP process_requests() 0";
+        auto [result, error] = co_await request_queue_->async_pop(boost::asio::use_awaitable);
         if (error) {
             throw std::runtime_error("boost error " + error.message() + " while waiting for a request");
         }
-        LOGGING(info) << "yo TCP process_requests() 2";
-
-        if (!running_.load()) {
-            LOGGING(info) << "yo yo TCP process_requests() stop 1";
-        }
+        // LOGGING(info) << "yo yo TCP process_requests() 1";
+        // if (!running_.load()) {
+        //     LOGGING(info) << "yo yo TCP process_requests() stop 1";
+        // }
         if (!result) {
             throw std::runtime_error("empty request when expecting one");
         }
         auto request_pair = std::move(result.value());
         try {
+            // LOGGING(info) << "yo yo TCP process_requests() 2";
             // Send request
             std::vector<uint8_t> buffer;
             buffer.resize(sizeof(protocol_header_t) + request_pair.first.payload.size());
@@ -422,6 +423,7 @@ awaitable<void> TcpRobotSocket::process_requests() {
             }
             co_await async_write(socket_, boost::asio::buffer(buffer), use_awaitable);
             // Try to read response
+            // LOGGING(info) << "yo yo TCP process_requests() 3";
             std::vector<uint8_t> header_buffer(sizeof(protocol_header_t));
             size_t bytes_received = co_await socket_.async_read_some(boost::asio::buffer(header_buffer), use_awaitable);
             header_buffer.resize(bytes_received);
@@ -439,6 +441,7 @@ awaitable<void> TcpRobotSocket::process_requests() {
             request_pair.second.set_value(response);
 
         } catch (const std::exception& e) {
+            LOGGING(info) << "yo yo TCP process_requests() error";
             request_pair.second.set_exception(std::current_exception());
         }
     }
@@ -463,7 +466,7 @@ UdpRobotSocket::UdpRobotSocket(boost::asio::io_context& io_context, State& state
     : RobotSocketBase(io_context, "127.0.0.1", 0), robot_state_(state), socket_(io_context) {}
 
 UdpRobotSocket::~UdpRobotSocket() {
-    LOGGING(info) << "yo yo yo disconnect udp";
+    LOGGING(info) << "yo yo yo disconnect udp actual";
     try {
         disconnect();
     } catch (const std::exception& ex) {
@@ -499,15 +502,24 @@ std::future<Message> UdpRobotSocket::send_request(Message /* request */) {
 }
 
 void UdpRobotSocket::disconnect() {
+    LOGGING(info) << "yo yo yo disconnect udp 2";
     if (connected_) {
-        connected_ = false;
         running_ = false;
+        
         robot_state_.in_error.store(true);
+        LOGGING(info) << "yo yo yo disconnect udp wait for done";
+        while (!done_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        LOGGING(info) << "yo yo yo disconnect udp stop socket";
+        connected_ = false;
 
         if (socket_.is_open()) {
             socket_.close();
         }
+        
     }
+    LOGGING(info) << "yo yo yo disconnect udp done";
 }
 
 void UdpRobotSocket::get_status(std::promise<Message> promise) {
@@ -565,14 +577,14 @@ uint16_t UdpRobotSocket::get_local_port() const {
 
 awaitable<void> UdpRobotSocket::receive_messages() {
     while (running_) {
-        LOGGING(info) << "yo UDP receive_messages()";
-
         try {
+            LOGGING(info) << "yo yo yo udp wait receive_messages() 1";
             std::vector<uint8_t> buffer(8192);
             ip::udp::endpoint sender_endpoint;
             const size_t bytes_received = co_await socket_.async_receive_from(boost::asio::buffer(buffer), sender_endpoint, use_awaitable);
-
+            
             buffer.resize(bytes_received);
+            LOGGING(info) << "yo yo yo udp wait receive_messages() 2";
             const Message message = parse_message(buffer);
             // Log received message type
             if (message.header.message_type == MSG_ROBOT_POSITION_VELOCITY_TORQUE) {
@@ -582,6 +594,7 @@ awaitable<void> UdpRobotSocket::receive_messages() {
                 robot_state_.UpdateState(RobotStatusMessage(message));
             } else {
             }
+            LOGGING(info) << "yo yo yo udp wait receive_messages() 3";
 
         } catch (const std::exception& e) {
             running_ = false;
@@ -589,6 +602,7 @@ awaitable<void> UdpRobotSocket::receive_messages() {
             LOGGING(error) << "error " << e.what() << " while waiting on UDP messages";
         }
     }
+    done_.store(true);
     LOGGING(info) << "yo yo UDP receive_messages() end";
 }
 
@@ -655,6 +669,7 @@ UdpBroadcastListener::UdpBroadcastListener(boost::asio::io_context& io_context, 
     : io_context_(io_context), socket_(io_context), port_(port) {}
 
 UdpBroadcastListener::~UdpBroadcastListener() {
+    LOGGING(info) << "yo yo yo disconnect udp listener actual";
     stop();
 }
 
@@ -695,11 +710,14 @@ void UdpBroadcastListener::stop() {
     } catch (const std::exception& e) {
         LOGGING(error) << "Error stopping UDP broadcast listener: " << e.what();
     }
+    while (!done_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    
 }
 
 boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
     while (running_) {
-        LOGGING(info) << "yo UDP receive_broadcasts()";
         try {
             udp::endpoint sender_endpoint;
 
@@ -733,6 +751,7 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
             break;
         }
     }
+    done_.store(true);
     LOGGING(info) << "yo yo UDP receive_broadcasts() end";
 }
 
@@ -792,6 +811,10 @@ std::future<void> YaskawaController::connect() {
 }
 
 void YaskawaController::disconnect() {
+    LOGGING(info) << "yo yo yo yo disconnect udp ";
+    if (udp_socket_) {
+        udp_socket_->disconnect();
+    }
     LOGGING(info) << "yo yo yo yo disconnect tcp ";
     if (tcp_socket_) {
         tcp_socket_->disconnect();
@@ -800,10 +823,10 @@ void YaskawaController::disconnect() {
     if (broadcast_listener_) {
         broadcast_listener_->stop();
     }
-    LOGGING(info) << "yo yo yo yo disconnect udp ";
-    if (udp_socket_) {
-        udp_socket_->disconnect();
-    }
+    LOGGING(info) << "yo yo yo yo wait for heartbeat";
+    heartbeat_.join();
+    
+    LOGGING(info) << "yo yo yo disconnect done";
 }
 
 uint32_t YaskawaController::get_group_index() const {
@@ -855,7 +878,6 @@ std::future<Message> YaskawaController::turn_servo_power_on() {
 }
 
 std::future<Message> YaskawaController::send_heartbeat() {
-    LOGGING(info) << "yo send_heartbeat()";
     return tcp_socket_->send_request(Message(MSG_HEARTBEAT));
 }
 
@@ -896,7 +918,6 @@ std::future<Message> YaskawaController::register_udp_port(uint16_t port) {
     std::vector<uint8_t> payload(sizeof(udp_port_registration_payload_t));
     udp_port_registration_payload_t* port_payload = reinterpret_cast<udp_port_registration_payload_t*>(payload.data());
     port_payload->udp_port = port;
-    LOGGING(info) << "yo register_udp_port()";
     return tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload)));
 }
 

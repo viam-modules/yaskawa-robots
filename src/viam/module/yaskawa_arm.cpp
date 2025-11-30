@@ -329,7 +329,13 @@ ProtoStruct YaskawaArm::do_command(const ProtoStruct&) {
 
 YaskawaArm::~YaskawaArm() {
     LOGGING(info) << "yo yo yo disconnect robot";
-    robot_->disconnect();
+    try{
+            robot_->disconnect();
+
+    } catch (std::exception& ex) {
+            VIAM_SDK_LOG(error) << "YaskawaArm dtor failed with a std::exception - module service will terminate: " << ex.what();
+        }
+
 }
 
 bool YaskawaArm::is_moving() {
