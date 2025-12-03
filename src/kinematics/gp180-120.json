@@ -1,0 +1,225 @@
+{
+    "name": "gp12",
+    "kinematic_param_type": "SVA",
+    "links": [
+        {
+            "id": "base_link",
+            "parent": "world",
+            "translation": {
+                "x": 0,
+                "y": 0,
+                "z": 650
+            },
+            "geometry": {
+                "x": 779.85,
+                "y": 500,
+                "z": 317,
+                "translation": {
+                    "x": -94.925,
+                    "y": 0,
+                    "z": 158.5
+                }
+            }
+        },
+        {
+            "id": "link_1_s",
+            "parent": "joint_1_s",
+            "translation": {
+                "x": 325.0,
+                "y": 0,
+                "z": 0
+            },
+            "geometry": {
+                "x": 831.637,
+                "y": 633.166,
+                "z": 616,
+                "translation": {
+                    "x": 71.1377,
+                    "y": 31.9173,
+                    "z": -98
+                }
+            }
+        },
+        {
+            "id": "link_2_l",
+            "parent": "joint_2_l",
+            "translation": {
+                "x": 0.0,
+                "y": 0,
+                "z": 1150
+            },
+            "geometry": {
+                "x": 423.256,
+                "y": 633.166,
+                "z": 1499.31,
+                "translation": {
+                    "x": -7.49999,
+                    "y": 31.9173,
+                    "z": 572.153
+                }
+            }
+        },
+        {
+            "id": "link_3_u",
+            "parent": "joint_3_u",
+            "translation": {
+                "x": 0,
+                "y": 0,
+                "z": 300.0
+            },
+            "geometry": {
+                "x": 1603.88,
+                "y": 619,
+                "z": 345,
+                "translation": {
+                    "x": 596.058,
+                    "y": 34.5001,
+                    "z": 280.5
+                }
+            }
+        },
+        {
+            "id": "link_4_r",
+            "parent": "joint_4_r",
+            "translation": {
+                "x": 1590.0,
+                "y": 0,
+                "z": 0.0
+            },
+            "geometry": {
+                "x": 286.434,
+                "y": 174,
+                "z": 188.868,
+                "translation": {
+                    "x": 1541.22,
+                    "y": 8.00009,
+                    "z": 0.00019209
+                }
+            }
+        },
+        {
+            "id": "link_5_b",
+            "parent": "joint_5_b",
+            "translation": {
+                "x": 225.0,
+                "y": 0,
+                "z": 0.0
+            },
+            "geometry": {
+                "x": 313.5,
+                "y": 256,
+                "z": 221.944,
+                "translation": {
+                    "x": 42.7501,
+                    "y": -15.9999,
+                    "z": 0.0280142
+                }
+            }
+        },
+        {
+            "id": "link_6_t",
+            "parent": "joint_6_t",
+            "translation": {
+                "x": 0.0,
+                "y": 0,
+                "z": 0.0
+            },
+            "geometry": {
+                "x": 25.5001,
+                "y": 160,
+                "z": 159.96,
+                "translation": {
+                    "x": -12.75,
+                    "y": 0.0000089407,
+                    "z": 0.0000119209
+                }
+            }
+        },
+        {
+            "id": "joint_6_t-tool0",
+            "parent": "link_6_t",
+            "orientation": {
+                "type": "euler_angles",
+                "value": {
+                    "roll": 3.14159265359,
+                    "pitch": -1.570796327,
+                    "yaw": 0
+                }
+            }
+        }
+    ],
+    "joints": [
+        {
+            "id": "joint_1_s",
+            "type": "revolute",
+            "parent": "base_link",
+            "axis": {
+                "x": 0,
+                "y": 0,
+                "z": 1
+            },
+            "max": 179.9,
+            "min": -179.9
+        },
+        {
+            "id": "joint_2_l",
+            "type": "revolute",
+            "parent": "link_1_s",
+            "axis": {
+                "x": 0,
+                "y": 1,
+                "z": 0
+            },
+            "max": 75.9,
+            "min": -59.9
+        },
+        {
+            "id": "joint_3_u",
+            "type": "revolute",
+            "parent": "link_2_l",
+            "axis": {
+                "x": 0,
+                "y": -1,
+                "z": 0
+            },
+            "max": 89.9,
+            "min": -85.9
+        },
+        {
+            "id": "joint_4_r",
+            "type": "revolute",
+            "parent": "link_3_u",
+            "axis": {
+                "x": -1,
+                "y": 0,
+                "z": 0
+            },
+            "max": 359.9,
+            "min": -359.9
+        },
+        {
+            "id": "joint_5_b",
+            "type": "revolute",
+            "parent": "link_4_r",
+            "axis": {
+                "x": 0,
+                "y": -1,
+                "z": 0
+            },
+            "max": 129.9,
+            "min": -129.9
+        },
+        {
+            "id": "joint_6_t",
+            "type": "revolute",
+            "parent": "link_5_b",
+            "axis": {
+                "x": -1,
+                "y": 0,
+                "z": 0
+            },
+            "max": 359.9,
+            "min": -359.9
+        }
+    ]
+}
