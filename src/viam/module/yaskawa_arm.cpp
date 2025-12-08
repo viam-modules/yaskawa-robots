@@ -150,6 +150,7 @@ Model YaskawaArm::model(std::string model_name) {
 std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registrations(boost::asio::io_context& io_context) {
     const auto model_strings = {
         "gp12",
+        "gp180-120",
     };
 
     const auto arm = API::get<Arm>();
@@ -280,7 +281,8 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 YaskawaArm::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
 
-    const auto sva_file_path = resource_root_ / "kinematics/gp12.json";
+    constexpr char kSvaFileTemplate[] = "kinematics/%1%.json";
+    const auto sva_file_path = resource_root_ / str(boost::format(kSvaFileTemplate) % model_.model_name());
 
     // Open the file in binary mode
     std::ifstream sva_file(sva_file_path, std::ios::binary);
@@ -311,6 +313,10 @@ pose YaskawaArm::get_end_position(const ProtoStruct&) {
         // For the gp12 model that translation is 450mm
         // https://github.com/ros-industrial/motoman/blob/noetic-devel/motoman_gp12_support/urdf/gp12_macro.xacro#L154
         p.coordinates.z += 450;
+    } else if (model_name == "gp180-120") {
+        // For the gp180-120 model that translation is 650mm
+        // https://github.com/Yaskawa-Global/motoman_ros2_support_packages/blob/3187e27b9e59615b7bb4d25ca406e4280e8ebe26/motoman_gp180_support/urdf/gp180_120_macro.xacro#L148
+        p.coordinates.z += 650;
     } else {
         VIAM_SDK_LOG(warn) << "No pose offset applied for model: " << model_name;
     }

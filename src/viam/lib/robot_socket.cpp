@@ -400,17 +400,14 @@ awaitable<void> TcpRobotSocket::process_requests() {
             co_await async_write(socket_, boost::asio::buffer(buffer), use_awaitable);
             // Try to read response
             std::vector<uint8_t> header_buffer(sizeof(protocol_header_t));
-            size_t bytes_received = co_await socket_.async_read_some(boost::asio::buffer(header_buffer), use_awaitable);
-            header_buffer.resize(bytes_received);
-            if (bytes_received != sizeof(protocol_header_t)) {
-                throw std::runtime_error("TCP failed to read header");
-            }
+            co_await async_read(socket_, boost::asio::buffer(header_buffer), use_awaitable);
 
             const protocol_header_t header = parse_header(header_buffer);
             std::vector<uint8_t> payload_buffer(header.payload_length);
 
-            bytes_received = co_await socket_.async_read_some(boost::asio::buffer(payload_buffer), use_awaitable);
-            payload_buffer.resize(bytes_received);
+            if (header.payload_length > 0) {
+                co_await async_read(socket_, boost::asio::buffer(payload_buffer), use_awaitable);
+            }
             auto response = Message(header, std::move(payload_buffer));
 
             request_pair.second.set_value(response);
@@ -891,16 +888,30 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
 
 std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     if (!robot_state_.IsReady()) {
-        reset_errors().get();
-        throw std::runtime_error(std::format(
-            "cannot move the robot state is e_stopped {} in error {}", robot_state_.e_stopped.load(), robot_state_.in_error.load()));
+        auto msg = reset_errors().get();
+        if (msg.header.message_type == MSG_ERROR) {
+            error_payload_t err_msg;
+            std::memcpy(&err_msg, msg.payload.data(), sizeof(err_msg));
+            throw std::runtime_error(std::format("failed to reset arm, error code {}", static_cast<const int&>(err_msg.error_code)));
+        }
+        if (msg.header.message_type != MSG_OK) {
+            throw std::runtime_error(std::format("failed to reset arm, got unexpected message type {}", msg.header.message_type));
+        }
     }
     // TODO check servo on and & errors
-
     turn_servo_power_on().get();
     setMotionMode(1).get();
 
-    auto response = make_goal_(std::move(waypoints), unix_time).get();
+    auto promise = std::promise<goal_state_t>();
+
+    auto make_goal_future = make_goal_(std::move(waypoints), unix_time);
+    // we only want to move if the future was valid
+    if (!make_goal_future.valid()) {
+        LOGGING(debug) << "already at desired position";
+        promise.set_value(GOAL_STATE_SUCCEEDED);
+        return std::make_unique<GoalRequestHandle>(0, shared_from_this(), promise.get_future());
+    }
+    auto response = make_goal_future.get();
     LOGGING(info) << response;
     if (response.header.message_type != MSG_GOAL_ACCEPTED) {
         throw std::runtime_error(std::format("Expected MSG_GOAL_ACCEPTED, got {}", (int)response.header.message_type));
@@ -911,22 +922,29 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             "Invalid goal accepted payload size expected {} got {}", sizeof(goal_accepted_payload_t), (int)response.payload.size()));
     }
     const goal_accepted_payload_t* accepted = reinterpret_cast<const goal_accepted_payload_t*>(response.payload.data());
-    auto promise = std::promise<goal_state_t>();
     auto handle = std::make_unique<GoalRequestHandle>(accepted->goal_id, shared_from_this(), promise.get_future());
 
     std::thread([promise = std::move(promise), self = shared_from_this(), goal_id = accepted->goal_id]() mutable {
         try {
             while (1) {
+                // this blocks until we receive the goal status from the yaskawa-controller.
+                // this will not block for long unless we have connection problems.
                 auto status_msg = GoalStatusMessage(self->get_goal_status(goal_id).get());
                 if (status_msg.state == GOAL_STATE_ACTIVE) {
                     continue;
                 }
                 if (status_msg.state == GOAL_STATE_SUCCEEDED) {
+                    // this blocks while we read from the cached robot status or read a new status
+                    // this will not block for long unless we have connection problems.
+                    if (RobotStatusMessage(self->get_robot_status().get()).in_motion) {
+                        continue;
+                    }
                     promise.set_value_at_thread_exit(status_msg.state);
                     break;
                 } else {
                     throw std::runtime_error(std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
                 }
+                // TODO: can we reduce this?
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
         } catch (std::exception& e) {
@@ -949,7 +967,8 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         waypoints.emplace_front(std::move(curr_waypoint_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
-        throw std::runtime_error("arm is already at the desired joint positions");
+        // return an invalid future to signify no motion needs to be done
+        return std::future<Message>();
     }
 
     std::vector<std::list<Eigen::VectorXd>> segments;
