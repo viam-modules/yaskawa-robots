@@ -766,9 +766,9 @@ void YaskawaController::disconnect() {
         broadcast_listener_->stop();
     }
     if (heartbeat_.joinable()) {
-        VIAM_SDK_LOG(debug) << "Yaskawa Controller shutdown waiting for heartbeat thread to terminate";
+        LOGGING(debug) << "Yaskawa Controller shutdown waiting for heartbeat thread to terminate";
         heartbeat_.join();
-        VIAM_SDK_LOG(debug) << "heartbeat thread terminated";
+        LOGGING(debug) << "heartbeat thread terminated";
     }
 }
 
