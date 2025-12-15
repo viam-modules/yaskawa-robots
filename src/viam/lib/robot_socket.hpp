@@ -79,42 +79,42 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     // immediately so in our case emplace returns void
     template <class... Args>
     void emplace(Args&&... args) {
+        if (closed_) {
+            throw std::runtime_error("cannot emplace on closed queue");
+        }
         {
             std::scoped_lock lock{mutex_};
-            if (closed_) {
-                throw std::runtime_error("cannot emplace on closed queue");
-            }
             queue_.emplace(std::forward<Args>(args)...);
             notify_one();
         }
     }
     void push(T&& value) {
+        if (closed_) {
+            throw std::runtime_error("cannot push on closed queue");
+        }
         {
             const std::scoped_lock lock{mutex_};
-            if (closed_) {
-                throw std::runtime_error("cannot push on closed queue");
-            }
             queue_.push(std::move(value));
             notify_one();
         }
     }
     void push(const T& value) {
+        if (closed_) {
+            throw std::runtime_error("cannot push on closed queue");
+        }
         {
             const std::scoped_lock lock{mutex_};
-            if (closed_) {
-                throw std::runtime_error("cannot push on closed queue");
-            }
             queue_.push(std::move(value));
             notify_one();
         }
     }
 
     T pop() {
+        if (closed_) {
+            throw std::runtime_error("cannot pop on closed queue");
+        }
         {
             const std::scoped_lock lock{mutex_};
-            if (closed_) {
-                throw std::runtime_error("cannot pop on closed queue");
-            }
             T value = std::move(queue_.front());
             queue_.pop();
             return value;
@@ -127,16 +127,15 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
             throw std::runtime_error("cannot pop on closed queue");
         }
 
-        // TODO(RSDK-12530) remove nolint
         return boost::asio::async_initiate<CompletionToken, void(std::optional<T>, boost::system::error_code ec)>(
             [weak = this->weak_from_this()](auto&& handler) mutable {
                 auto self = weak.lock();
                 if (!self) {
-                    throw std::runtime_error("cannot pop on closed queue");
+                    throw std::runtime_error("cannot pop on closed queue weak_ptr is closed");
                 }
                 const std::scoped_lock lock{self->mutex_};
                 if (self->closed_) {
-                    throw std::runtime_error("cannot pop on closed queue");
+                    throw std::runtime_error("cannot pop on closed queue AsyncQueue is closed");
                 }
                 if (!self->queue_.empty()) {
                     T item = std::move(self->queue_.front());
