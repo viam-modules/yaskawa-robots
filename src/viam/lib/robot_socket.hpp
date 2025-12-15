@@ -131,7 +131,8 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
             [weak = this->weak_from_this()](auto&& handler) mutable {
                 auto self = weak.lock();
                 if (!self) {
-                    throw std::runtime_error("cannot pop on closed queue weak_ptr is closed");
+                    LOGGING(error) << "cannot pop on closed queue weak_ptr is closed";
+                    return;
                 }
                 const std::scoped_lock lock{self->mutex_};
                 if (self->closed_) {

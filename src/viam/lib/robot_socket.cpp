@@ -730,7 +730,8 @@ std::future<void> YaskawaController::connect() {
                     while (1) {
                         auto shared = self.lock();
                         if (!shared) {
-                            throw std::runtime_error("YaskawaController no longer exists");
+                            LOGGING(error) << "YaskawaController no longer exists";
+                            return;
                         }
                         shared->send_heartbeat().get();
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -764,7 +765,13 @@ void YaskawaController::disconnect() {
     }
     if (heartbeat_.joinable()) {
         LOGGING(debug) << "Yaskawa Controller shutdown waiting for heartbeat thread to terminate";
-        heartbeat_.join();
+        // the heartbeat thread will shutdown once the tcp_socket has closed. Wait for the heartbeat thread to finish
+        try {
+            heartbeat_.join();
+        } catch (const std::exception& e) {
+            LOGGING(debug) << "Yaskawa Controller shutdown failed to join heartbeat thread with " << e.what();
+        }
+
         LOGGING(debug) << "heartbeat thread terminated";
     }
 }
