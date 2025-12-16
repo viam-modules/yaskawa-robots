@@ -78,7 +78,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
 
    public:
     explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)) {};
-    static auto create(const boost::asio::any_io_executor &exec) {
+    static auto create(const boost::asio::any_io_executor& exec) {
         return std::make_shared<AsyncQueue<T>>(private_{}, exec);
     };
     // This is somewhat an issue to use standard emplace if there is a pending op,
