@@ -313,7 +313,7 @@ std::ostream& operator<<(std::ostream& os, const Message& msg) {
 TcpRobotSocket::TcpRobotSocket(boost::asio::io_context& io_context, const std::string& host, uint16_t port)
     : RobotSocketBase(io_context, host, port),
       socket_(io_context),
-      request_queue_(std::make_shared<AsyncQueue<std::pair<Message, std::promise<Message>>>>(io_context.get_executor())) {}
+      request_queue_(AsyncQueue<std::pair<Message, std::promise<Message>>>::create(io_context.get_executor())) {}
 
 TcpRobotSocket::~TcpRobotSocket() {
     try {
@@ -737,7 +737,7 @@ std::future<void> YaskawaController::connect() {
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
                 } catch (const std::exception& e) {
-                    LOGGING(error) << "heartbeat thread terminated with " << e.what();
+                    LOGGING(info) << "heartbeat thread terminated with " << e.what();
                 }
             });
 

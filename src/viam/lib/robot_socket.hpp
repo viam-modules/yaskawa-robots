@@ -51,6 +51,10 @@ namespace robot {
 /// @tparam T The type of items stored in the queue
 template <typename T>
 class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
+    struct private_ {
+        explicit private_() = default;
+    };
+
    private:
     std::queue<T> queue_;
     mutable std::mutex mutex_;
@@ -73,7 +77,10 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     }
 
    public:
-    explicit AsyncQueue(boost::asio::any_io_executor exec) : executor_(std::move(exec)) {}
+    explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)) {};
+    static auto create(const boost::asio::any_io_executor &exec) {
+        return std::make_shared<AsyncQueue<T>>(private_{}, exec);
+    };
     // This is somewhat an issue to use standard emplace if there is a pending op,
     // indeed c++17 wants a reference back however we are removing the item
     // immediately so in our case emplace returns void
@@ -131,12 +138,12 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
             [weak = this->weak_from_this()](auto&& handler) mutable {
                 auto self = weak.lock();
                 if (!self) {
-                    LOGGING(error) << "cannot pop on closed queue weak_ptr is closed";
+                    LOGGING(debug) << "async_initiate could not acquire weak_ptr";
                     return;
                 }
                 const std::scoped_lock lock{self->mutex_};
                 if (self->closed_) {
-                    throw std::runtime_error("cannot pop on closed queue AsyncQueue is closed");
+                    throw std::runtime_error("AsyncQueue is closed, cannot pop on closed queue");
                 }
                 if (!self->queue_.empty()) {
                     T item = std::move(self->queue_.front());
