@@ -1119,7 +1119,7 @@ GoalStatusMessage::GoalStatusMessage(const Message& msg) {
 
 // GoalHandle implementation
 GoalRequestHandle::GoalRequestHandle(int32_t goal_id,
-                                     std::shared_ptr<YaskawaController> controller,
+                                     const std::shared_ptr<YaskawaController>& controller,
                                      std::shared_future<goal_state_t> completion_future)
     : goal_id_(goal_id), is_done_(false), controller_(controller), completion_future_(std::move(completion_future)) {}
 
