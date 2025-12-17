@@ -419,7 +419,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
 class GoalRequestHandle {
    public:
-    GoalRequestHandle(int32_t goal_id, std::shared_ptr<YaskawaController> controller, std::shared_future<goal_state_t> completion_future);
+    GoalRequestHandle(int32_t goal_id,
+                      const std::shared_ptr<YaskawaController>& controller,
+                      std::shared_future<goal_state_t> completion_future);
     goal_state_t wait();
     std::optional<goal_state_t> wait_for(std::chrono::milliseconds);
     void cancel();
@@ -429,7 +431,7 @@ class GoalRequestHandle {
    private:
     int32_t goal_id_;
     std::atomic<bool> is_done_;
-    std::shared_ptr<YaskawaController> controller_;
+    std::weak_ptr<YaskawaController> controller_;
     std::shared_future<goal_state_t> completion_future_;
     mutable std::mutex mutex_;
 };
