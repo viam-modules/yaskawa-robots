@@ -730,7 +730,6 @@ std::future<void> YaskawaController::connect() {
                     while (1) {
                         auto shared = self.lock();
                         if (!shared) {
-                            LOGGING(error) << "YaskawaController no longer exists";
                             return;
                         }
                         shared->send_heartbeat().get();
@@ -883,7 +882,6 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
         const uint8_t* as_bytes = reinterpret_cast<const uint8_t*>(&obj);
         payload.insert(payload.end(), as_bytes, as_bytes + sizeof(obj));
     };
-    LOGGING(info) << "send_goal traj size " << trajectory.size();
 
     append_to(axes_controlled);
     append_to(group_index);
@@ -938,7 +936,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             while (1) {
                 auto shared = self.lock();
                 if (!shared) {
-                    throw std::runtime_error("YaskawaController no longer exists");
+                    return;
                 }
                 // this blocks until we receive the goal status from the yaskawa-controller.
                 // this will not block for long unless we have connection problems.
