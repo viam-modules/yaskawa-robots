@@ -883,6 +883,8 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
         const uint8_t* as_bytes = reinterpret_cast<const uint8_t*>(&obj);
         payload.insert(payload.end(), as_bytes, as_bytes + sizeof(obj));
     };
+    LOGGING(info) << "send_goal traj size " << trajectory.size();
+
     append_to(axes_controlled);
     append_to(group_index);
     append_to((uint32_t)trajectory.size());
