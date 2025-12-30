@@ -30,7 +30,7 @@ viam::yaskawa::LogLevel string_to_log_level(const std::string& level_str) {
 void configure_logger(const viam::sdk::ResourceConfig& cfg) {
     const auto log_level_str = find_config_attribute<std::string>(cfg, "log_level").value_or("warn");
 
-    viam::yaskawa::LogLevel level = string_to_log_level(log_level_str);
+    const viam::yaskawa::LogLevel level = string_to_log_level(log_level_str);
 
     auto logger = std::make_shared<ViamSdkLogger>(level);
 
