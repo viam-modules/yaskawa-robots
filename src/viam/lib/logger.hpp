@@ -121,7 +121,7 @@ class ILogger {
 
 /// Default logger implementation that writes to stdout
 /// This class is thread-safe and uses modern C++20 features
-class Logger : public ILogger {
+class Logger final : public ILogger {
    public:
     /// Construct a logger with the specified minimum log level
     explicit Logger(LogLevel min_level = LogLevel::INFO) noexcept;

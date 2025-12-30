@@ -11,7 +11,7 @@
 #include <viam/sdk/log/logging.hpp>
 
 /// Logger implementation that writes to VIAM SDK logging infrastructure
-class ViamSdkLogger : public viam::yaskawa::ILogger {
+class ViamSdkLogger final : public viam::yaskawa::ILogger {
    public:
     explicit ViamSdkLogger(viam::yaskawa::LogLevel min_level = viam::yaskawa::LogLevel::INFO) noexcept : min_level_(min_level) {}
 
