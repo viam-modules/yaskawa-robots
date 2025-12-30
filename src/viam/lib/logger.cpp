@@ -161,7 +161,6 @@ void ViamControllerLogParser::process_data(const char* data) {
 
 void ViamControllerLogParser::process_buffer() {
     boost::smatch what;
-    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
     while (boost::regex_search(buffer_, what, full_log_pattern_, boost::regex_constants::match_any)) {
         auto begin = what[0].begin();
         // if we have some characters before a matched log statement then log them separately.
@@ -181,7 +180,6 @@ void ViamControllerLogParser::process_buffer() {
 void ViamControllerLogParser::flush() {
     if (!buffer_.empty()) {
         boost::smatch what;
-        // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange)
         if (boost::regex_search(buffer_, what, partial_log_pattern_)) {
             // if we have some characters before a matched log statement then log them separately.
             if (what.prefix().matched) {

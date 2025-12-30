@@ -106,7 +106,6 @@ find_package(Boost CONFIG REQUIRED
   system
   thread
   unit_test_framework
-  SYSTEM
 )
 
 enable_testing()
