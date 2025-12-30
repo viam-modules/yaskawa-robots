@@ -153,14 +153,15 @@ LogLevel ViamControllerLogParser::parse_level(char level_char) {
 }
 
 void ViamControllerLogParser::process_data(const char* data) {
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange) Removing this triggers an error in boost/regex/v5/match_flags.hpp
     if (data != nullptr) {
         buffer_.append(data);
         process_buffer();
     }
 }
-
 void ViamControllerLogParser::process_buffer() {
     boost::smatch what;
+
     while (boost::regex_search(buffer_, what, full_log_pattern_, boost::regex_constants::match_any)) {
         auto begin = what[0].begin();
         // if we have some characters before a matched log statement then log them separately.
@@ -178,6 +179,7 @@ void ViamControllerLogParser::process_buffer() {
 }
 
 void ViamControllerLogParser::flush() {
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange) Removing this triggers an error in boost/regex/v5/match_flags.hpp
     if (!buffer_.empty()) {
         boost::smatch what;
         if (boost::regex_search(buffer_, what, partial_log_pattern_)) {
