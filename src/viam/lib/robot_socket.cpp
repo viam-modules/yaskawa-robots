@@ -6,6 +6,7 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/deferred.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/experimental/awaitable_operators.hpp>
 #include <boost/asio/read.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
@@ -18,6 +19,7 @@
 #include <boost/range/algorithm/for_each.hpp>
 #include <boost/range/begin.hpp>
 #include <boost/range/end.hpp>
+#include <boost/regex.hpp>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -619,7 +621,9 @@ Message UdpRobotSocket::parse_message(const std::vector<uint8_t>& buffer) {
 
 // UdpBroadcastListener Implementation
 UdpBroadcastListener::UdpBroadcastListener(boost::asio::io_context& io_context, uint16_t port)
-    : io_context_(io_context), socket_(io_context), port_(port) {}
+    : io_context_(io_context), socket_(io_context), port_(port) {
+    log_parser_ = std::make_unique<viam::yaskawa::ViamControllerLogParser>();
+}
 
 UdpBroadcastListener::~UdpBroadcastListener() {
     stop();
@@ -635,7 +639,6 @@ void UdpBroadcastListener::start() {
         socket_.open(udp::v4());
         socket_.set_option(udp::socket::reuse_address(true));
         socket_.bind(udp::endpoint(udp::v4(), port_));
-
         // Start receiving broadcasts
         co_spawn(io_context_, receive_broadcasts(), detached);
 
@@ -651,8 +654,12 @@ void UdpBroadcastListener::stop() {
     if (!running_.exchange(false)) {
         return;  // Already stopped
     }
-
     try {
+        // Flush any remaining data in the parser
+        if (log_parser_ && log_parser_->has_pending_data()) {
+            log_parser_->flush();
+        }
+
         if (socket_.is_open()) {
             socket_.close();
         }
@@ -663,32 +670,32 @@ void UdpBroadcastListener::stop() {
 }
 
 boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
+    using namespace boost::asio::experimental::awaitable_operators;
     while (running_) {
         try {
             udp::endpoint sender_endpoint;
-
+            auto timer = boost::asio::steady_timer(io_context_);
+            timer.expires_after(std::chrono::milliseconds(200));
             // Receive broadcast message
-            const std::size_t bytes_received =
-                co_await socket_.async_receive_from(boost::asio::buffer(recv_buffer_), sender_endpoint, use_awaitable);
+            auto result = co_await(timer.async_wait(use_awaitable) ||
+                                   socket_.async_receive_from(boost::asio::buffer(recv_buffer_), sender_endpoint, use_awaitable));
 
-            if (bytes_received > 0 && running_) {
-                // Null-terminate the string (handle case where buffer is full)
-                std::size_t str_len = bytes_received;
+            if (std::holds_alternative<std::size_t>(result)) {
+                const size_t bytes_received = std::get<std::size_t>(result);
+                if (bytes_received > 0 && running_) {
+                    // Null-terminate the buffer to ensure safe string operations
+                    std::size_t str_pos = std::min(bytes_received, recv_buffer_.size() - 1);
+                    recv_buffer_[str_pos] = '\0';
 
-                // Find null terminator or use full buffer
-                for (std::size_t i = 0; i < bytes_received; ++i) {
-                    if (recv_buffer_[i] == '\0') {
-                        str_len = i;
-                        break;
+                    // Process the data through the log parser
+                    if (log_parser_) {
+                        log_parser_->process_data(recv_buffer_.data());
                     }
+                } else {
+                    log_parser_->flush();
                 }
-
-                // Parse and log the broadcast message
-                const std::string message(recv_buffer_.data(), str_len);
-                if (!message.empty()) {
-                    // TODO deconstruct incoming log messages
-                    LOGGING(info) << message;
-                }
+            } else {
+                log_parser_->flush();
             }
         } catch (const std::exception& e) {
             if (running_) {
@@ -697,6 +704,7 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
             break;
         }
     }
+    log_parser_->flush();
 }
 
 // Robot Implementation

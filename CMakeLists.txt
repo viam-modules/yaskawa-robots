@@ -102,8 +102,10 @@ set(BOOST_MIN_VERSION "1.80.0")
 find_package(Boost CONFIG REQUIRED
   COMPONENTS
   headers
+  regex
   system
   thread
+  unit_test_framework
 )
 
 enable_testing()
@@ -158,6 +160,7 @@ target_compile_definitions(viam-yaskawa
 target_link_libraries(viam-yaskawa
   PUBLIC
     trajectories
+    Boost::regex
 )
 
 install(
@@ -268,9 +271,24 @@ install(
 )
 
 install(
-  DIRECTORY src/kinematics 
+  DIRECTORY src/kinematics
   DESTINATION ${CMAKE_INSTALL_DATADIR}/yaskawa-robots
 )
+
+add_executable(broadcast_log_parser_test)
+
+target_sources(broadcast_log_parser_test
+  PRIVATE
+    src/viam/lib/test/broadcast_log_parser_test.cpp
+)
+
+target_link_libraries(broadcast_log_parser_test
+  PRIVATE
+    viam-yaskawa
+    Boost::unit_test_framework
+)
+
+add_test(NAME broadcast_log_parser_test COMMAND broadcast_log_parser_test)
 
 set(CPACK_PACKAGE_NAME "viam-yaskawa-robots")
 set(CPACK_PACKAGE_FILE_NAME "module")

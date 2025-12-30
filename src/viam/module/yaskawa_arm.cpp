@@ -189,6 +189,9 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
 
 YaskawaArm::YaskawaArm(Model model, const Dependencies& deps, const ResourceConfig& cfg, boost::asio::io_context& io_context)
     : Arm(cfg.name()), model_(std::move(model)), io_context_(io_context) {
+    // Configure the global logger to use VIAM SDK logging
+    configure_logger(cfg);
+
     VIAM_SDK_LOG(info) << "Yaskawa Arm constructor called (model: " << model_.to_string() << ")";
 
     configure_(deps, cfg);
