@@ -121,10 +121,10 @@ std::string Logger::get_timestamp() {
 // Static pattern strings
 
 // This regex captures anything between "%Y-%m-%d %H:%M:%S -I-" and "%Y-%m-%d %H:%M:%S -I-" not counting the last \r\n
-const std::string k_full_log_pattern_str{
+constexpr const char* k_full_log_pattern_str{
     R"((\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s)-([a-zA-Z])-(?s:(.+?))(?=[\r\n]{2}\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s-[a-zA-Z]-))"};
 // finds anything that resemble a log statement
-const std::string k_partial_log_pattern_str{R"((\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s)-([a-zA-Z])-(?s:(.+))(?<![\s]))"};
+constexpr const char* k_partial_log_pattern_str{R"((\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s)-([a-zA-Z])-(?s:(.+))(?<![\s]))"};
 
 ViamControllerLogParser::ViamControllerLogParser() {
     try {
@@ -153,11 +153,10 @@ LogLevel ViamControllerLogParser::parse_level(char level_char) {
 }
 
 void ViamControllerLogParser::process_data(const char* data) {
-    if (data == nullptr) {
-        return;
+    if (data != nullptr) {
+        buffer_.append(data);
+        process_buffer();
     }
-    buffer_.append(data);
-    process_buffer();
 }
 
 void ViamControllerLogParser::process_buffer() {
@@ -179,22 +178,20 @@ void ViamControllerLogParser::process_buffer() {
 }
 
 void ViamControllerLogParser::flush() {
-    if (buffer_.empty()) {
-        return;
-    }
+    if (!buffer_.empty()) {
+        boost::smatch what;
+        if (boost::regex_search(buffer_, what, partial_log_pattern_)) {
+            // if we have some characters before a matched log statement then log them separately.
+            if (what.prefix().matched) {
+                LOGGING(info) << "[CONTROLLER] " << what.prefix().str();
+            }
 
-    boost::smatch what;
-    if (boost::regex_search(buffer_, what, partial_log_pattern_)) {
-        // if we have some characters before a matched log statement then log them separately.
-        if (what.prefix().matched) {
-            LOGGING(info) << "[CONTROLLER] " << what.prefix().str();
+            auto level = parse_level(what[2].str()[0]);
+            get_global_logger()->log(level) << "[CONTROLLER] " << what[3].str();
         }
 
-        auto level = parse_level(what[2].str()[0]);
-        get_global_logger()->log(level) << "[CONTROLLER] " << what[3].str();
+        buffer_.clear();
     }
-
-    buffer_.clear();
 }
 
 bool ViamControllerLogParser::has_pending_data() const {

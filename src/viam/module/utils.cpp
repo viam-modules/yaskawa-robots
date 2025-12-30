@@ -2,6 +2,7 @@
 
 #include <Eigen/Dense>
 
+namespace {
 /// Convert a string log level to the LogLevel enum
 /// @param level_str The string log level
 /// @return The corresponding LogLevel enum value (defaults to INFO)
@@ -24,9 +25,10 @@ viam::yaskawa::LogLevel string_to_log_level(const std::string& level_str) {
     // Default to WARNING
     return viam::yaskawa::LogLevel::INFO;
 }
+}  // namespace
 
 void configure_logger(const viam::sdk::ResourceConfig& cfg) {
-    auto log_level_str = find_config_attribute<std::string>(cfg, "log_level").value_or("warn");
+    const auto log_level_str = find_config_attribute<std::string>(cfg, "log_level").value_or("warn");
 
     viam::yaskawa::LogLevel level = string_to_log_level(log_level_str);
 

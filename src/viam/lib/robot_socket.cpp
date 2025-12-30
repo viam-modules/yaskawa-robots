@@ -684,7 +684,7 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
                 const size_t bytes_received = std::get<std::size_t>(result);
                 if (bytes_received > 0 && running_) {
                     // Null-terminate the buffer to ensure safe string operations
-                    std::size_t str_pos = std::min(bytes_received, recv_buffer_.size() - 1);
+                    const std::size_t str_pos = std::min(bytes_received, recv_buffer_.size() - 1);
                     recv_buffer_[str_pos] = '\0';
 
                     // Process the data through the log parser
