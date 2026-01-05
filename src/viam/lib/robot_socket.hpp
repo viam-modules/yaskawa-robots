@@ -407,6 +407,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     double acceleration_;
     uint32_t group_index_;
     std::thread heartbeat_;
+    std::atomic<bool> running_{false};
 
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;

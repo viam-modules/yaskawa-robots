@@ -262,7 +262,11 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
 
         // Execute the move command and block until completion
         // This will throw if an error occurs during motion
-        robot_->move(std::move(waypoints), unix_time)->wait();
+        try{
+            robot_->move(std::move(waypoints), unix_time)->wait();
+        }catch(...){
+            VIAM_SDK_LOG(warn) << "move failed ";
+        } 
     }
 }
 

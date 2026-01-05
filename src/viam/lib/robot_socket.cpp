@@ -728,15 +728,38 @@ std::future<void> YaskawaController::connect() {
             // Wait for first status update to ensure connection is fully established
             get_robot_status().get();
 
+            // heartbeat_ = std::thread([self = shared_from_this()]() {
+            //     try {
+            //     while (1) {
+            //             self->send_heartbeat().get();
+            //             std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            //         }
+            //     } catch (const std::exception& e) {
+            //             LOGGING(error) << "heartbeat thread terminated with " << e.what();
+            // }
+            // });
+
             heartbeat_ = std::thread([self = shared_from_this()]() {
+                while (1) {
                 try {
-                    while (1) {
                         self->send_heartbeat().get();
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-                    }
+                    
                 } catch (const std::exception& e) {
-                    LOGGING(error) << "heartbeat thread terminated with " << e.what();
+                    if (!self->running_){
+                        LOGGING(error) << "heartbeat thread terminated with " << e.what();
+                        return;
+                    }
+                    try{
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        // Establish TCP connection for commands
+                        self->tcp_socket_->connect().get();
+                    }catch (const std::exception& e) {
+                        LOGGING(error) << "heartbeat thread terminated with " << e.what();
+                        return;
+                    }
                 }
+            }
             });
 
             // Start listening for broadcast messages from robot
@@ -748,10 +771,12 @@ std::future<void> YaskawaController::connect() {
             udp_socket_.reset();
             throw;
         }
+        running_ = true;
     });
 }
 
 void YaskawaController::disconnect() {
+    running_ = false;
     if (broadcast_listener_) {
         broadcast_listener_->stop();
     }
