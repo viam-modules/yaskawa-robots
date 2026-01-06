@@ -51,6 +51,10 @@ namespace robot {
 /// @tparam T The type of items stored in the queue
 template <typename T>
 class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
+    struct private_ {
+        explicit private_() = default;
+    };
+
    private:
     std::queue<T> queue_;
     mutable std::mutex mutex_;
@@ -73,7 +77,10 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     }
 
    public:
-    explicit AsyncQueue(boost::asio::any_io_executor exec) : executor_(std::move(exec)) {}
+    explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)) {};
+    static auto create(boost::asio::any_io_executor exec) {
+        return std::make_shared<AsyncQueue<T>>(private_{}, std::move(exec));
+    };
     // This is somewhat an issue to use standard emplace if there is a pending op,
     // indeed c++17 wants a reference back however we are removing the item
     // immediately so in our case emplace returns void
@@ -82,7 +89,6 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         if (closed_) {
             throw std::runtime_error("cannot emplace on closed queue");
         }
-
         {
             std::scoped_lock lock{mutex_};
             queue_.emplace(std::forward<Args>(args)...);
@@ -127,20 +133,27 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
         if (closed_) {
             throw std::runtime_error("cannot pop on closed queue");
         }
-        // TODO(RSDK-12530) remove nolint
-        return boost::asio::async_initiate<CompletionToken,
-                                           void(std::optional<T>,
-                                                boost::system::error_code ec)>(  // NOLINT(clang-analyzer-core.NullDereference)
-            [this](auto&& handler) mutable {
-                const std::scoped_lock lock{mutex_};
-                if (!queue_.empty()) {
-                    T item = std::move(queue_.front());
-                    queue_.pop();
-                    boost::asio::post(executor_, [handler = std::forward<decltype(handler)>(handler), item = std::move(item)]() mutable {
-                        handler(std::make_optional(std::move(item)), boost::system::error_code());
-                    });
+
+        return boost::asio::async_initiate<CompletionToken, void(std::optional<T>, boost::system::error_code ec)>(
+            [weak = this->weak_from_this()](auto&& handler) mutable {
+                auto self = weak.lock();
+                if (!self) {
+                    return;
+                }
+                const std::scoped_lock lock{self->mutex_};
+                if (self->closed_) {
+                    LOGGING(debug) << "AsyncQueue is closed, cannot pop on closed queue";
+                    return;
+                }
+                if (!self->queue_.empty()) {
+                    T item = std::move(self->queue_.front());
+                    self->queue_.pop();
+                    boost::asio::post(self->executor_,
+                                      [handler = std::forward<decltype(handler)>(handler), item = std::move(item)]() mutable {
+                                          handler(std::make_optional(std::move(item)), boost::system::error_code());
+                                      });
                 } else {
-                    pending_.push(PendingPopOperation{std::forward<decltype(handler)>(handler)});
+                    self->pending_.push(PendingPopOperation{std::forward<decltype(handler)>(handler)});
                 }
             },
             token);
@@ -300,7 +313,7 @@ class TcpRobotSocket : public RobotSocketBase {
     using tcp = boost::asio::ip::tcp;
 
     tcp::socket socket_;
-    AsyncQueue<std::pair<Message, std::promise<Message>>> request_queue_;
+    std::shared_ptr<AsyncQueue<std::pair<Message, std::promise<Message>>>> request_queue_;
     std::atomic<bool> running_{false};
 
     boost::asio::awaitable<void> process_requests();

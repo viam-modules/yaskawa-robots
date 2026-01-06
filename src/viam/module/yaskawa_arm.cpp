@@ -136,6 +136,24 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     return {};
 }
 
+template <typename Callable>
+auto make_scope_guard(Callable&& cleanup) {
+    struct guard {
+       public:
+        explicit guard(Callable&& cleanup) : cleanup_(std::move(cleanup)) {}
+        void deactivate() {
+            cleanup_ = [] {};
+        }
+        ~guard() {
+            cleanup_();
+        }
+
+       private:
+        std::function<void()> cleanup_;
+    };
+    return guard{std::forward<Callable>(cleanup)};
+}
+
 }  // namespace
 
 const ModelFamily& YaskawaArm::model_family() {
@@ -334,7 +352,18 @@ ProtoStruct YaskawaArm::do_command(const ProtoStruct&) {
 }
 
 YaskawaArm::~YaskawaArm() {
-    robot_->disconnect();
+    try {
+        robot_->disconnect();
+    } catch (...) {
+        const auto unconditional_abort = make_scope_guard([] { std::abort(); });
+        try {
+            throw;
+        } catch (const std::exception& ex) {
+            VIAM_SDK_LOG(error) << "YaskawaArm dtor failed with a std::exception - module service will terminate: " << ex.what();
+        } catch (...) {
+            VIAM_SDK_LOG(error) << "YaskawaArm dtor failed with an unknown exception - module service will terminate";
+        }
+    }
 }
 
 bool YaskawaArm::is_moving() {

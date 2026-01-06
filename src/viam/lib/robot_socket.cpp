@@ -311,7 +311,9 @@ std::ostream& operator<<(std::ostream& os, const Message& msg) {
 
 // TcpRobotSocket Implementation
 TcpRobotSocket::TcpRobotSocket(boost::asio::io_context& io_context, const std::string& host, uint16_t port)
-    : RobotSocketBase(io_context, host, port), socket_(io_context), request_queue_(io_context.get_executor()) {}
+    : RobotSocketBase(io_context, host, port),
+      socket_(io_context),
+      request_queue_(AsyncQueue<std::pair<Message, std::promise<Message>>>::create(io_context.get_executor())) {}
 
 TcpRobotSocket::~TcpRobotSocket() {
     try {
@@ -335,7 +337,6 @@ std::future<void> TcpRobotSocket::connect() {
 
                 connected_ = true;
                 running_ = true;
-
                 // Start the request processing coroutine
                 co_spawn(io_context_, process_requests(), detached);
 
@@ -346,7 +347,6 @@ std::future<void> TcpRobotSocket::connect() {
             }
         },
         detached);
-
     return future;
 }
 
@@ -356,35 +356,33 @@ std::future<Message> TcpRobotSocket::send_request(Message request) {
     if (!connected_) {
         promise.set_exception(std::make_exception_ptr(std::runtime_error("Not connected")));
     } else {
-        request_queue_.push(std::make_pair(std::move(request), std::move(promise)));
+        request_queue_->push(std::make_pair(std::move(request), std::move(promise)));
     }
     return future;
 }
 
 void TcpRobotSocket::disconnect() {
     if (connected_) {
+        // stop processing requests
+        running_.store(false);
         connected_ = false;
-        running_ = false;
-
         if (socket_.is_open()) {
             socket_.close();
         }
-        while (!request_queue_.empty()) {
-            auto promise = request_queue_.pop().second;
+
+        while (!request_queue_->empty()) {
+            auto promise = request_queue_->pop().second;
             promise.set_exception(std::make_exception_ptr(std::runtime_error("Connection closed")));
         }
     }
 }
 
 awaitable<void> TcpRobotSocket::process_requests() {
-    // TODO(RSDK-12530) remove nolint
-    while (running_) {  // NOLINT(clang-analyzer-core.NullDereference)
-        auto [result, error] =
-            co_await request_queue_.async_pop(boost::asio::use_awaitable);  // NOLINT(clang-analyzer-core.NullDereference)
+    while (running_.load()) {
+        auto [result, error] = co_await request_queue_->async_pop(boost::asio::use_awaitable);
         if (error) {
             throw std::runtime_error("boost error " + error.message() + " while waiting for a request");
         }
-
         if (!result) {
             throw std::runtime_error("empty request when expecting one");
         }
@@ -473,10 +471,9 @@ std::future<Message> UdpRobotSocket::send_request(Message /* request */) {
 
 void UdpRobotSocket::disconnect() {
     if (connected_) {
-        connected_ = false;
         running_ = false;
         robot_state_.in_error.store(true);
-
+        connected_ = false;
         if (socket_.is_open()) {
             socket_.close();
         }
@@ -728,14 +725,18 @@ std::future<void> YaskawaController::connect() {
             // Wait for first status update to ensure connection is fully established
             get_robot_status().get();
 
-            heartbeat_ = std::thread([self = shared_from_this()]() {
+            heartbeat_ = std::thread([self = weak_from_this()]() {
                 try {
                     while (1) {
-                        self->send_heartbeat().get();
+                        auto shared = self.lock();
+                        if (!shared) {
+                            return;
+                        }
+                        shared->send_heartbeat().get();
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
                 } catch (const std::exception& e) {
-                    LOGGING(error) << "heartbeat thread terminated with " << e.what();
+                    LOGGING(info) << "heartbeat thread terminated with " << e.what();
                 }
             });
 
@@ -752,14 +753,25 @@ std::future<void> YaskawaController::connect() {
 }
 
 void YaskawaController::disconnect() {
-    if (broadcast_listener_) {
-        broadcast_listener_->stop();
+    if (udp_socket_) {
+        udp_socket_->disconnect();
     }
     if (tcp_socket_) {
         tcp_socket_->disconnect();
     }
-    if (udp_socket_) {
-        udp_socket_->disconnect();
+    if (broadcast_listener_) {
+        broadcast_listener_->stop();
+    }
+    if (heartbeat_.joinable()) {
+        LOGGING(debug) << "Yaskawa Controller shutdown waiting for heartbeat thread to terminate";
+        // the heartbeat thread will shutdown once the tcp_socket has closed. Wait for the heartbeat thread to finish
+        try {
+            heartbeat_.join();
+        } catch (const std::exception& e) {
+            LOGGING(debug) << "Yaskawa Controller shutdown failed to join heartbeat thread with " << e.what();
+        }
+
+        LOGGING(debug) << "heartbeat thread terminated";
     }
 }
 
@@ -852,7 +864,6 @@ std::future<Message> YaskawaController::register_udp_port(uint16_t port) {
     std::vector<uint8_t> payload(sizeof(udp_port_registration_payload_t));
     udp_port_registration_payload_t* port_payload = reinterpret_cast<udp_port_registration_payload_t*>(payload.data());
     port_payload->udp_port = port;
-
     return tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload)));
 }
 
@@ -871,6 +882,7 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
         const uint8_t* as_bytes = reinterpret_cast<const uint8_t*>(&obj);
         payload.insert(payload.end(), as_bytes, as_bytes + sizeof(obj));
     };
+
     append_to(axes_controlled);
     append_to(group_index);
     append_to((uint32_t)trajectory.size());
@@ -924,7 +936,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             while (1) {
                 auto shared = self.lock();
                 if (!shared) {
-                    throw std::runtime_error("YaskawaController no longer exists");
+                    return;
                 }
                 // this blocks until we receive the goal status from the yaskawa-controller.
                 // this will not block for long unless we have connection problems.
