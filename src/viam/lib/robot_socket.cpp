@@ -87,7 +87,7 @@ void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec
     const double step = duration_sec / static_cast<double>((num_samples - 1));
 
     // Generate samples by evaluating f at each time point
-    for (std::size_t i = 0; i < num_samples - 1; ++i) {
+    for (std::size_t i = 1; i < num_samples - 1; ++i) {
         samples.push_back(f(static_cast<double>(i) * step, step));
     }
 
@@ -889,8 +889,69 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
                                                    uint32_t axes_controlled,
                                                    const std::vector<trajectory_point_t>& trajectory,
                                                    const std::vector<tolerance_t>& tolerance) {
+    // // if the trajectory fits within the queue, just send it all
+    // if (trajectory.size() < 200){
+    //     std::vector<uint8_t> payload;
+    //     payload.reserve((sizeof(uint32_t) * 2) + (trajectory.size() * sizeof(trajectory_point_t)) + (tolerance.size() * sizeof(tolerance_t)));
+
+    //     auto append_to = [&](auto obj) {
+    //         const uint8_t* as_bytes = reinterpret_cast<const uint8_t*>(&obj);
+    //         payload.insert(payload.end(), as_bytes, as_bytes + sizeof(obj));
+    //     };
+    //     append_to(axes_controlled);
+    //     append_to(group_index);
+    //     append_to((uint32_t)trajectory.size());
+    //     boost::for_each(trajectory, append_to);
+    //     append_to((uint32_t)tolerance.size());
+    //     boost::for_each(tolerance, append_to);
+
+    //     return tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload)));
+    // }
+
+    LOGGING(info) << "yo num traj points: " << trajectory.size();
+    long unsigned int points = 0;
+    while(points < trajectory.size()){
+        std::vector<uint8_t> payload;
+        payload.reserve((sizeof(uint32_t) * 2) + (sizeof(trajectory_point_t)) + (sizeof(tolerance_t)));
+
+        auto append_to = [&](auto obj) {
+            const uint8_t* as_bytes = reinterpret_cast<const uint8_t*>(&obj);
+            payload.insert(payload.end(), as_bytes, as_bytes + sizeof(obj));
+        };
+        append_to(axes_controlled);
+        append_to(group_index);
+        append_to((uint32_t)1);
+        append_to(trajectory[points]);
+        if(tolerance.size() == 0){
+            append_to((uint32_t)0);
+        }else{
+            append_to((uint32_t)1);
+            append_to(tolerance[points]);
+        }
+        points++;
+        if (points >= trajectory.size()){
+            LOGGING(info) << "yo 6";
+            return tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload)));
+        }
+        LOGGING(info) << "yo 4";
+        auto response = tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload))).get();
+        if (response.header.message_type != MSG_GOAL_ACCEPTED) {
+            throw std::runtime_error(std::format("yo chunk Expected MSG_GOAL_ACCEPTED, got {}", (int)response.header.message_type));
+        }
+        LOGGING(info) << "yo 5";
+        if (response.payload.size() != sizeof(goal_accepted_payload_t)) {
+            throw std::runtime_error(std::format(
+                "Invalid goal accepted payload size expected {} got {}", sizeof(goal_accepted_payload_t), (int)response.payload.size()));
+        }
+    }
+    throw std::runtime_error("yo no traj");
+}
+
+std::future<Message> YaskawaController::init_goal_(uint32_t group_index,
+                                                   uint32_t axes_controlled,
+                                                   const trajectory_point_t& trajectory) {
     std::vector<uint8_t> payload;
-    payload.reserve((sizeof(uint32_t) * 2) + (trajectory.size() * sizeof(trajectory_point_t)) + (tolerance.size() * sizeof(tolerance_t)));
+    payload.reserve((sizeof(uint32_t) * 2) + (sizeof(trajectory_point_t)) + (sizeof(tolerance_t)));
 
     auto append_to = [&](auto obj) {
         const uint8_t* as_bytes = reinterpret_cast<const uint8_t*>(&obj);
@@ -898,10 +959,10 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
     };
     append_to(axes_controlled);
     append_to(group_index);
-    append_to((uint32_t)trajectory.size());
-    boost::for_each(trajectory, append_to);
-    append_to((uint32_t)tolerance.size());
-    boost::for_each(tolerance, append_to);
+    append_to((uint32_t)1);
+    append_to(trajectory);
+    append_to((uint32_t)0);
+    // append_to(tolerance); we don't use tolerance so don't send it
 
     return tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload)));
 }
@@ -920,7 +981,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     }
     // TODO check servo on and & errors
     turn_servo_power_on().get();
-    setMotionMode(1).get();
+    setMotionMode(2).get();
 
     auto promise = std::promise<goal_state_t>();
 
@@ -933,10 +994,11 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     }
     auto response = make_goal_future.get();
     LOGGING(info) << response;
+    LOGGING(info) << "yo 1";
     if (response.header.message_type != MSG_GOAL_ACCEPTED) {
         throw std::runtime_error(std::format("Expected MSG_GOAL_ACCEPTED, got {}", (int)response.header.message_type));
     }
-
+    LOGGING(info) << "yo 2";
     if (response.payload.size() != sizeof(goal_accepted_payload_t)) {
         throw std::runtime_error(std::format(
             "Invalid goal accepted payload size expected {} got {}", sizeof(goal_accepted_payload_t), (int)response.payload.size()));
@@ -1019,6 +1081,9 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     std::vector<trajectory_point_t> samples;
     std::chrono::duration<double> cumulative_time{0};
 
+    Eigen::VectorXd init_p_eigen;
+    Eigen::VectorXd init_v_eigen;
+    bool has_init = false;
     for (const auto& segment : segments) {
         const Trajectory trajectory(Path(segment, 0.1), max_velocity_vec, max_acceleration_vec);
         if (!trajectory.isValid()) {
@@ -1055,7 +1120,12 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
 
         // desired sampling frequency. if the duration is small we will oversample but that should be fine.
         constexpr double k_sampling_freq_hz = 3;
-
+        if (!has_init){
+            init_p_eigen = trajectory.getPosition(0);
+            init_v_eigen = trajectory.getVelocity(0);
+            has_init = true;
+        }
+        
         sampling_func(samples, duration, k_sampling_freq_hz, [&](const double t, const double) {
             auto p_eigen = trajectory.getPosition(t);
             auto v_eigen = trajectory.getVelocity(t);
@@ -1070,6 +1140,18 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         });
 
         cumulative_time += std::chrono::duration<double>(duration);
+    }
+    
+    auto init_point = trajectory_point_t{{init_p_eigen[0], init_p_eigen[1], init_p_eigen[2], init_p_eigen[3], init_p_eigen[4], init_p_eigen[5]},
+                                      {init_v_eigen[0], init_v_eigen[1], init_v_eigen[2], init_v_eigen[3], init_v_eigen[4], init_v_eigen[5]},
+                                      {0},
+                                      {0},
+                                      {static_cast<int32_t>(0), static_cast<int32_t>(0)}};
+    auto init_goal_future = init_goal_(group_index_, 6, init_point).get();
+    LOGGING(info) << init_goal_future;
+    LOGGING(info) << "yo 3";
+    if (init_goal_future.header.message_type != MSG_GOAL_ACCEPTED) {
+        throw std::runtime_error(std::format("Expected MSG_GOAL_ACCEPTED, got {}", (int)init_goal_future.header.message_type));
     }
 
     return send_goal_(group_index_, 6, samples, {});

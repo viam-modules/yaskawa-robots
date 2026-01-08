@@ -416,6 +416,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
                                     uint32_t axes_controlled,
                                     const std::vector<trajectory_point_t>& trajectory,
                                     const std::vector<tolerance_t>& tolerance);
+    std::future<Message> init_goal_(uint32_t group_index,
+                                    uint32_t axes_controlled,
+                                    const trajectory_point_t& trajectory);
 };
 
 class GoalRequestHandle {
