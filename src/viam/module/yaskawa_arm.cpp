@@ -297,6 +297,7 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 }
 
 ::viam::sdk::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
+    using KinematicsDataSVA = viam::sdk::KinematicsDataSVA;
     const std::shared_lock rlock{config_mutex_};
 
     constexpr char kSvaFileTemplate[] = "kinematics/%1%.json";
