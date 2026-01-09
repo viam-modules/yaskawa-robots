@@ -18,6 +18,8 @@ using namespace viam::sdk;
 using namespace robot;
 
 class YaskawaArm final : public Arm, public Reconfigurable {
+    using KinematicsData = ::viam::sdk::KinematicsData;
+
    public:
     /// @brief Returns the common ModelFamily for all implementations
     static const ModelFamily& model_family();
@@ -84,6 +86,11 @@ class YaskawaArm final : public Arm, public Reconfigurable {
     // the arm server within RDK will reconstruct the geometries from the
     // kinematics and joint positions if left unimplemented
     std::vector<GeometryConfig> get_geometries(const ProtoStruct&) override {
+        throw std::runtime_error("unimplemented");
+    }
+    /// @brief Returns `3DModel`s associated with the calling arm
+    /// @return A map of `3DModel`s associated with the calling arm
+    std::map<std::string, mesh> get_3d_models(const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
     }
 
