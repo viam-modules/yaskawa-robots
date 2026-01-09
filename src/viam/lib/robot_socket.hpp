@@ -368,7 +368,7 @@ class UdpBroadcastListener {
     uint16_t port_;
     std::atomic<bool> running_{false};
     std::array<char, 1024> recv_buffer_;
-
+    std::unique_ptr<viam::yaskawa::ViamControllerLogParser> log_parser_;
     boost::asio::awaitable<void> receive_broadcasts();
 };
 
