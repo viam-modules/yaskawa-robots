@@ -10,6 +10,8 @@
 #include <string_view>
 #include <utility>
 
+#include <boost/regex.hpp>
+
 namespace viam {
 namespace yaskawa {
 
@@ -119,7 +121,7 @@ class ILogger {
 
 /// Default logger implementation that writes to stdout
 /// This class is thread-safe and uses modern C++20 features
-class Logger : public ILogger {
+class Logger final : public ILogger {
    public:
     /// Construct a logger with the specified minimum log level
     explicit Logger(LogLevel min_level = LogLevel::INFO) noexcept;
@@ -135,10 +137,10 @@ class Logger : public ILogger {
     Logger& operator=(Logger&&) noexcept = delete;
 
     /// Set the minimum log level
-    void set_min_level(LogLevel level) override;
+    void set_min_level(LogLevel level) final;
 
     /// Get the current minimum log level
-    LogLevel get_min_level() const noexcept override;
+    LogLevel get_min_level() const noexcept final;
 
     /// Enable or disable timestamps in log messages
     void set_show_timestamps(bool show) noexcept;
@@ -148,7 +150,7 @@ class Logger : public ILogger {
 
    protected:
     /// Write a log message (called by LogStream)
-    void write_log(LogLevel level, std::string_view message) override;
+    void write_log(LogLevel level, std::string_view message) final;
 
    private:
     /// Format a log message with timestamp and level
@@ -188,6 +190,40 @@ inline void set_global_logger(std::shared_ptr<ILogger> logger) {
 inline std::shared_ptr<ILogger> get_global_logger() {
     return global_logger;
 }
+
+/// Parser for broadcast log messages from the Yaskawa controller.
+/// Messages are formatted as:
+/// - Timestamp: "%Y-%m-%d %H:%M:%S "
+/// - Level: "-X-" where X = C (critical), E (error), W (warn), I (info), D (debug)
+/// - Termination: \r\n (there can be many \r\n in the log statement)
+///
+class ViamControllerLogParser {
+   public:
+    /// Construct parser and compile regex patterns
+    /// @throws std::runtime_error if regex compilation fails
+    ViamControllerLogParser();
+
+    /// Process incoming data from a broadcast packet
+    /// @param data String view of data received from the socket
+    void process_data(std::string_view data);
+
+    /// Flush any buffered data. There will be an attempt to extract a partial log statement
+    void flush();
+
+    /// Check if the buffer has pending data
+    bool has_pending_data() const;
+
+   private:
+    /// Extract log level from a level marker like "-I-"
+    static LogLevel parse_level(char level_char);
+
+    /// Process complete statements in the buffer
+    void process_buffer();
+
+    std::string buffer_;
+    boost::regex full_log_pattern_;
+    boost::regex partial_log_pattern_;
+};
 
 }  // namespace yaskawa
 }  // namespace viam

@@ -2,6 +2,8 @@
 
 #include <iomanip>
 #include <iostream>
+#include <stdexcept>
+#include <string_view>
 
 namespace viam {
 namespace yaskawa {
@@ -115,6 +117,88 @@ std::string Logger::get_timestamp() {
     oss << std::put_time(&tm_buf, "%Y-%m-%d %H:%M:%S") << '.' << std::setfill('0') << std::setw(3) << now_ms.count();
 
     return oss.str();
+}
+
+// Static pattern strings
+
+// This regex captures anything between "%Y-%m-%d %H:%M:%S -I-" and "%Y-%m-%d %H:%M:%S -I-" not counting the last \r\n
+constexpr const char k_full_log_pattern_str[] =
+    R"((\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s)-([a-zA-Z])-(?s:(.+?))(?=[\r\n]{2}\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s-[a-zA-Z]-))";
+// finds anything that resemble a log statement
+constexpr const char k_partial_log_pattern_str[] = R"((\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s)-([a-zA-Z])-(?s:(.+))(?<![\s]))";
+
+ViamControllerLogParser::ViamControllerLogParser() {
+    try {
+        full_log_pattern_ = boost::regex(k_full_log_pattern_str);
+        partial_log_pattern_ = boost::regex(k_partial_log_pattern_str);
+    } catch (const boost::regex_error& e) {
+        throw std::runtime_error(std::string("Failed to compile broadcast log regex: ") + e.what());
+    }
+}
+
+LogLevel ViamControllerLogParser::parse_level(char level_char) {
+    switch (level_char) {
+        case 'D':
+            return LogLevel::DEBUG;
+        case 'I':
+            return LogLevel::INFO;
+        case 'W':
+            return LogLevel::WARNING;
+        case 'E':
+            return LogLevel::ERROR;
+        case 'C':
+            return LogLevel::CRITICAL;
+        default:
+            return LogLevel::INFO;
+    }
+}
+
+void ViamControllerLogParser::process_data(std::string_view data) {
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange) Removing this triggers an error in boost/regex/v5/match_flags.hpp
+    if (!data.empty()) {
+        buffer_.append(data);
+        process_buffer();
+    }
+}
+void ViamControllerLogParser::process_buffer() {
+    boost::smatch what;
+
+    while (boost::regex_search(buffer_, what, full_log_pattern_, boost::regex_constants::match_any)) {
+        auto begin = what[0].begin();
+        // if we have some characters before a matched log statement then log them separately.
+        if (what.prefix().matched) {
+            LOGGING(info) << "[CONTROLLER] " << what.prefix().str();
+            begin = what.prefix().begin();
+        }
+        auto level = parse_level(what[2].str()[0]);
+
+        get_global_logger()->log(level) << "[CONTROLLER] " << what[3].str();
+        auto end = what[0].end();
+        std::advance(end, std::min(std::distance(end, buffer_.cend()), std::string::difference_type(2)));
+        buffer_.erase(begin, end);
+    }
+}
+
+void ViamControllerLogParser::flush() {
+    // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange) Removing this triggers an error in boost/regex/v5/match_flags.hpp
+    if (!buffer_.empty()) {
+        boost::smatch what;
+        if (boost::regex_search(buffer_, what, partial_log_pattern_)) {
+            // if we have some characters before a matched log statement then log them separately.
+            if (what.prefix().matched) {
+                LOGGING(info) << "[CONTROLLER] " << what.prefix().str();
+            }
+
+            auto level = parse_level(what[2].str()[0]);
+            get_global_logger()->log(level) << "[CONTROLLER] " << what[3].str();
+        }
+
+        buffer_.clear();
+    }
+}
+
+bool ViamControllerLogParser::has_pending_data() const {
+    return !buffer_.empty();
 }
 
 }  // namespace yaskawa
