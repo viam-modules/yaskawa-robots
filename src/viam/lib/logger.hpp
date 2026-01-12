@@ -204,8 +204,8 @@ class ViamControllerLogParser {
     ViamControllerLogParser();
 
     /// Process incoming data from a broadcast packet
-    /// @param data Null-terminated string received from the socket
-    void process_data(const char* data);
+    /// @param data String view of data received from the socket
+    void process_data(std::string_view data);
 
     /// Flush any buffered data. There will be an attempt to extract a partial log statement
     void flush();

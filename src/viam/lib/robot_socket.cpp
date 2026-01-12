@@ -12,6 +12,7 @@
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/core/span.hpp>
+#include <boost/numeric/conversion/cast.hpp>
 #include <boost/range/adaptor/copied.hpp>
 #include <boost/range/adaptor/sliced.hpp>
 #include <boost/range/adaptor/transformed.hpp>
@@ -656,7 +657,7 @@ void UdpBroadcastListener::stop() {
     }
     try {
         // Flush any remaining data in the parser
-        if (log_parser_ && log_parser_->has_pending_data()) {
+        if (log_parser_) {
             log_parser_->flush();
         }
 

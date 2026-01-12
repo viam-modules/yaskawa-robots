@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 
 namespace viam {
 namespace yaskawa {
@@ -121,10 +122,10 @@ std::string Logger::get_timestamp() {
 // Static pattern strings
 
 // This regex captures anything between "%Y-%m-%d %H:%M:%S -I-" and "%Y-%m-%d %H:%M:%S -I-" not counting the last \r\n
-constexpr const char* k_full_log_pattern_str{
-    R"((\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s)-([a-zA-Z])-(?s:(.+?))(?=[\r\n]{2}\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s-[a-zA-Z]-))"};
+constexpr const char k_full_log_pattern_str[] =
+    R"((\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s)-([a-zA-Z])-(?s:(.+?))(?=[\r\n]{2}\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s-[a-zA-Z]-))";
 // finds anything that resemble a log statement
-constexpr const char* k_partial_log_pattern_str{R"((\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s)-([a-zA-Z])-(?s:(.+))(?<![\s]))"};
+constexpr const char k_partial_log_pattern_str[] = R"((\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s)-([a-zA-Z])-(?s:(.+))(?<![\s]))";
 
 ViamControllerLogParser::ViamControllerLogParser() {
     try {
@@ -152,9 +153,9 @@ LogLevel ViamControllerLogParser::parse_level(char level_char) {
     }
 }
 
-void ViamControllerLogParser::process_data(const char* data) {
+void ViamControllerLogParser::process_data(std::string_view data) {
     // NOLINTNEXTLINE(clang-analyzer-optin.core.EnumCastOutOfRange) Removing this triggers an error in boost/regex/v5/match_flags.hpp
-    if (data != nullptr) {
+    if (!data.empty()) {
         buffer_.append(data);
         process_buffer();
     }
