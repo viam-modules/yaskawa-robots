@@ -49,20 +49,20 @@ void example(asio::io_context& io_context) {
                 while (1) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     // std::cout << "RUN" << '\n';
-                    StatusMessage pos_vel_msg(robot->get_robot_position_velocity_torque().get());
+                    StatusMessage pos_vel_msg(robot->get_robot_position_velocity_torque());
                     std::cout << " Position [" << pos_vel_msg.position[0] << " " << pos_vel_msg.position[1] << " "
                               << pos_vel_msg.position[2] << " " << pos_vel_msg.position[3] << " " << pos_vel_msg.position[4] << " "
                               << pos_vel_msg.position[5] << "] Velocity [ " << pos_vel_msg.velocity[0] << " " << pos_vel_msg.velocity[1]
                               << " " << pos_vel_msg.velocity[2] << " " << pos_vel_msg.velocity[3] << " " << pos_vel_msg.velocity[4] << " "
                               << pos_vel_msg.velocity[5] << "]" << '\n';
 
-                    // RobotStatusMessage robotStatus(robot->get_robot_status().get());
+                    // RobotStatusMessage robotStatus(robot->get_robot_status());
                     // std::cout << " Robot status : Powered Drive" <<
                     // robotStatus.drives_powered << "  InMotion " <<
                     // robotStatus.in_motion
                     //           << " EStopped " << robotStatus.e_stopped << " Mode " <<
                     //           robotStatus.mode << '\n';
-                    robot->send_heartbeat().get();
+                    robot->send_heartbeat();
                 }
             } catch (const std::exception& e) {
                 std::cerr << "Monitoring thread error: " << e.what() << '\n';
@@ -70,11 +70,12 @@ void example(asio::io_context& io_context) {
                 std::cerr << "Monitoring thread encountered unknown error" << '\n';
             }
         }).detach();
-        std::cout << "Reset errors " << robot->reset_errors().get() << '\n';
+        std::cout << "Reset errors " << '\n';
+        robot->reset_errors();
         for (int i = 0; i < 1; i++) {
-            auto currentCartPositon = CartesianPosition(robot->getCartPosition().get());
+            auto currentCartPositon = robot->getCartPosition();
             currentCartPositon.z -= 100;
-            StatusMessage pos_vel_msg(robot->get_robot_position_velocity_torque().get());
+            StatusMessage pos_vel_msg(robot->get_robot_position_velocity_torque());
             auto currentAnglePos = AnglePosition(pos_vel_msg.position);
             // currentAnglePos.toRad()
             auto currentAnglePosEigen = Eigen::VectorXd::Map(pos_vel_msg.position.data(), (long)pos_vel_msg.position.size()).eval();
@@ -82,7 +83,7 @@ void example(asio::io_context& io_context) {
             auto circleWayPointAngle = std::list<Eigen::VectorXd>();
             std::transform(
                 circleWayPointCart.begin(), circleWayPointCart.end(), std::back_inserter(circleWayPointAngle), [&](CartesianPosition& pos) {
-                    auto angle = AnglePosition(robot->cartPosToAngle(pos).get());
+                    auto angle = robot->cartPosToAngle(pos);
                     angle.toRad();
                     return Eigen::VectorXd::Map(angle.pos.data(), (long)angle.pos.size()).eval();
                 });
@@ -119,10 +120,10 @@ void example(asio::io_context& io_context) {
             }
 
             std::cout << "Turning servo power ON..." << '\n';
-            auto servo_response = robot->turn_servo_power_on().get();
+            robot->turn_servo_power_on();
             std::cout << "Motion trajectory mode..." << '\n';
 
-            robot->setMotionMode(1).get();
+            robot->setMotionMode(1);
             auto ret = robot->move(finalPoints, "");
             std::cout << "will wait" << '\n';
             ret->wait();
