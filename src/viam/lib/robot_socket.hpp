@@ -387,20 +387,20 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     void disconnect();
     uint32_t get_group_index() const;
 
-    std::future<Message> send_test_trajectory();
-    std::future<Message> turn_servo_power_on();
-    std::future<Message> send_heartbeat();
-    std::future<Message> send_test_error_command();
-    std::future<Message> get_error_info();
+    void send_test_trajectory();
+    void turn_servo_power_on();
+    void send_heartbeat();
+    void send_test_error_command();
+    void get_error_info();
     std::future<Message> get_robot_position_velocity_torque();
     std::future<Message> get_robot_status();
-    std::future<Message> register_udp_port(uint16_t port);
-    std::future<Message> reset_errors();
+    void register_udp_port(uint16_t port);
+    void reset_errors();
     std::future<Message> echo_trajectory();
     std::future<Message> get_goal_status(int32_t id);
     std::future<Message> cancel_goal(int32_t id);
     std::future<Message> stop();
-    std::future<Message> setMotionMode(uint8_t mode);
+    void setMotionMode(uint8_t mode);
     std::future<Message> getCartPosition();
     std::future<Message> cartPosToAngle(CartesianPosition& pos);
     std::future<Message> angleToCartPos(AnglePosition& pos);

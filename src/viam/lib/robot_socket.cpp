@@ -71,6 +71,20 @@ constexpr const char* goal_state_to_string(goal_state_t state) {
     }
 }
 
+void validate_message(message_type_t msg_sent, message_type_t response_header, message_type_t expected_header) {
+    if (response_header == expected_header) {
+        return;
+    }
+    if (actual == MSG_ERROR) {
+        error_payload_t err_msg;
+        std::memcpy(&err_msg, msg.payload.data(), sizeof(err_msg));
+        throw std::runtime_error(
+            std::format("message {} failed: error code {}", static_cast<const int&>(msg_sent) static_cast<const int&>(err_msg.error_code)));
+    }
+    throw std::runtime_error(
+        std::format("message {} failed: got unexpected message type {}", static_cast<const int&>(msg_sent), msg.header.message_type));
+}
+
 template <typename Func>
 void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
     if (duration_sec <= 0.0 || sampling_frequency_hz <= 0.0) {
@@ -728,8 +742,7 @@ std::future<void> YaskawaController::connect() {
 
             // Register UDP port with robot so it knows where to send status messages
             const uint16_t local_udp_port = udp_socket_->get_local_port();
-            auto registration_response = register_udp_port(local_udp_port).get();
-            LOGGING(info) << "UDP port registration response: " << registration_response;
+            register_udp_port(local_udp_port);
 
             // Wait for first status update to ensure connection is fully established
             get_robot_status().get();
@@ -741,7 +754,7 @@ std::future<void> YaskawaController::connect() {
                         if (!shared) {
                             return;
                         }
-                        shared->send_heartbeat().get();
+                        shared->send_heartbeat();
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
                 } catch (const std::exception& e) {
@@ -804,15 +817,17 @@ std::future<Message> YaskawaController::cancel_goal(int32_t goal_id) {
     return tcp_socket_->send_request(Message(MSG_CANCEL_GOAL, std::move(payload)));
 }
 
-std::future<Message> YaskawaController::setMotionMode(uint8_t mode) {
+void YaskawaController::setMotionMode(uint8_t mode) {
     std::vector<uint8_t> payload(sizeof(motion_mode_payload_t));
     motion_mode_payload_t* req = reinterpret_cast<motion_mode_payload_t*>(payload.data());
     req->motion_mode = mode;
 
-    return tcp_socket_->send_request(Message(MSG_SET_MOTION_MODE, std::move(payload)));
+    auto msg = tcp_socket_->send_request(Message(MSG_SET_MOTION_MODE, std::move(payload))).get();
+    validate_message(MSG_SET_MOTION_MODE, msg.header.message_type, MSG_OK);
+    LOGGING(debug) << "MSG_SET_MOTION_MODE: " << msg;
 }
 
-std::future<Message> YaskawaController::send_test_trajectory() {
+void YaskawaController::send_test_trajectory() {
     if (!robot_state_.IsReady()) {
         throw std::runtime_error(
             std::format("cannot send test trajectory the robot state is e_stopped {} in error "
@@ -820,28 +835,39 @@ std::future<Message> YaskawaController::send_test_trajectory() {
                         robot_state_.e_stopped.load(),
                         robot_state_.in_error.load()));
     }
-    return tcp_socket_->send_request(Message(MSG_TEST_TRAJECTORY_COMMAND));
+    auto msg = tcp_socket_->send_request(Message(MSG_TEST_TRAJECTORY_COMMAND)).get();
+    validate_message(MSG_TEST_TRAJECTORY_COMMAND, msg.header.message_type, MSG_OK);
+    LOGGING(debug) << "MSG_TEST_TRAJECTORY_COMMAND: " << msg;
 }
 
-std::future<Message> YaskawaController::turn_servo_power_on() {
+void YaskawaController::turn_servo_power_on() {
     if (!robot_state_.IsReady()) {
         throw std::runtime_error(std::format("cannot turn power on the robot state is e_stopped {} in error {}",
                                              robot_state_.e_stopped.load(),
                                              robot_state_.in_error.load()));
     }
-    return tcp_socket_->send_request(Message(MSG_TURN_SERVO_POWER_ON));
+    auto msg = tcp_socket_->send_request(Message(MSG_TURN_SERVO_POWER_ON)).get();
+    validate_message(MSG_TURN_SERVO_POWER_ON, msg.header.message_type, MSG_OK);
+    LOGGING(debug) << "MSG_TURN_SERVO_POWER_ON: " << msg;
 }
 
-std::future<Message> YaskawaController::send_heartbeat() {
-    return tcp_socket_->send_request(Message(MSG_HEARTBEAT));
+void YaskawaController::send_heartbeat() {
+    auto msg = tcp_socket_->send_request(Message(MSG_HEARTBEAT)).get();
+    validate_message(MSG_HEARTBEAT, msg.header.message_type, MSG_OK);
+    LOGGING(debug) << "MSG_HEARTBEAT: " << msg;
 }
 
-std::future<Message> YaskawaController::send_test_error_command() {
-    return tcp_socket_->send_request(Message(MSG_TEST_ERROR_COMMAND));
+void YaskawaController::send_test_error_command() {
+    auto msg = tcp_socket_->send_request(Message(MSG_TEST_ERROR_COMMAND)).get();
+    validate_message(MSG_TEST_ERROR_COMMAND, msg.header.message_type, MSG_OK);
+    LOGGING(debug) << "MSG_TEST_ERROR_COMMAND: " << msg;
 }
 
-std::future<Message> YaskawaController::get_error_info() {
-    return tcp_socket_->send_request(Message(MSG_GET_ERROR_INFO));
+void YaskawaController::get_error_info() {
+    // currently unimplemented
+    auto msg = tcp_socket_->send_request(Message(MSG_GET_ERROR_INFO)).get();
+    validate_message(MSG_TEST_ERROR_COMMAND, msg.header.message_type, MSG_OK);
+    LOGGING(debug) << "MSG_GET_ERROR_INFO: " << msg;
 }
 
 std::future<Message> YaskawaController::get_robot_position_velocity_torque() {
@@ -869,15 +895,19 @@ std::future<Message> YaskawaController::get_robot_status() {
     return future;
 }
 
-std::future<Message> YaskawaController::register_udp_port(uint16_t port) {
+void YaskawaController::register_udp_port(uint16_t port) {
     std::vector<uint8_t> payload(sizeof(udp_port_registration_payload_t));
     udp_port_registration_payload_t* port_payload = reinterpret_cast<udp_port_registration_payload_t*>(payload.data());
     port_payload->udp_port = port;
-    return tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload)));
+
+    auto msg = tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload))).get();
+    validate_message(MSG_REGISTER_UDP_PORT, msg.header.message_type, MSG_OK);
+    LOGGING(info) << "UDP port registration response: " << msg;
 }
 
-std::future<Message> YaskawaController::reset_errors() {
-    return tcp_socket_->send_request(Message(MSG_RESET_ERRORS));
+void YaskawaController::reset_errors() {
+    auto msg = tcp_socket_->send_request(Message(MSG_RESET_ERRORS)).get();
+    validate_message(MSG_RESET_ERRORS, msg.header.message_type, MSG_OK);
 }
 
 std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
