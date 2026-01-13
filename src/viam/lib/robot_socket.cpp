@@ -934,19 +934,11 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
 
 std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     if (!robot_state_.IsReady()) {
-        auto msg = reset_errors().get();
-        if (msg.header.message_type == MSG_ERROR) {
-            error_payload_t err_msg;
-            std::memcpy(&err_msg, msg.payload.data(), sizeof(err_msg));
-            throw std::runtime_error(std::format("failed to reset arm, error code {}", static_cast<const int&>(err_msg.error_code)));
-        }
-        if (msg.header.message_type != MSG_OK) {
-            throw std::runtime_error(std::format("failed to reset arm, got unexpected message type {}", msg.header.message_type));
-        }
+        reset_errors();
     }
     // TODO check servo on and & errors
-    turn_servo_power_on().get();
-    setMotionMode(1).get();
+    turn_servo_power_on();
+    setMotionMode(1);
 
     auto promise = std::promise<goal_state_t>();
 
