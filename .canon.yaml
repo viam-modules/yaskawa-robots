@@ -6,3 +6,4 @@ yaskawa-robots:
     user: testbot
     group: testbot
     persistent: true
+    network: host
