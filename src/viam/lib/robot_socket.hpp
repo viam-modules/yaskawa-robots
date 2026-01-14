@@ -198,7 +198,7 @@ struct Message {
     Message(Message&& msg) noexcept;
     Message(const Message&);
     Message& operator=(const Message&);
-    void validate_message(message_type_t msg_sent, message_type_t expected_header);
+    void validate_message_type(message_type_t msg_sent, message_type_t expected_header) const;
 
     friend std::ostream& operator<<(std::ostream& os, const Message& msg);
 };
