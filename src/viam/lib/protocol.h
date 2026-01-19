@@ -219,9 +219,9 @@ typedef PACK(struct {
 typedef PACK(struct {
     int32_t goal_id;                // 4 bytes - goal identifier
     uint32_t current_queue_size;    // 4 bytes - Number of trajectory points in queue
-    uint8_t state;                  // 1 byte - current goal state (goal_state_t)
     double progress;                // 8 bytes - completion percentage (0.0 to 1.0)
     int64_t timestamp_ms;           // 8 bytes - status timestamp
+    uint8_t state;                  // 1 byte - current goal state (goal_state_t)
 }) goal_status_payload_t;
 
 // Cancel goal payload
