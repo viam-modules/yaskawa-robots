@@ -380,7 +380,8 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
                                double speed,
                                double acceleration,
                                uint32_t group_index,
-                               const std::string& host = "127.0.0.1");
+                               const std::string& host = "127.0.0.1",
+                               double trajectory_sampling_freq = 3);
     ~YaskawaController() = default;
 
     std::future<void> connect();
@@ -419,6 +420,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     double speed_;
     double acceleration_;
     uint32_t group_index_;
+    double trajectory_sampling_freq_;
     std::thread heartbeat_;
 
     static bool is_status_command(message_type_t type);

@@ -61,7 +61,9 @@ extern "C" void free_orientation_vector_components(double* ds);
 
 namespace {
 
-constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
+constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-3;
+constexpr double k_min_sampling_freq_hz = 1.0;
+constexpr double k_max_sampling_freq_hz = 100.0;
 
 pose cartesian_position_to_pose(CartesianPosition&& pos) {
     auto q = std::unique_ptr<void, decltype(&free_quaternion_memory)>(
@@ -120,6 +122,12 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
                         k_min_threshold,
                         k_max_threshold,
                         *threshold));
+    }
+    auto sampling_freq = find_config_attribute<double>(cfg, "trajectory_sampling_freq_hz");
+    if (sampling_freq && (*sampling_freq < k_min_sampling_freq_hz || *sampling_freq > k_max_sampling_freq_hz)) {
+        throw std::invalid_argument(
+            boost::str(boost::format("attribute `trajectory_sampling_freq_hz` should be between %1% and %2%, it is: %3% Hz") %
+                       k_min_sampling_freq_hz % k_max_sampling_freq_hz % *sampling_freq));
     }
 
     auto group_index = find_config_attribute<double>(cfg, "group_index");
@@ -213,8 +221,9 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     auto speed = find_config_attribute<double>(config, "speed_rad_per_sec").value();
     auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
     auto group_index = static_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));
+    auto sampling_freq = find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(3);
 
-    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, group_index, host);
+    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, group_index, host, sampling_freq);
 
     constexpr int k_max_connection_try = 5;
     int connection_try = 0;

@@ -709,9 +709,18 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
 }
 
 // Robot Implementation
-YaskawaController::YaskawaController(
-    boost::asio::io_context& io_context, double speed, double acceleration, uint32_t group_index, const std::string& host)
-    : io_context_(io_context), host_(host), speed_(speed), acceleration_(acceleration), group_index_(group_index) {
+YaskawaController::YaskawaController(boost::asio::io_context& io_context,
+                                     double speed,
+                                     double acceleration,
+                                     uint32_t group_index,
+                                     const std::string& host,
+                                     double trajectory_sampling_freq)
+    : io_context_(io_context),
+      host_(host),
+      speed_(speed),
+      acceleration_(acceleration),
+      group_index_(group_index),
+      trajectory_sampling_freq_(trajectory_sampling_freq) {
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
 }
@@ -1049,10 +1058,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
 
         trajectory.outputPhasePlaneTrajectory();
 
-        // desired sampling frequency. if the duration is small we will oversample but that should be fine.
-        constexpr double k_sampling_freq_hz = 3;
-
-        sampling_func(samples, duration, k_sampling_freq_hz, [&](const double t, const double) {
+        sampling_func(samples, duration, trajectory_sampling_freq_, [&](const double t, const double) {
             auto p_eigen = trajectory.getPosition(t);
             auto v_eigen = trajectory.getVelocity(t);
             const auto absolute_time = cumulative_time + std::chrono::duration<double>(t);

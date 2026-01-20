@@ -27,6 +27,7 @@ The following attributes are available for `viam:yaskawa-robots` arms:
 | `speed_rads_per_sec` | float | **Required** | Set the maximum desired speed of the arm joints in degrees per second. |
 | `acceleration_rads_per_sec2` | float | **Required** | Set the maximum desired acceleration of the arm joints. |
 | `reject_move_request_threshold_deg` | float | Not Required | Rejects move requests when the difference between the current position and first waypoint is above threshold |
+| `trajectory_sampling_freq_hz` | float | Optional | Sampling frequency for trajectory generation in Hz. Higher values produce smoother trajectories but require more computation. **Default 3 Hz** (range: 1 - 100) |
 | `group_index` | int | Not Required| Define which control group this arm represents. **Default 0** |
 
 
