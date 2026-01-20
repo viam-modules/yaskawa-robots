@@ -19,7 +19,7 @@
 #include <stdbool.h>
 
 #define PROTOCOL_MAGIC_NUMBER 0x56494152	// "VIAR" in little endian - used for protocol validation
-#define PROTOCOL_VERSION 1
+#define PROTOCOL_VERSION 2
 
 #define TCP_PORT 27654
 #define UDP_PORT 27655
