@@ -16,12 +16,10 @@
 #include "logger.hpp"
 #include "robot_socket.hpp"
 
-
 #include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Core/util/Constants.h>
 #include <third_party/trajectories/Trajectory.h>
 #include <Eigen/Dense>
-
 
 using namespace robot;
 namespace asio = boost::asio;
@@ -42,17 +40,13 @@ std::vector<CartesianPosition> generateCirclePosition(double r, double lb, doubl
 }
 
 void example(asio::io_context& io_context) {
-    viam::sdk::ResourceConfig cfg(
-    "type",
-    "name",
-    "rdk", 
-    {{"host", "10.1.11.177"}, 
-        {"speed_rad_per_sec", 1.1},
-        {"acceleration_rad_per_sec2", 1.1},
-        {"group_index", 0}},
-    "rdk:component:arm",
-    viam::sdk::Model("viam","yaskawa-robots","gp12")
-);
+    const viam::sdk::ResourceConfig cfg(
+        "type",
+        "name",
+        "rdk",
+        {{"host", "10.1.11.177"}, {"speed_rad_per_sec", 1.1}, {"acceleration_rad_per_sec2", 1.1}, {"group_index", 0}},
+        "rdk:component:arm",
+        viam::sdk::Model("viam", "yaskawa-robots", "gp12"));
 
     auto robot = std::make_shared<YaskawaController>(io_context, cfg);
     try {

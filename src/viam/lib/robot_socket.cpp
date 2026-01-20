@@ -709,8 +709,7 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
 }
 
 // Robot Implementation
-YaskawaController::YaskawaController(
-    boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config)
+YaskawaController::YaskawaController(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config)
     : io_context_(io_context) {
     host_ = find_config_attribute<std::string>(config, "host").value();
     speed_ = find_config_attribute<double>(config, "speed_rad_per_sec").value();
