@@ -25,6 +25,7 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include <viam/module/utils.hpp>
 
 #include <third_party/trajectories/Path.h>
 
@@ -376,12 +377,7 @@ class GoalRequestHandle;
 
 class YaskawaController : public std::enable_shared_from_this<YaskawaController> {
    public:
-    explicit YaskawaController(boost::asio::io_context& io_context,
-                               double speed,
-                               double acceleration,
-                               uint32_t group_index,
-                               const std::string& host = "127.0.0.1",
-                               double trajectory_sampling_freq = 3);
+    explicit YaskawaController(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config);
     ~YaskawaController() = default;
 
     std::future<void> connect();

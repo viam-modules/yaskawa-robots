@@ -248,6 +248,7 @@ target_sources(yaskawa-example
 target_link_libraries(yaskawa-example
   PRIVATE
   viam-yaskawa
+  viam-cpp-sdk::viamsdk
 )
 
 target_include_directories(yaskawa-example PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/viam/lib)
