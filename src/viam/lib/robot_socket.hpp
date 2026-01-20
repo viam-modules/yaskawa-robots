@@ -198,7 +198,7 @@ struct Message {
     Message(Message&& msg) noexcept;
     Message(const Message&);
     Message& operator=(const Message&);
-    void validate_message_type(message_type_t msg_sent, message_type_t expected_type) const;
+    std::string get_error(message_type_t expected_type) const;
 
     friend std::ostream& operator<<(std::ostream& os, const Message& msg);
 };
@@ -397,7 +397,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     RobotStatusMessage get_robot_status();
     void register_udp_port(uint16_t port);
     void reset_errors();
-    std::future<Message> echo_trajectory();
+    std::future<Message> echo_trajectory();  // currently unused and unimplemented on the controller
     GoalStatusMessage get_goal_status(int32_t id);
     void cancel_goal(int32_t id);
     bool stop();
