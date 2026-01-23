@@ -7,7 +7,7 @@
 
 #include <Eigen/Dense>
 #include <viam/lib/logger.hpp>
-#include <viam/sdk/resource/resource.hpp>
+#include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
 
 /// Logger implementation that writes to VIAM SDK logging infrastructure
