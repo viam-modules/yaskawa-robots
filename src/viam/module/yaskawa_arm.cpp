@@ -42,7 +42,7 @@
 #include <viam/sdk/module/module.hpp>
 #include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
-#include <viam/sdk/resource/resource.hpp>
+#include <viam/sdk/config/resource.hpp>
 
 #include <third_party/trajectories/Trajectory.h>
 
@@ -61,7 +61,6 @@ extern "C" void free_orientation_vector_components(double* ds);
 
 namespace {
 
-constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-3;
 constexpr double k_min_sampling_freq_hz = 1.0;
 constexpr double k_max_sampling_freq_hz = 100.0;
 

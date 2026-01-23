@@ -44,13 +44,17 @@
 
 #include <third_party/trajectories/Trajectory.h>
 
-// Tolerance for comparing waypoint positions to detect duplicates (radians)
-constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
-
 // Minimum timestep between trajectory points (seconds)
 // Determined experimentally: the arm appears to error when given timesteps
 // ~2e-5 and lower
 constexpr double k_min_timestep_sec = 1e-2;
+// Tolerance for comparing waypoint positions to detect duplicates (radians)
+constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-3;
+constexpr std::uint32_t k_default_group_index = 0;
+constexpr double k_trajectory_sampling_freq = 3;
+
+
+
 
 namespace {
 
@@ -714,8 +718,12 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     host_ = find_config_attribute<std::string>(config, "host").value();
     speed_ = find_config_attribute<double>(config, "speed_rad_per_sec").value();
     acceleration_ = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
-    group_index_ = static_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));
-    trajectory_sampling_freq_ = find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(3);
+
+    auto group_index  = find_config_attribute<double>(config, "group_index");
+    group_index_ = group_index ? static_cast<std::uint32_t>(group_index.value()): k_default_group_index;
+
+    auto trajectory_sampling_freq = find_config_attribute<double>(config, "trajectory_sampling_freq_hz");
+    trajectory_sampling_freq_ = trajectory_sampling_freq ? trajectory_sampling_freq.value() : k_trajectory_sampling_freq;
 
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
