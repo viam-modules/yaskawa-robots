@@ -43,6 +43,12 @@
 #include "protocol.h"
 
 #include <third_party/trajectories/Trajectory.h>
+#include <viam/module/utils.hpp>
+
+///
+/// Default waypoint deduplication tolerance in radians.
+///
+static constexpr double k_default_waypoint_deduplication_tolerance_rads = 1e-3;
 
 // Minimum timestep between trajectory points (seconds)
 // Determined experimentally: the arm appears to error when given timesteps
@@ -50,9 +56,6 @@
 constexpr double k_min_timestep_sec = 1e-2;
 constexpr std::uint32_t k_default_group_index = 0;
 constexpr double k_trajectory_sampling_freq = 3;
-
-
-
 
 namespace {
 
@@ -717,11 +720,13 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     speed_ = find_config_attribute<double>(config, "speed_rad_per_sec").value();
     acceleration_ = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
 
-    auto group_index  = find_config_attribute<double>(config, "group_index");
-    group_index_ = group_index ? static_cast<std::uint32_t>(group_index.value()): k_default_group_index;
+    // validate_config_ checks that group_index will be a whole number within the valid range of group indexes
+    group_index_ = static_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index").value_or(k_default_group_index));
+    trajectory_sampling_freq_ = find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(k_trajectory_sampling_freq);
 
-    auto trajectory_sampling_freq = find_config_attribute<double>(config, "trajectory_sampling_freq_hz");
-    trajectory_sampling_freq_ = trajectory_sampling_freq ? trajectory_sampling_freq.value() : k_trajectory_sampling_freq;
+    auto waypoint_dedup_tolerance_deg = find_config_attribute<double>(config, "waypoint_deduplication_tolerance_deg");
+    waypoint_dedup_tolerance_rad_ =
+        waypoint_dedup_tolerance_deg ? degrees_to_radians(*waypoint_dedup_tolerance_deg) : k_default_waypoint_deduplication_tolerance_rads;
 
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
@@ -797,6 +802,10 @@ void YaskawaController::disconnect() {
 
 uint32_t YaskawaController::get_group_index() const {
     return group_index_;
+}
+
+double YaskawaController::get_waypoint_deduplication_tolerance_rad() const {
+    return waypoint_dedup_tolerance_rad_;
 }
 
 std::future<Message> YaskawaController::get_goal_status(int32_t goal_id) {
@@ -994,7 +1003,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     auto curr_joint_pos = StatusMessage(get_robot_position_velocity_torque().get()).position;
 
     auto curr_waypoint_rad = Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
-    if (!curr_waypoint_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
+    if (!curr_waypoint_rad.isApprox(waypoints.front(), get_waypoint_deduplication_tolerance_rad())) {
         waypoints.emplace_front(std::move(curr_waypoint_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal

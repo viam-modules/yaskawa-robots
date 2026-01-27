@@ -20,6 +20,7 @@
 #include <Eigen/src/Core/util/Constants.h>
 #include <third_party/trajectories/Trajectory.h>
 #include <Eigen/Dense>
+#include <viam/sdk/config/resource.hpp>
 
 using namespace robot;
 namespace asio = boost::asio;

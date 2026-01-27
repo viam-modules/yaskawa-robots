@@ -38,11 +38,11 @@
 #include <viam/sdk/common/pose.hpp>
 #include <viam/sdk/common/proto_value.hpp>
 #include <viam/sdk/components/component.hpp>
+#include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/module/module.hpp>
 #include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
-#include <viam/sdk/config/resource.hpp>
 
 #include <third_party/trajectories/Trajectory.h>
 
@@ -60,9 +60,6 @@ extern "C" double* orientation_vector_get_components(void* ov);
 extern "C" void free_orientation_vector_components(double* ds);
 
 namespace {
-
-// Tolerance for comparing waypoint positions to detect duplicates (radians)
-constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-3;
 
 constexpr double k_min_sampling_freq_hz = 1.0;
 constexpr double k_max_sampling_freq_hz = 100.0;
@@ -278,7 +275,8 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
 
             // Skip waypoints that are too close to the previous one to avoid
             // redundant motion
-            if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), k_waypoint_equivalancy_epsilon_rad))) {
+            if ((!waypoints.empty()) &&
+                (next_waypoint_rad.isApprox(waypoints.back(), robot_->get_waypoint_deduplication_tolerance_rad()))) {
                 continue;
             }
             waypoints.emplace_back(std::move(next_waypoint_rad));
