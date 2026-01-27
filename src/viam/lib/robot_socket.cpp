@@ -45,9 +45,7 @@
 #include <third_party/trajectories/Trajectory.h>
 #include <viam/module/utils.hpp>
 
-///
 /// Default waypoint deduplication tolerance in radians.
-///
 static constexpr double k_default_waypoint_deduplication_tolerance_rads = 1e-3;
 
 // Minimum timestep between trajectory points (seconds)
