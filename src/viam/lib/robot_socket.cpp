@@ -52,7 +52,6 @@ static constexpr double k_default_waypoint_deduplication_tolerance_rads = 1e-3;
 // Determined experimentally: the arm appears to error when given timesteps
 // ~2e-5 and lower
 constexpr double k_min_timestep_sec = 1e-2;
-constexpr std::uint32_t k_default_group_index = 0;
 constexpr double k_trajectory_sampling_freq = 3;
 
 namespace {
