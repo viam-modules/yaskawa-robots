@@ -21,6 +21,7 @@ RUN apt-get -y --no-install-recommends install \
     libabsl-dev \
     libboost-all-dev \
     libgrpc++-dev \
+    libjsoncpp-dev \
     libprotobuf-dev \
     libssl-dev \
     libxtensor-dev \

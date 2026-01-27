@@ -79,26 +79,6 @@ pose cartesian_position_to_pose(CartesianPosition&& pos) {
     return {position, orientation, theta};
 }
 
-std::string unix_time_iso8601() {
-    namespace chrono = std::chrono;
-    std::stringstream stream;
-
-    const auto now = chrono::system_clock::now();
-    const auto seconds_part = chrono::duration_cast<chrono::seconds>(now.time_since_epoch());
-    const auto tt = chrono::system_clock::to_time_t(chrono::system_clock::time_point{seconds_part});
-    const auto delta_us = chrono::duration_cast<chrono::microseconds>(now.time_since_epoch() - seconds_part);
-
-    struct tm buf;
-    auto* ret = gmtime_r(&tt, &buf);
-    if (ret == nullptr) {
-        throw std::runtime_error("failed to convert time to iso8601");
-    }
-    stream << std::put_time(&buf, "%FT%T");
-    stream << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
-
-    return stream.str();
-}
-
 std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     if (!find_config_attribute<std::string>(cfg, "host")) {
         throw std::invalid_argument("attribute `host` is required");
@@ -120,6 +100,12 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
                         k_min_threshold,
                         k_max_threshold,
                         *threshold));
+    }
+
+    // Validate telemetry_output_path if provided
+    auto telemetry_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
+    if (telemetry_path && telemetry_path->empty()) {
+        throw std::invalid_argument("attribute `telemetry_output_path` cannot be empty");
     }
 
     auto group_index = find_config_attribute<double>(cfg, "group_index");
@@ -210,11 +196,36 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
 
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
+    // Get telemetry output path from config or fall back to VIAM_MODULE_DATA
+    telemetry_output_path_ = [&] {
+        auto path = find_config_attribute<std::string>(config, "telemetry_output_path");
+        if (path) {
+            return path.value();
+        }
+
+        auto* const viam_module_data = std::getenv("VIAM_MODULE_DATA");  // NOLINT: Yes, we know getenv isn't thread safe
+        if (!viam_module_data) {
+            throw std::runtime_error("required environment variable `VIAM_MODULE_DATA` unset");
+        }
+        VIAM_SDK_LOG(debug) << "VIAM_MODULE_DATA: " << viam_module_data;
+
+        return std::string{viam_module_data};
+    }();
+
     auto speed = find_config_attribute<double>(config, "speed_rad_per_sec").value();
     auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
     auto group_index = static_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));
 
     robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, group_index, host);
+
+    // Setup trajectory logging (always enabled)
+    robot_->set_trajectory_loggers(model_.model_name(), [weak = weak_from_this()]() -> const std::string& {
+        auto self = weak.lock();
+        if (!self) {
+            throw std::runtime_error("YaskawaArm was destroyed, cannot access telemetry path");
+        }
+        return self->telemetry_output_path();
+    });
 
     constexpr int k_max_connection_try = 5;
     int connection_try = 0;

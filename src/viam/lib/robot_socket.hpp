@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <iostream>
 #include <list>
@@ -33,6 +34,7 @@ extern "C" {
 }
 
 #include "logger.hpp"
+#include "trajectory_logger.hpp"
 
 template <typename T>
 [[nodiscard]] constexpr decltype(auto) degrees_to_radians(T&& degrees) {
@@ -408,6 +410,8 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
 
+    void set_trajectory_loggers(std::string robot_model, std::optional<std::function<const std::string&()>> telemetry_path_provider);
+
    private:
     boost::asio::io_context& io_context_;
     std::string host_;
@@ -420,6 +424,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     double acceleration_;
     uint32_t group_index_;
     std::thread heartbeat_;
+
+    std::string robot_model_;
+    std::optional<std::function<const std::string&()>> telemetry_path_provider_;
 
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;

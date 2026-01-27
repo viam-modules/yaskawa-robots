@@ -716,6 +716,12 @@ YaskawaController::YaskawaController(
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
 }
 
+void YaskawaController::set_trajectory_loggers(std::string robot_model,
+                                               std::optional<std::function<const std::string&()>> telemetry_path_provider) {
+    robot_model_ = std::move(robot_model);
+    telemetry_path_provider_ = std::move(telemetry_path_provider);
+}
+
 std::future<void> YaskawaController::connect() {
     return std::async(std::launch::async, [this]() {
         try {
@@ -991,6 +997,9 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         return std::future<Message>();
     }
 
+    // Save original waypoints for logging before segmentation modifies the list
+    const std::list<Eigen::VectorXd> original_waypoints = waypoints;
+
     std::vector<std::list<Eigen::VectorXd>> segments;
     // Walk interior points and cut at 180 degree direction reversals (dot == -1)
     // github.com/viam-modules/universal-robots/blob/2eaa3243984a299b6565920f4dc60c6fe0ddc8ef/src/viam/ur/module/ur_arm.cpp#L684
@@ -1027,19 +1036,60 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
                 }
                 buffer << "}";
             }
+
+            if (telemetry_path_provider_) {
+                const std::string& telemetry_path = (*telemetry_path_provider_)();
+                FailedTrajectoryLogger::log_failure(telemetry_path,
+                                                    unix_time,
+                                                    robot_model_,
+                                                    group_index_,
+                                                    speed_,
+                                                    acceleration_,
+                                                    std::list<Eigen::VectorXd>(segment.begin(), segment.end()),
+                                                    buffer.str());
+            }
+
             throw std::runtime_error(buffer.str());
         }
 
         const double duration = trajectory.getDuration();
 
         if (!std::isfinite(duration)) {
-            throw std::runtime_error("trajectory.getDuration() was not a finite number");
+            const std::string error_msg = "trajectory.getDuration() was not a finite number";
+
+            if (telemetry_path_provider_) {
+                const std::string& telemetry_path = (*telemetry_path_provider_)();
+                FailedTrajectoryLogger::log_failure(telemetry_path,
+                                                    unix_time,
+                                                    robot_model_,
+                                                    group_index_,
+                                                    speed_,
+                                                    acceleration_,
+                                                    std::list<Eigen::VectorXd>(segment.begin(), segment.end()),
+                                                    error_msg);
+            }
+
+            throw std::runtime_error(error_msg);
         }
 
         // TODO(RSDK-12566): Make this configurable
         // viam.atlassian.net/browse/RSDK-12566
         if (duration > 600) {  // if the duration is longer than 10 minutes
-            throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
+            const std::string error_msg = "trajectory.getDuration() exceeds 10 minutes";
+
+            if (telemetry_path_provider_) {
+                const std::string& telemetry_path = (*telemetry_path_provider_)();
+                FailedTrajectoryLogger::log_failure(telemetry_path,
+                                                    unix_time,
+                                                    robot_model_,
+                                                    group_index_,
+                                                    speed_,
+                                                    acceleration_,
+                                                    std::list<Eigen::VectorXd>(segment.begin(), segment.end()),
+                                                    error_msg);
+            }
+
+            throw std::runtime_error(error_msg);
         }
 
         if (duration < k_min_timestep_sec) {
@@ -1066,6 +1116,13 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         });
 
         cumulative_time += std::chrono::duration<double>(duration);
+    }
+
+    // Log the successfully generated trajectory
+    if (telemetry_path_provider_) {
+        const std::string& telemetry_path = (*telemetry_path_provider_)();
+        GeneratedTrajectoryLogger::log_trajectory(
+            telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, samples);
     }
 
     return send_goal_(group_index_, 6, samples, {});

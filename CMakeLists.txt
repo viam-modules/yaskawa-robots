@@ -91,6 +91,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(viam-cpp-sdk)
 
 find_package(Eigen3 3.4 CONFIG REQUIRED)
+find_package(jsoncpp REQUIRED)
 find_package(viam-cpp-sdk 0.27 CONFIG REQUIRED viamsdk)
 
 # Everything needs threads, and prefer -pthread if available
@@ -151,6 +152,7 @@ target_sources(viam-yaskawa
   PRIVATE
     src/viam/lib/robot_socket.cpp
     src/viam/lib/logger.cpp
+    src/viam/lib/trajectory_logger.cpp
 )
 
 target_compile_options( viam-yaskawa PRIVATE -O0)
@@ -165,6 +167,7 @@ target_link_libraries(viam-yaskawa
   PUBLIC
     trajectories
     Boost::regex
+    jsoncpp_lib
 )
 
 install(

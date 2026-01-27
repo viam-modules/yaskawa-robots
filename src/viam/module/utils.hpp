@@ -81,3 +81,6 @@ std::optional<T> find_config_attribute(const viam::sdk::ResourceConfig& cfg, con
 }
 
 Eigen::Vector3d transform_vector(const Eigen::Vector3d& vector, const Eigen::Matrix3d& rotation_matrix);
+
+// Generate ISO8601 timestamp string with microsecond precision
+std::string unix_time_iso8601();
