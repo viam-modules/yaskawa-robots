@@ -99,13 +99,17 @@ find_package(Threads REQUIRED)
 
 # Get boost pulled in
 set(BOOST_MIN_VERSION "1.80.0")
-find_package(Boost CONFIG REQUIRED
+
+# Boost::system became header-only in 1.85.0 and no longer needs explicit linking.
+# Make it optional to support both old and new versions.
+find_package(Boost ${BOOST_MIN_VERSION} CONFIG REQUIRED
   COMPONENTS
-  headers
-  regex
-  system
-  thread
-  unit_test_framework
+    headers
+    regex
+    thread
+    unit_test_framework
+  OPTIONAL_COMPONENTS
+    system
 )
 
 enable_testing()
