@@ -720,8 +720,17 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     speed_ = find_config_attribute<double>(config, "speed_rad_per_sec").value();
     acceleration_ = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
 
-    // validate_config_ checks that group_index will be a whole number within the valid range of group indexes
-    group_index_ = static_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index").value_or(k_default_group_index));
+    auto group_index = find_config_attribute<double>(config, "group_index");
+    constexpr int k_min_group_index = 0;
+    // TODO(RSDK-12470) support multiple arms
+    constexpr int k_max_group_index = 0;
+    if (group_index && (*group_index < k_min_group_index || *group_index > k_max_group_index || floor(*group_index) != *group_index)) {
+        throw std::invalid_argument(std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
+                                                k_min_group_index,
+                                                k_max_group_index,
+                                                *group_index));
+    }
+    group_index_ = static_cast<std::uint32_t>(group_index.value_or(k_min_group_index));
     trajectory_sampling_freq_ = find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(k_trajectory_sampling_freq);
 
     auto waypoint_dedup_tolerance_deg = find_config_attribute<double>(config, "waypoint_deduplication_tolerance_deg");
