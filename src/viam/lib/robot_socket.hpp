@@ -410,7 +410,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
 
-    void set_trajectory_loggers(std::string robot_model, std::optional<std::function<const std::string&()>> telemetry_path_provider);
+    void set_trajectory_loggers(std::string robot_model, std::optional<std::function<std::string()>> telemetry_path_fn);
 
    private:
     boost::asio::io_context& io_context_;
@@ -426,7 +426,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::thread heartbeat_;
 
     std::string robot_model_;
-    std::optional<std::function<const std::string&()>> telemetry_path_provider_;
+    std::optional<std::function<std::string()>> telemetry_path_fn_;
 
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;

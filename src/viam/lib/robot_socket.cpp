@@ -716,10 +716,9 @@ YaskawaController::YaskawaController(
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
 }
 
-void YaskawaController::set_trajectory_loggers(std::string robot_model,
-                                               std::optional<std::function<const std::string&()>> telemetry_path_provider) {
+void YaskawaController::set_trajectory_loggers(std::string robot_model, std::optional<std::function<std::string()>> telemetry_path_fn) {
     robot_model_ = std::move(robot_model);
-    telemetry_path_provider_ = std::move(telemetry_path_provider);
+    telemetry_path_fn_ = std::move(telemetry_path_fn);
 }
 
 std::future<void> YaskawaController::connect() {
@@ -1037,8 +1036,8 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
                 buffer << "}";
             }
 
-            if (telemetry_path_provider_) {
-                const std::string& telemetry_path = (*telemetry_path_provider_)();
+            if (telemetry_path_fn_) {
+                const std::string& telemetry_path = (*telemetry_path_fn_)();
                 FailedTrajectoryLogger::log_failure(telemetry_path,
                                                     unix_time,
                                                     robot_model_,
@@ -1057,8 +1056,8 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         if (!std::isfinite(duration)) {
             const std::string error_msg = "trajectory.getDuration() was not a finite number";
 
-            if (telemetry_path_provider_) {
-                const std::string& telemetry_path = (*telemetry_path_provider_)();
+            if (telemetry_path_fn_) {
+                const std::string& telemetry_path = (*telemetry_path_fn_)();
                 FailedTrajectoryLogger::log_failure(telemetry_path,
                                                     unix_time,
                                                     robot_model_,
@@ -1077,8 +1076,8 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         if (duration > 600) {  // if the duration is longer than 10 minutes
             const std::string error_msg = "trajectory.getDuration() exceeds 10 minutes";
 
-            if (telemetry_path_provider_) {
-                const std::string& telemetry_path = (*telemetry_path_provider_)();
+            if (telemetry_path_fn_) {
+                const std::string& telemetry_path = (*telemetry_path_fn_)();
                 FailedTrajectoryLogger::log_failure(telemetry_path,
                                                     unix_time,
                                                     robot_model_,
@@ -1119,8 +1118,8 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     }
 
     // Log the successfully generated trajectory
-    if (telemetry_path_provider_) {
-        const std::string& telemetry_path = (*telemetry_path_provider_)();
+    if (telemetry_path_fn_) {
+        const std::string& telemetry_path = (*telemetry_path_fn_)();
         GeneratedTrajectoryLogger::log_trajectory(
             telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, samples);
     }

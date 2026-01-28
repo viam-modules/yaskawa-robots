@@ -3,6 +3,7 @@
 #include <boost/format.hpp>
 #include <filesystem>
 #include <fstream>
+#include <system_error>
 
 #include "logger.hpp"
 
@@ -36,23 +37,24 @@ Json::Value trajectory_array_to_json(const std::vector<trajectory_point_t>& traj
     for (const auto& point : trajectory_points) {
         Json::Value point_obj(Json::objectValue);
 
+        // TODO(npm) don't use NUMBER_OF_DOF
         // Positions
         Json::Value positions(Json::arrayValue);
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < NUMBER_OF_DOF; ++i) {
             positions.append(point.positions[i]);
         }
         point_obj["positions_rad"] = positions;
 
         // Velocities
         Json::Value velocities(Json::arrayValue);
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < NUMBER_OF_DOF; ++i) {
             velocities.append(point.velocities[i]);
         }
         point_obj["velocities_rad_per_sec"] = velocities;
 
         // Accelerations
         Json::Value accelerations(Json::arrayValue);
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < NUMBER_OF_DOF; ++i) {
             accelerations.append(point.accelerations[i]);
         }
         point_obj["accelerations_rad_per_sec2"] = accelerations;
@@ -87,6 +89,11 @@ void FailedTrajectoryLogger::write_json_file(const std::string& filepath, const 
         file << '\n';
 
         LOGGING(debug) << "Failed trajectory logged to: " << filepath;
+        file.flush();
+        file.close();
+        if (file.fail()) {
+            LOGGING(error) << "failed to write to file:  " << filepath;
+        }
     } catch (const std::exception& e) {
         LOGGING(error) << "Failed to write trajectory log: " << e.what();
     }
@@ -111,7 +118,12 @@ void FailedTrajectoryLogger::log_failure(const std::string& telemetry_path,
     try {
         // Ensure the trajectory_logs directory exists
         const std::filesystem::path log_dir = std::filesystem::path(telemetry_path) / "trajectory_logs";
-        std::filesystem::create_directories(log_dir);
+        std::error_code ec;
+        // returns fals if directory already exists we can safely ignore the return value
+        std::filesystem::create_directories(log_dir, ec);
+        if (ec) {
+            LOGGING(error) << "Failed to created directory " << log_dir << " cause:" << ec.message();
+        }
 
         Json::Value root(Json::objectValue);
         root["timestamp"] = timestamp;
@@ -152,6 +164,11 @@ void GeneratedTrajectoryLogger::write_json_file(const std::string& filepath, con
         file << '\n';
 
         LOGGING(debug) << "Generated trajectory logged to: " << filepath;
+        file.flush();
+        file.close();
+        if (file.fail()) {
+            LOGGING(error) << "failed to write to file:  " << filepath;
+        }
     } catch (const std::exception& e) {
         LOGGING(error) << "Failed to write trajectory log: " << e.what();
     }
@@ -176,7 +193,12 @@ void GeneratedTrajectoryLogger::log_trajectory(const std::string& telemetry_path
     try {
         // Ensure the trajectory_logs directory exists
         const std::filesystem::path log_dir = std::filesystem::path(telemetry_path) / "trajectory_logs";
-        std::filesystem::create_directories(log_dir);
+        std::error_code ec;
+        // returns fals if directory already exists we can safely ignore the return value
+        std::filesystem::create_directories(log_dir, ec);
+        if (ec) {
+            LOGGING(error) << "Failed to created directory " << log_dir << " cause:" << ec.message();
+        }
 
         Json::Value root(Json::objectValue);
         root["timestamp"] = timestamp;
