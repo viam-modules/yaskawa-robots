@@ -45,16 +45,11 @@
 #include <third_party/trajectories/Trajectory.h>
 #include <viam/module/utils.hpp>
 
-/// Default waypoint deduplication tolerance in radians.
-static constexpr double k_default_waypoint_deduplication_tolerance_rads = 1e-3;
-
-// Minimum timestep between trajectory points (seconds)
-// Determined experimentally: the arm appears to error when given timesteps
-// ~2e-5 and lower
-constexpr double k_min_timestep_sec = 1e-2;
-constexpr double k_trajectory_sampling_freq = 3;
-
 namespace {
+
+constexpr double k_default_waypoint_deduplication_tolerance_rads = 1e-3;
+constexpr double k_default_min_timestep_sec = 1e-2;
+constexpr double k_default_trajectory_sampling_freq = 3;
 
 constexpr const char* goal_state_to_string(goal_state_t state) {
     switch (state) {
@@ -728,7 +723,8 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
                                                 *group_index));
     }
     group_index_ = static_cast<std::uint32_t>(group_index.value_or(k_min_group_index));
-    trajectory_sampling_freq_ = find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(k_trajectory_sampling_freq);
+    trajectory_sampling_freq_ =
+        find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(k_default_trajectory_sampling_freq);
 
     auto waypoint_dedup_tolerance_deg = find_config_attribute<double>(config, "waypoint_deduplication_tolerance_deg");
     waypoint_dedup_tolerance_rad_ =
@@ -1068,7 +1064,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
             throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
         }
 
-        if (duration < k_min_timestep_sec) {
+        if (duration < k_default_min_timestep_sec) {
             LOGGING(debug) << "duration of move is too small, assuming arm is at goal";
             continue;
         }

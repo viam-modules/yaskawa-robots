@@ -129,6 +129,18 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
                        k_min_sampling_freq_hz % k_max_sampling_freq_hz % *sampling_freq));
     }
 
+    auto waypoint_dedup_tolerance = find_config_attribute<double>(cfg, "waypoint_deduplication_tolerance_deg");
+    constexpr double k_min_waypoint_dedup_tolerance_deg = 0.0;
+    constexpr double k_max_waypoint_dedup_tolerance_deg = 10.0;
+    if (waypoint_dedup_tolerance && (*waypoint_dedup_tolerance < k_min_waypoint_dedup_tolerance_deg ||
+                                     *waypoint_dedup_tolerance > k_max_waypoint_dedup_tolerance_deg)) {
+        throw std::invalid_argument(
+            std::format("attribute `waypoint_deduplication_tolerance_deg` should be between {} and {}, it is: {} degrees",
+                        k_min_waypoint_dedup_tolerance_deg,
+                        k_max_waypoint_dedup_tolerance_deg,
+                        *waypoint_dedup_tolerance));
+    }
+
     auto group_index = find_config_attribute<double>(cfg, "group_index");
     constexpr int k_min_group_index = 0;
     // TODO(RSDK-12470) support multiple arms
