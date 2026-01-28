@@ -79,7 +79,7 @@ include(FetchContent)
 FetchContent_Declare(
   viam-cpp-sdk
   GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-  GIT_TAG releases/v0.27.0 # Keep in sync with Dockerfile
+  GIT_TAG releases/v0.30.0 # Keep in sync with Dockerfile
   GIT_SHALLOW TRUE
   SYSTEM
   # Without this patch command, using this as a SYSTEM package results
@@ -92,7 +92,7 @@ FetchContent_MakeAvailable(viam-cpp-sdk)
 
 find_package(Eigen3 3.4 CONFIG REQUIRED)
 find_package(jsoncpp REQUIRED)
-find_package(viam-cpp-sdk 0.27 CONFIG REQUIRED viamsdk)
+find_package(viam-cpp-sdk 0.30 CONFIG REQUIRED viamsdk)
 
 # Everything needs threads, and prefer -pthread if available
 set(THREADS_PREFER_PTHREAD_FLAG ON)
