@@ -198,6 +198,7 @@ struct Message {
     Message(Message&& msg) noexcept;
     Message(const Message&);
     Message& operator=(const Message&);
+    std::string get_error(message_type_t expected_type) const;
 
     friend std::ostream& operator<<(std::ostream& os, const Message& msg);
 };
@@ -387,24 +388,24 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     void disconnect();
     uint32_t get_group_index() const;
 
-    std::future<Message> send_test_trajectory();
-    std::future<Message> turn_servo_power_on();
-    std::future<Message> send_heartbeat();
-    std::future<Message> send_test_error_command();
-    std::future<Message> get_error_info();
-    std::future<Message> get_robot_position_velocity_torque();
-    std::future<Message> get_robot_status();
-    std::future<Message> register_udp_port(uint16_t port);
-    std::future<Message> reset_errors();
-    std::future<Message> echo_trajectory();
-    std::future<Message> get_goal_status(int32_t id);
-    std::future<Message> cancel_goal(int32_t id);
-    std::future<Message> stop();
-    std::future<Message> setMotionMode(uint8_t mode);
-    std::future<Message> getCartPosition();
-    std::future<Message> cartPosToAngle(CartesianPosition& pos);
-    std::future<Message> angleToCartPos(AnglePosition& pos);
-    std::future<Message> checkGroupIndex();
+    void send_test_trajectory();
+    void turn_servo_power_on();
+    void send_heartbeat();
+    void send_test_error_command();
+    void get_error_info();
+    StatusMessage get_robot_position_velocity_torque();
+    RobotStatusMessage get_robot_status();
+    void register_udp_port(uint16_t port);
+    void reset_errors();
+    std::future<Message> echo_trajectory();  // currently unused and unimplemented on the controller
+    GoalStatusMessage get_goal_status(int32_t id);
+    void cancel_goal(int32_t id);
+    bool stop();
+    void setMotionMode(uint8_t mode);
+    CartesianPosition getCartPosition();
+    AnglePosition cartPosToAngle(CartesianPosition& pos);
+    CartesianPosition angleToCartPos(AnglePosition& pos);
+    bool checkGroupIndex();
 
     std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
 
