@@ -17,7 +17,7 @@
 using namespace viam::sdk;
 using namespace robot;
 
-class YaskawaArm final : public Arm, public Reconfigurable {
+class YaskawaArm final : public Arm, public Reconfigurable, public std::enable_shared_from_this<YaskawaArm> {
     using KinematicsData = ::viam::sdk::KinematicsData;
 
    public:
@@ -94,6 +94,10 @@ class YaskawaArm final : public Arm, public Reconfigurable {
         throw std::runtime_error("unimplemented");
     }
 
+    const std::string& telemetry_output_path() const {
+        return telemetry_output_path_;
+    }
+
    private:
     void configure_(const Dependencies& deps, const ResourceConfig& config);
 
@@ -112,4 +116,5 @@ class YaskawaArm final : public Arm, public Reconfigurable {
     std::optional<double> threshold_;
     boost::asio::io_context& io_context_;
     std::filesystem::path resource_root_;
+    std::string telemetry_output_path_;
 };
