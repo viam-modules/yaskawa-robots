@@ -88,12 +88,14 @@ void FailedTrajectoryLogger::write_json_file(const std::string& filepath, const 
         writer->write(root, &file);
         file << '\n';
 
-        LOGGING(debug) << "Failed trajectory logged to: " << filepath;
         file.flush();
         file.close();
         if (file.fail()) {
             LOGGING(error) << "failed to write to file:  " << filepath;
+            return;
         }
+        LOGGING(debug) << "Failed trajectory logged to: " << filepath;
+
     } catch (const std::exception& e) {
         LOGGING(error) << "Failed to write trajectory log: " << e.what();
     }
@@ -123,6 +125,7 @@ void FailedTrajectoryLogger::log_failure(const std::string& telemetry_path,
         std::filesystem::create_directories(log_dir, ec);
         if (ec) {
             LOGGING(error) << "Failed to created directory " << log_dir << " cause:" << ec.message();
+            return;
         }
 
         Json::Value root(Json::objectValue);
@@ -163,12 +166,14 @@ void GeneratedTrajectoryLogger::write_json_file(const std::string& filepath, con
         writer->write(root, &file);
         file << '\n';
 
-        LOGGING(debug) << "Generated trajectory logged to: " << filepath;
         file.flush();
         file.close();
         if (file.fail()) {
             LOGGING(error) << "failed to write to file:  " << filepath;
+            return;
         }
+        LOGGING(debug) << "Generated trajectory logged to: " << filepath;
+
     } catch (const std::exception& e) {
         LOGGING(error) << "Failed to write trajectory log: " << e.what();
     }
@@ -198,6 +203,7 @@ void GeneratedTrajectoryLogger::log_trajectory(const std::string& telemetry_path
         std::filesystem::create_directories(log_dir, ec);
         if (ec) {
             LOGGING(error) << "Failed to created directory " << log_dir << " cause:" << ec.message();
+            return;
         }
 
         Json::Value root(Json::objectValue);
