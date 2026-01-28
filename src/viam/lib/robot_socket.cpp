@@ -1037,7 +1037,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
             }
 
             if (telemetry_path_fn_) {
-                const std::string& telemetry_path = (*telemetry_path_fn_)();
+                auto telemetry_path = (*telemetry_path_fn_)();
                 FailedTrajectoryLogger::log_failure(telemetry_path,
                                                     unix_time,
                                                     robot_model_,
@@ -1057,7 +1057,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
             const std::string error_msg = "trajectory.getDuration() was not a finite number";
 
             if (telemetry_path_fn_) {
-                const std::string& telemetry_path = (*telemetry_path_fn_)();
+                auto telemetry_path = (*telemetry_path_fn_)();
                 FailedTrajectoryLogger::log_failure(telemetry_path,
                                                     unix_time,
                                                     robot_model_,
@@ -1077,7 +1077,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
             const std::string error_msg = "trajectory.getDuration() exceeds 10 minutes";
 
             if (telemetry_path_fn_) {
-                const std::string& telemetry_path = (*telemetry_path_fn_)();
+                auto telemetry_path = (*telemetry_path_fn_)();
                 FailedTrajectoryLogger::log_failure(telemetry_path,
                                                     unix_time,
                                                     robot_model_,
@@ -1119,7 +1119,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
 
     // Log the successfully generated trajectory
     if (telemetry_path_fn_) {
-        const std::string& telemetry_path = (*telemetry_path_fn_)();
+        auto telemetry_path = (*telemetry_path_fn_)();
         GeneratedTrajectoryLogger::log_trajectory(
             telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, samples);
     }
