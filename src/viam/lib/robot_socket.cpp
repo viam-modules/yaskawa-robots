@@ -880,10 +880,10 @@ std::future<Message> YaskawaController::reset_errors() {
     return tcp_socket_->send_request(Message(MSG_RESET_ERRORS));
 }
 
-std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
-                                                   uint32_t axes_controlled,
-                                                   const std::vector<trajectory_point_t>& trajectory,
-                                                   const std::vector<tolerance_t>& tolerance) {
+std::future<GoalAcceptedMessage> YaskawaController::send_goal_(uint32_t group_index,
+                                                              uint32_t axes_controlled,
+                                                              const std::vector<trajectory_point_t>& trajectory,
+                                                              const std::vector<tolerance_t>& tolerance) {
     constexpr size_t chunk_size = 200;
     constexpr size_t queue_threshold = 50;
     constexpr auto poll_interval = std::chrono::milliseconds(100);
@@ -909,9 +909,18 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
         return tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload)));
     };
 
-    // If trajectory fits in one chunk, send it directly
+    // If trajectory fits in one chunk, send it directly and convert to GoalAcceptedMessage
     if (trajectory.size() <= chunk_size) {
-        return send_chunk(trajectory, tolerance);
+        std::promise<GoalAcceptedMessage> promise;
+        auto result_future = promise.get_future();
+        std::thread([send_chunk, trajectory, tolerance, promise = std::move(promise)]() mutable {
+            try {
+                promise.set_value(GoalAcceptedMessage(send_chunk(trajectory, tolerance).get()));
+            } catch (...) {
+                promise.set_exception(std::current_exception());
+            }
+        }).detach();
+        return result_future;
     }
 
     // Send first chunk and capture its future to return
@@ -930,9 +939,9 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
             return;
         }
 
-        const auto* first_accepted = reinterpret_cast<const goal_accepted_payload_t*>(first_response.payload.data());
-        int32_t goal_id = first_accepted->goal_id;
-        size_t offset = first_accepted->num_trajectory_accepted;
+        GoalAcceptedMessage first_accepted(first_response);
+        int32_t goal_id = first_accepted.goal_id;
+        size_t offset = first_accepted.num_trajectory_accepted;
 
         LOGGING(info) << "first chunk accepted: " << offset << " points, goal_id=" << goal_id;
 
@@ -986,9 +995,9 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
 
             if (response.header.message_type == MSG_GOAL_ACCEPTED &&
                 response.payload.size() >= sizeof(goal_accepted_payload_t)) {
-                const auto* accepted = reinterpret_cast<const goal_accepted_payload_t*>(response.payload.data());
-                LOGGING(info) << "chunk accepted: " << accepted->num_trajectory_accepted << " points";
-                offset += accepted->num_trajectory_accepted;
+                GoalAcceptedMessage accepted(response);
+                LOGGING(info) << "chunk accepted: " << accepted.num_trajectory_accepted << " points";
+                offset += accepted.num_trajectory_accepted;
             } else {
                 // Fallback: assume all points in chunk were accepted
                 offset = end;
@@ -997,11 +1006,15 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
         LOGGING(info) << "finished sending all trajectory chunks";
     }).detach();
 
-    // Return a future that wraps the shared_future
-    std::promise<Message> promise;
+    // Return a future that wraps the shared_future and converts to GoalAcceptedMessage
+    std::promise<GoalAcceptedMessage> promise;
     auto result_future = promise.get_future();
     std::thread([first_future, promise = std::move(promise)]() mutable {
-        promise.set_value(first_future.get());
+        try {
+            promise.set_value(GoalAcceptedMessage(first_future.get()));
+        } catch (...) {
+            promise.set_exception(std::current_exception());
+        }
     }).detach();
 
     return result_future;
@@ -1032,20 +1045,13 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
         promise.set_value(GOAL_STATE_SUCCEEDED);
         return std::make_unique<GoalRequestHandle>(0, shared_from_this(), promise.get_future());
     }
-    auto response = make_goal_future.get();
-    LOGGING(info) << response;
-    if (response.header.message_type != MSG_GOAL_ACCEPTED) {
-        throw std::runtime_error(std::format("Expected MSG_GOAL_ACCEPTED, got {}", (int)response.header.message_type));
-    }
+    auto accepted = make_goal_future.get();
+    LOGGING(info) << "goal accepted: goal_id=" << accepted.goal_id
+                  << " num_trajectory_accepted=" << accepted.num_trajectory_accepted;
 
-    if (response.payload.size() != sizeof(goal_accepted_payload_t)) {
-        throw std::runtime_error(std::format(
-            "Invalid goal accepted payload size expected {} got {}", sizeof(goal_accepted_payload_t), (int)response.payload.size()));
-    }
-    const goal_accepted_payload_t* accepted = reinterpret_cast<const goal_accepted_payload_t*>(response.payload.data());
-    auto handle = std::make_unique<GoalRequestHandle>(accepted->goal_id, shared_from_this(), promise.get_future());
+    auto handle = std::make_unique<GoalRequestHandle>(accepted.goal_id, shared_from_this(), promise.get_future());
 
-    std::thread([promise = std::move(promise), self = weak_from_this(), goal_id = accepted->goal_id]() mutable {
+    std::thread([promise = std::move(promise), self = weak_from_this(), goal_id = accepted.goal_id]() mutable {
         try {
             while (1) {
                 auto shared = self.lock();
@@ -1082,7 +1088,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     return handle;
 }
 
-std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
+std::future<GoalAcceptedMessage> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     LOGGING(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
 
     auto curr_joint_pos = StatusMessage(get_robot_position_velocity_torque().get()).position;
@@ -1093,7 +1099,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
         // return an invalid future to signify no motion needs to be done
-        return std::future<Message>();
+        return std::future<GoalAcceptedMessage>();
     }
 
     std::vector<std::list<Eigen::VectorXd>> segments;
@@ -1240,6 +1246,23 @@ GoalStatusMessage::GoalStatusMessage(const Message& msg) {
     goal_id = payload->goal_id;
     state = static_cast<goal_state_t>(payload->state);
     progress = payload->progress;
+    timestamp_ms = payload->timestamp_ms;
+}
+
+// GoalAcceptedMessage implementation
+GoalAcceptedMessage::GoalAcceptedMessage(const Message& msg) {
+    if (msg.header.message_type != MSG_GOAL_ACCEPTED) {
+        throw std::runtime_error(
+            std::format("wrong message type expected {} had {}", static_cast<int>(MSG_GOAL_ACCEPTED), msg.header.message_type));
+    }
+    if (msg.payload.size() != sizeof(goal_accepted_payload_t)) {
+        throw std::runtime_error(std::format(
+            "incorrect goal accepted payload size expected {} had {}", sizeof(goal_accepted_payload_t), msg.payload.size()));
+    }
+
+    const goal_accepted_payload_t* payload = reinterpret_cast<const goal_accepted_payload_t*>(msg.payload.data());
+    goal_id = payload->goal_id;
+    num_trajectory_accepted = payload->num_trajectory_accepted;
     timestamp_ms = payload->timestamp_ms;
 }
 
