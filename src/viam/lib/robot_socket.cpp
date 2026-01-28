@@ -884,22 +884,127 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
                                                    uint32_t axes_controlled,
                                                    const std::vector<trajectory_point_t>& trajectory,
                                                    const std::vector<tolerance_t>& tolerance) {
-    std::vector<uint8_t> payload;
-    payload.reserve((sizeof(uint32_t) * 2) + (trajectory.size() * sizeof(trajectory_point_t)) + (tolerance.size() * sizeof(tolerance_t)));
+    constexpr size_t chunk_size = 200;
+    constexpr size_t queue_threshold = 50;
+    constexpr auto poll_interval = std::chrono::milliseconds(100);
 
-    auto append_to = [&](auto obj) {
-        const uint8_t* as_bytes = reinterpret_cast<const uint8_t*>(&obj);
-        payload.insert(payload.end(), as_bytes, as_bytes + sizeof(obj));
+    auto send_chunk = [this, group_index, axes_controlled](const std::vector<trajectory_point_t>& chunk,
+                                                            const std::vector<tolerance_t>& tol) {
+        std::vector<uint8_t> payload;
+        payload.reserve((sizeof(uint32_t) * 3) + (chunk.size() * sizeof(trajectory_point_t)) +
+                        (tol.size() * sizeof(tolerance_t)));
+
+        auto append_to = [&](auto obj) {
+            const uint8_t* as_bytes = reinterpret_cast<const uint8_t*>(&obj);
+            payload.insert(payload.end(), as_bytes, as_bytes + sizeof(obj));
+        };
+
+        append_to(axes_controlled);
+        append_to(group_index);
+        append_to(static_cast<uint32_t>(chunk.size()));
+        boost::for_each(chunk, append_to);
+        append_to(static_cast<uint32_t>(tol.size()));
+        boost::for_each(tol, append_to);
+
+        return tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload)));
     };
 
-    append_to(axes_controlled);
-    append_to(group_index);
-    append_to((uint32_t)trajectory.size());
-    boost::for_each(trajectory, append_to);
-    append_to((uint32_t)tolerance.size());
-    boost::for_each(tolerance, append_to);
+    // If trajectory fits in one chunk, send it directly
+    if (trajectory.size() <= chunk_size) {
+        return send_chunk(trajectory, tolerance);
+    }
 
-    return tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload)));
+    // Send first chunk and capture its future to return
+    std::vector<trajectory_point_t> first_chunk(trajectory.begin(),
+                                                 trajectory.begin() + static_cast<ptrdiff_t>(chunk_size));
+    // Use a shared_future so we can share the result with the background thread
+    std::shared_future<Message> first_future = send_chunk(first_chunk, tolerance).share();
+
+    // Send remaining chunks in a background thread
+    std::thread([this, trajectory, first_future, chunk_size, queue_threshold, poll_interval, send_chunk]() {
+        // Wait for first chunk response to get goal_id
+        Message first_response = first_future.get();
+        if (first_response.header.message_type != MSG_GOAL_ACCEPTED ||
+            first_response.payload.size() < sizeof(goal_accepted_payload_t)) {
+            LOGGING(error) << "first chunk was not accepted, aborting remaining chunks";
+            return;
+        }
+
+        const auto* first_accepted = reinterpret_cast<const goal_accepted_payload_t*>(first_response.payload.data());
+        int32_t goal_id = first_accepted->goal_id;
+        size_t offset = first_accepted->num_trajectory_accepted;
+
+        LOGGING(info) << "first chunk accepted: " << offset << " points, goal_id=" << goal_id;
+
+        while (offset < trajectory.size()) {
+            // Poll goal status until queue has <= threshold points remaining
+            while (true) {
+                auto status_future = get_goal_status(goal_id);
+                auto status_response = status_future.get();
+
+                if (status_response.header.message_type != MSG_GOAL_STATUS ||
+                    status_response.payload.size() < sizeof(goal_status_payload_t)) {
+                    LOGGING(warning) << "unexpected goal status response, retrying...";
+                    std::this_thread::sleep_for(poll_interval);
+                    continue;
+                }
+
+                const auto* status = reinterpret_cast<const goal_status_payload_t*>(status_response.payload.data());
+
+                // Check if goal is no longer active
+                if (status->state != GOAL_STATE_ACTIVE && status->state != GOAL_STATE_PENDING) {
+                    LOGGING(info) << "goal is no longer active (state=" << static_cast<int>(status->state)
+                                  << "), stopping chunk sends";
+                    return;
+                }
+
+                if (status->current_queue_size <= queue_threshold) {
+                    LOGGING(info) << "queue size is " << status->current_queue_size
+                                  << ", sending next chunk";
+                    break;
+                }
+
+                std::this_thread::sleep_for(poll_interval);
+            }
+
+            size_t end = std::min(offset + chunk_size, trajectory.size());
+            std::vector<trajectory_point_t> chunk(trajectory.begin() + static_cast<ptrdiff_t>(offset),
+                                                   trajectory.begin() + static_cast<ptrdiff_t>(end));
+
+            LOGGING(info) << "sending trajectory chunk: points " << offset << " to " << end
+                          << " (" << chunk.size() << " points)";
+
+            // Send chunk and wait for response
+            auto future = send_chunk(chunk, {});
+            auto response = future.get();
+            if (response.header.message_type == MSG_ERROR) {
+                error_payload_t err_msg;
+                std::memcpy(&err_msg, response.payload.data(), sizeof(err_msg));
+                LOGGING(error) << "chunk send failed with error code " << err_msg.error_code;
+                break;
+            }
+
+            if (response.header.message_type == MSG_GOAL_ACCEPTED &&
+                response.payload.size() >= sizeof(goal_accepted_payload_t)) {
+                const auto* accepted = reinterpret_cast<const goal_accepted_payload_t*>(response.payload.data());
+                LOGGING(info) << "chunk accepted: " << accepted->num_trajectory_accepted << " points";
+                offset += accepted->num_trajectory_accepted;
+            } else {
+                // Fallback: assume all points in chunk were accepted
+                offset = end;
+            }
+        }
+        LOGGING(info) << "finished sending all trajectory chunks";
+    }).detach();
+
+    // Return a future that wraps the shared_future
+    std::promise<Message> promise;
+    auto result_future = promise.get_future();
+    std::thread([first_future, promise = std::move(promise)]() mutable {
+        promise.set_value(first_future.get());
+    }).detach();
+
+    return result_future;
 }
 
 std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
