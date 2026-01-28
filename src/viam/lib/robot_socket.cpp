@@ -32,6 +32,7 @@
 #include <memory>
 #include <mutex>
 #include <ostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -716,7 +717,8 @@ YaskawaController::YaskawaController(
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
 }
 
-void YaskawaController::set_trajectory_loggers(std::string robot_model, std::optional<std::function<std::string()>> telemetry_path_fn) {
+void YaskawaController::set_trajectory_loggers(std::string robot_model,
+                                               std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn) {
     robot_model_ = std::move(robot_model);
     telemetry_path_fn_ = std::move(telemetry_path_fn);
 }
@@ -1026,69 +1028,53 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     for (const auto& segment : segments) {
         const Trajectory trajectory(Path(segment, 0.1), max_velocity_vec, max_acceleration_vec);
         if (!trajectory.isValid()) {
-            std::stringstream buffer;
-            buffer << "trajectory generation failed for path:";
-            for (const auto& position : segment) {
-                buffer << "{";
-                for (Eigen::Index j = 0; j < 6; j++) {
-                    buffer << position[j] << " ";
-                }
-                buffer << "}";
-            }
-
+            std::stringstream error_msg;
+            error_msg << "trajectory.isValid() was false";
             if (telemetry_path_fn_) {
                 auto telemetry_path = (*telemetry_path_fn_)();
-                FailedTrajectoryLogger::log_failure(telemetry_path,
-                                                    unix_time,
-                                                    robot_model_,
-                                                    group_index_,
-                                                    speed_,
-                                                    acceleration_,
-                                                    std::list<Eigen::VectorXd>(segment.begin(), segment.end()),
-                                                    buffer.str());
+                if (telemetry_path) {
+                    FailedTrajectoryLogger::log_failure(
+                        *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg.str());
+                    error_msg << " trajectory saved to " << *telemetry_path;
+                }
             }
-
-            throw std::runtime_error(buffer.str());
+            throw std::runtime_error(error_msg.str());
         }
 
         const double duration = trajectory.getDuration();
 
         if (!std::isfinite(duration)) {
-            const std::string error_msg = "trajectory.getDuration() was not a finite number";
+            std::stringstream error_msg;
+            error_msg << "trajectory.getDuration() was not a finite number";
 
             if (telemetry_path_fn_) {
                 auto telemetry_path = (*telemetry_path_fn_)();
-                FailedTrajectoryLogger::log_failure(telemetry_path,
-                                                    unix_time,
-                                                    robot_model_,
-                                                    group_index_,
-                                                    speed_,
-                                                    acceleration_,
-                                                    std::list<Eigen::VectorXd>(segment.begin(), segment.end()),
-                                                    error_msg);
+                if (telemetry_path) {
+                    FailedTrajectoryLogger::log_failure(
+                        *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg.str());
+                    error_msg << " trajectory saved to " << *telemetry_path;
+                }
             }
 
-            throw std::runtime_error(error_msg);
+            throw std::runtime_error(error_msg.str());
         }
 
         // TODO(RSDK-12566): Make this configurable
         // viam.atlassian.net/browse/RSDK-12566
         if (duration > 600) {  // if the duration is longer than 10 minutes
-            const std::string error_msg = "trajectory.getDuration() exceeds 10 minutes";
+            std::stringstream error_msg;
+            error_msg << "trajectory.getDuration() exceeds 10 minutes";
 
             if (telemetry_path_fn_) {
                 auto telemetry_path = (*telemetry_path_fn_)();
-                FailedTrajectoryLogger::log_failure(telemetry_path,
-                                                    unix_time,
-                                                    robot_model_,
-                                                    group_index_,
-                                                    speed_,
-                                                    acceleration_,
-                                                    std::list<Eigen::VectorXd>(segment.begin(), segment.end()),
-                                                    error_msg);
+                if (telemetry_path) {
+                    FailedTrajectoryLogger::log_failure(
+                        *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg.str());
+                    error_msg << " trajectory saved to " << *telemetry_path;
+                }
             }
 
-            throw std::runtime_error(error_msg);
+            throw std::runtime_error(error_msg.str());
         }
 
         if (duration < k_min_timestep_sec) {
@@ -1120,8 +1106,10 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     // Log the successfully generated trajectory
     if (telemetry_path_fn_) {
         auto telemetry_path = (*telemetry_path_fn_)();
-        GeneratedTrajectoryLogger::log_trajectory(
-            telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, samples);
+        if (telemetry_path) {
+            GeneratedTrajectoryLogger::log_trajectory(
+                *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, samples);
+        }
     }
 
     return send_goal_(group_index_, 6, samples, {});

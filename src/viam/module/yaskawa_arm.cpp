@@ -219,13 +219,13 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, group_index, host);
 
     // Setup trajectory logging (always enabled)
-    robot_->set_trajectory_loggers(model_.model_name(), [weak = weak_from_this()]() -> std::string {
+    robot_->set_trajectory_loggers(model_.model_name(), [weak = weak_from_this()]() -> std::optional<std::string> {
         auto self = weak.lock();
         if (!self) {
-            throw std::runtime_error("YaskawaArm was destroyed, cannot access telemetry path");
+            return std::nullopt;
         }
         std::string res = self->telemetry_output_path();
-        return res;
+        return std::make_optional(res);
     });
 
     constexpr int k_max_connection_try = 5;
