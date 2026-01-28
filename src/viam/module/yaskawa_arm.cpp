@@ -224,7 +224,7 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
         if (!self) {
             throw std::runtime_error("YaskawaArm was destroyed, cannot access telemetry path");
         }
-        auto res = self->telemetry_output_path();
+        std::string res = self->telemetry_output_path();
         return res;
     });
 
