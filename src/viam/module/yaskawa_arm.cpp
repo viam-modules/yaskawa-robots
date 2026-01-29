@@ -214,6 +214,10 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
     auto group_index = static_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));
 
+    if (robot_) {
+        VIAM_SDK_LOG(info) << "resetting yaskawa arm connection";
+        robot_->disconnect();
+    }
     robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, group_index, host);
 
     constexpr int k_max_connection_try = 5;
@@ -235,13 +239,12 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
         }
     }
     if (!CheckGroupMessage(robot_->checkGroupIndex().get()).is_known_group) {
-        // added the disconnect so the yaskawa can successfully reconfigure if this error occurs.
-        // TODO investigate the need for disconnect.
-        robot_->disconnect();
         std::ostringstream buffer;
         buffer << std::format("group_index {} is not available on the arm controller", robot_->get_group_index());
         throw std::invalid_argument(buffer.str());
     }
+
+    VIAM_SDK_LOG(info) << "configure done ";
 }
 void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     const std::unique_lock wlock{config_mutex_};
