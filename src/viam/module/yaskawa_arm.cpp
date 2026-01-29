@@ -165,7 +165,11 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
             model,
             // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is
             // fixed by ModelRegistration.
-            [&, model](const auto& deps, const auto& config) { return std::make_shared<YaskawaArm>(model, deps, config, io_context); },
+            [&, model](const auto& deps, const auto& config) {
+                auto robot = std::make_shared<YaskawaArm>(model, deps, config, io_context);
+                robot->configure(deps, config);
+                return robot;
+            },
             [](auto const& config) { return validate_config_(config); });
     };
 
@@ -173,9 +177,12 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
     return {std::make_move_iterator(begin(registrations)), std::make_move_iterator(end(registrations))};
 }
 
-YaskawaArm::YaskawaArm(Model model, const Dependencies& deps, const ResourceConfig& cfg, boost::asio::io_context& io_context)
+YaskawaArm::YaskawaArm(Model model, const Dependencies&, const ResourceConfig& cfg, boost::asio::io_context& io_context)
     : Arm(cfg.name()), model_(std::move(model)), io_context_(io_context) {
     // Configure the global logger to use VIAM SDK logging
+}
+
+void YaskawaArm::configure(const Dependencies& deps, const ResourceConfig& cfg) {
     configure_logger(cfg);
 
     VIAM_SDK_LOG(info) << "Yaskawa Arm constructor called (model: " << model_.to_string() << ")";
@@ -212,6 +219,7 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
         return std::string{viam_module_data};
     }();
 
+    VIAM_SDK_LOG(debug) << "telemetry output path set : " << telemetry_output_path_;
     auto speed = find_config_attribute<double>(config, "speed_rad_per_sec").value();
     auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
     auto group_index = static_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));

@@ -34,6 +34,8 @@ class YaskawaArm final : public Arm, public Reconfigurable, public std::enable_s
     explicit YaskawaArm(Model model, const Dependencies& deps, const ResourceConfig& cfg, boost::asio::io_context& io_context);
     ~YaskawaArm() override;
 
+    void configure(const Dependencies& deps, const ResourceConfig& cfg);
+
     void reconfigure(const Dependencies& deps, const ResourceConfig& cfg) override;
 
     /// @brief Get the joint positions of the arm (in degrees)
