@@ -3,6 +3,7 @@
 #include <json/json.h>
 #include <Eigen/Core>
 #include <list>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,8 @@ extern "C" {
 }
 
 namespace robot {
+
+struct StatusMessage;
 
 // Logs failed trajectory generation (waypoints + config only)
 class FailedTrajectoryLogger {
@@ -31,21 +34,38 @@ class FailedTrajectoryLogger {
                                                   const std::string& unix_time);
 };
 
-// Logs generated trajectories (full arrays: time, position, velocity, acceleration)
-class GeneratedTrajectoryLogger {
+// Real-time trajectory logger using RAII pattern
+class RealtimeTrajectoryLogger {
    public:
-    static void log_trajectory(const std::string& telemetry_path,
-                               const std::string& timestamp,
-                               const std::string& robot_model,
-                               uint32_t group_index,
-                               double max_velocity_rad_per_sec,
-                               double max_acceleration_rad_per_sec2,
-                               const std::list<Eigen::VectorXd>& waypoints_rad,
-                               const std::vector<trajectory_point_t>& trajectory_points);
+    RealtimeTrajectoryLogger(const std::string& telemetry_path,
+                             const std::string& timestamp,
+                             const std::string& robot_model,
+                             uint32_t group_index);
+
+    ~RealtimeTrajectoryLogger();
+
+    void set_max_velocity(double max_velocity_rad_per_sec);
+    void set_max_acceleration(double max_acceleration_rad_per_sec2);
+    void set_waypoints(const std::list<Eigen::VectorXd>& waypoints_rad);
+    void set_planned_trajectory(const std::vector<trajectory_point_t>& planned_trajectory_points);
+
+    void append_realtime_sample(const StatusMessage& status);
+
+    RealtimeTrajectoryLogger(const RealtimeTrajectoryLogger&) = delete;
+    RealtimeTrajectoryLogger& operator=(const RealtimeTrajectoryLogger&) = delete;
+    RealtimeTrajectoryLogger(RealtimeTrajectoryLogger&&) noexcept;
+    RealtimeTrajectoryLogger& operator=(RealtimeTrajectoryLogger&&) = delete;
 
    private:
-    static void write_json_file(const std::string& filepath, const Json::Value& root);
-    static std::string trajectory_filename(const std::string& telemetry_path, const std::string& robot_model, const std::string& unix_time);
+    std::string filepath_;
+    Json::Value root_;
+    std::mutex mutex_;
+    int64_t last_timestamp_{-1};
+
+    void write_and_flush();
+    static std::string realtime_trajectory_filename(const std::string& telemetry_path,
+                                                    const std::string& robot_model,
+                                                    const std::string& unix_time);
 };
 
 }  // namespace robot
