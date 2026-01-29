@@ -32,7 +32,6 @@
 #include <memory>
 #include <mutex>
 #include <ostream>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -1028,53 +1027,47 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
     for (const auto& segment : segments) {
         const Trajectory trajectory(Path(segment, 0.1), max_velocity_vec, max_acceleration_vec);
         if (!trajectory.isValid()) {
-            std::stringstream error_msg;
-            error_msg << "trajectory.isValid() was false";
+            const std::string error_msg = "trajectory.isValid() was false";
             if (telemetry_path_fn_) {
                 auto telemetry_path = (*telemetry_path_fn_)();
                 if (telemetry_path) {
                     FailedTrajectoryLogger::log_failure(
-                        *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg.str());
-                    error_msg << " trajectory saved to " << *telemetry_path;
+                        *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg);
                 }
             }
-            throw std::runtime_error(error_msg.str());
+            throw std::runtime_error(error_msg);
         }
 
         const double duration = trajectory.getDuration();
 
         if (!std::isfinite(duration)) {
-            std::stringstream error_msg;
-            error_msg << "trajectory.getDuration() was not a finite number";
+            const std::string error_msg = "trajectory.getDuration() was not a finite number";
 
             if (telemetry_path_fn_) {
                 auto telemetry_path = (*telemetry_path_fn_)();
                 if (telemetry_path) {
                     FailedTrajectoryLogger::log_failure(
-                        *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg.str());
-                    error_msg << " trajectory saved to " << *telemetry_path;
+                        *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg);
                 }
             }
 
-            throw std::runtime_error(error_msg.str());
+            throw std::runtime_error(error_msg);
         }
 
         // TODO(RSDK-12566): Make this configurable
         // viam.atlassian.net/browse/RSDK-12566
         if (duration > 600) {  // if the duration is longer than 10 minutes
-            std::stringstream error_msg;
-            error_msg << "trajectory.getDuration() exceeds 10 minutes";
+            const std::string error_msg = "trajectory.getDuration() exceeds 10 minutes";
 
             if (telemetry_path_fn_) {
                 auto telemetry_path = (*telemetry_path_fn_)();
                 if (telemetry_path) {
                     FailedTrajectoryLogger::log_failure(
-                        *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg.str());
-                    error_msg << " trajectory saved to " << *telemetry_path;
+                        *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg);
                 }
             }
 
-            throw std::runtime_error(error_msg.str());
+            throw std::runtime_error(error_msg);
         }
 
         if (duration < k_min_timestep_sec) {
