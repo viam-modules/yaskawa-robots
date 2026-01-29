@@ -717,6 +717,7 @@ YaskawaController::YaskawaController(
 }
 
 std::future<void> YaskawaController::connect() {
+     LOGGING(info) << "please start yo";
     return std::async(std::launch::async, [this]() {
         try {
             // Establish TCP connection for commands
@@ -762,6 +763,7 @@ std::future<void> YaskawaController::connect() {
 }
 
 void YaskawaController::disconnect() {
+    LOGGING(info) << "please stop yo";
     if (udp_socket_) {
         udp_socket_->disconnect();
     }
@@ -772,12 +774,12 @@ void YaskawaController::disconnect() {
         broadcast_listener_->stop();
     }
     if (heartbeat_.joinable()) {
-        LOGGING(debug) << "Yaskawa Controller shutdown waiting for heartbeat thread to terminate";
+        LOGGING(info) << "Yaskawa Controller shutdown waiting for heartbeat thread to terminate";
         // the heartbeat thread will shutdown once the tcp_socket has closed. Wait for the heartbeat thread to finish
         try {
             heartbeat_.join();
         } catch (const std::exception& e) {
-            LOGGING(debug) << "Yaskawa Controller shutdown failed to join heartbeat thread with " << e.what();
+            LOGGING(info) << "Yaskawa Controller shutdown failed to join heartbeat thread with " << e.what();
         }
 
         LOGGING(debug) << "heartbeat thread terminated";
