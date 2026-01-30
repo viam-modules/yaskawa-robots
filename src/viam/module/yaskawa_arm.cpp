@@ -38,11 +38,11 @@
 #include <viam/sdk/common/pose.hpp>
 #include <viam/sdk/common/proto_value.hpp>
 #include <viam/sdk/components/component.hpp>
+#include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/module/module.hpp>
 #include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
-#include <viam/sdk/resource/resource.hpp>
 
 #include <third_party/trajectories/Trajectory.h>
 
@@ -61,7 +61,8 @@ extern "C" void free_orientation_vector_components(double* ds);
 
 namespace {
 
-constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
+constexpr double k_min_sampling_freq_hz = 1.0;
+constexpr double k_max_sampling_freq_hz = 100.0;
 
 pose cartesian_position_to_pose(CartesianPosition&& pos) {
     auto q = std::unique_ptr<void, decltype(&free_quaternion_memory)>(
@@ -120,6 +121,24 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
                         k_min_threshold,
                         k_max_threshold,
                         *threshold));
+    }
+    auto sampling_freq = find_config_attribute<double>(cfg, "trajectory_sampling_freq_hz");
+    if (sampling_freq && (*sampling_freq < k_min_sampling_freq_hz || *sampling_freq > k_max_sampling_freq_hz)) {
+        throw std::invalid_argument(
+            boost::str(boost::format("attribute `trajectory_sampling_freq_hz` should be between %1% and %2%, it is: %3% Hz") %
+                       k_min_sampling_freq_hz % k_max_sampling_freq_hz % *sampling_freq));
+    }
+
+    auto waypoint_dedup_tolerance = find_config_attribute<double>(cfg, "waypoint_deduplication_tolerance_deg");
+    constexpr double k_min_waypoint_dedup_tolerance_deg = 0.0;
+    constexpr double k_max_waypoint_dedup_tolerance_deg = 10.0;
+    if (waypoint_dedup_tolerance && (*waypoint_dedup_tolerance < k_min_waypoint_dedup_tolerance_deg ||
+                                     *waypoint_dedup_tolerance > k_max_waypoint_dedup_tolerance_deg)) {
+        throw std::invalid_argument(
+            std::format("attribute `waypoint_deduplication_tolerance_deg` should be between {} and {}, it is: {} degrees",
+                        k_min_waypoint_dedup_tolerance_deg,
+                        k_max_waypoint_dedup_tolerance_deg,
+                        *waypoint_dedup_tolerance));
     }
 
     auto group_index = find_config_attribute<double>(cfg, "group_index");
@@ -199,7 +218,6 @@ YaskawaArm::YaskawaArm(Model model, const Dependencies& deps, const ResourceConf
 
 void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     VIAM_SDK_LOG(info) << "Yaskawa arm  starting up";
-    auto host = find_config_attribute<std::string>(config, "host").value();
 
     const auto module_executable_path = boost::dll::program_location();
     const auto module_executable_directory = module_executable_path.parent_path();
@@ -210,11 +228,7 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
 
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
-    auto speed = find_config_attribute<double>(config, "speed_rad_per_sec").value();
-    auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
-    auto group_index = static_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));
-
-    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, group_index, host);
+    robot_ = std::make_shared<YaskawaController>(io_context_, config);
 
     constexpr int k_max_connection_try = 5;
     int connection_try = 0;
@@ -273,7 +287,8 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
 
             // Skip waypoints that are too close to the previous one to avoid
             // redundant motion
-            if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), k_waypoint_equivalancy_epsilon_rad))) {
+            if ((!waypoints.empty()) &&
+                (next_waypoint_rad.isApprox(waypoints.back(), robot_->get_waypoint_deduplication_tolerance_rad()))) {
                 continue;
             }
             waypoints.emplace_back(std::move(next_waypoint_rad));
