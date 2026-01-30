@@ -214,7 +214,7 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
     auto group_index = static_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));
 
-    if (robot_){
+    if (robot_) {
         VIAM_SDK_LOG(info) << "already connected to a Yaskawa arm, resetting connection";
         robot_->disconnect();
     }
