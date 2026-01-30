@@ -296,13 +296,23 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
 
         const auto unix_time = unix_time_iso8601();
 
-        // Execute the move command and block until completion
-        // This will throw if an error occurs during motion
-        robot_->move(std::move(waypoints), unix_time)->wait();
+        // Check for active move and enqueue new move under lock
+        {
+            const std::lock_guard lock{move_mutex_};
+            if (active_move_ && !active_move_->is_done()) {
+                throw std::runtime_error("an actuation is already in progress");
+            }
+            active_move_ = robot_->move(std::move(waypoints), unix_time);
+        }
+
+        // Wait for completion outside the lock
+        active_move_->wait();
     }
 }
 
 void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
+    const std::shared_lock rlock{config_mutex_};
+
     auto next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size())).eval();
     auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg));
     std::list<Eigen::VectorXd> waypoints;
@@ -310,8 +320,17 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 
     const auto unix_time = unix_time_iso8601();
 
-    // move will throw if an error occurs
-    robot_->move(std::move(waypoints), unix_time)->wait();
+    // Check for active move and enqueue new move under lock
+    {
+        const std::lock_guard lock{move_mutex_};
+        if (active_move_ && !active_move_->is_done()) {
+            throw std::runtime_error("an actuation is already in progress");
+        }
+        active_move_ = robot_->move(std::move(waypoints), unix_time);
+    }
+
+    // Wait for completion outside the lock
+    active_move_->wait();
 }
 
 ::viam::sdk::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
