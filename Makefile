@@ -28,7 +28,7 @@ configure:
 	cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -G Ninja
 
 build: configure
-	ninja -C build -j8
+	ninja -C build
 
 
 install: build
