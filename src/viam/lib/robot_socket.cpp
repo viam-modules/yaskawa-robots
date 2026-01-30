@@ -341,7 +341,7 @@ std::future<void> TcpRobotSocket::connect() {
                 connected_ = true;
                 running_ = true;
                 // Start the request processing coroutine
-                co_spawn(io_context_, process_requests(), detached);
+                co_spawn(io_context_, process_requests(shared_from_this()), detached);
 
                 promise->set_value();
             } catch (const std::exception& e) {
@@ -380,7 +380,9 @@ void TcpRobotSocket::disconnect() {
     }
 }
 
-awaitable<void> TcpRobotSocket::process_requests() {
+awaitable<void> TcpRobotSocket::process_requests(std::shared_ptr<TcpRobotSocket> self) {
+    // self keeps this object alive for the duration of the coroutine
+    (void)self;
     while (running_.load()) {
         auto [result, error] = co_await request_queue_->async_pop(boost::asio::use_awaitable);
         if (error) {
@@ -454,7 +456,7 @@ std::future<void> UdpRobotSocket::connect() {
 
         connected_ = true;
         running_ = true;
-        co_spawn(io_context_, receive_messages(), detached);
+        co_spawn(io_context_, receive_messages(shared_from_this()), detached);
 
         promise->set_value();
     } catch (const std::exception& e) {
@@ -536,7 +538,9 @@ uint16_t UdpRobotSocket::get_local_port() const {
     return 0;
 }
 
-awaitable<void> UdpRobotSocket::receive_messages() {
+awaitable<void> UdpRobotSocket::receive_messages(std::shared_ptr<UdpRobotSocket> self) {
+    // self keeps this object alive for the duration of the coroutine
+    (void)self;
     while (running_) {
         try {
             std::vector<uint8_t> buffer(8192);
@@ -641,7 +645,7 @@ void UdpBroadcastListener::start() {
         socket_.set_option(udp::socket::reuse_address(true));
         socket_.bind(udp::endpoint(udp::v4(), port_));
         // Start receiving broadcasts
-        co_spawn(io_context_, receive_broadcasts(), detached);
+        co_spawn(io_context_, receive_broadcasts(shared_from_this()), detached);
 
         LOGGING(info) << "UDP broadcast listener started on port " << port_;
     } catch (const std::exception& e) {
@@ -670,7 +674,9 @@ void UdpBroadcastListener::stop() {
     }
 }
 
-boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
+boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts(std::shared_ptr<UdpBroadcastListener> self) {
+    // self keeps this object alive for the duration of the coroutine
+    (void)self;
     using namespace boost::asio::experimental::awaitable_operators;
     while (running_) {
         try {
@@ -712,8 +718,8 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
 YaskawaController::YaskawaController(
     boost::asio::io_context& io_context, double speed, double acceleration, uint32_t group_index, const std::string& host)
     : io_context_(io_context), host_(host), speed_(speed), acceleration_(acceleration), group_index_(group_index) {
-    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
-    broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
+    tcp_socket_ = std::make_shared<TcpRobotSocket>(io_context_, host_);
+    broadcast_listener_ = std::make_shared<UdpBroadcastListener>(io_context_);
 }
 
 std::future<void> YaskawaController::connect() {
@@ -723,7 +729,7 @@ std::future<void> YaskawaController::connect() {
             tcp_socket_->connect().get();
 
             // Create and connect UDP socket for receiving status updates
-            udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
+            udp_socket_ = std::make_shared<UdpRobotSocket>(io_context_, robot_state_);
             udp_socket_->connect().get();
 
             // Register UDP port with robot so it knows where to send status messages
@@ -762,6 +768,7 @@ std::future<void> YaskawaController::connect() {
 }
 
 void YaskawaController::disconnect() {
+    LOGGING(info) << "please stop yo";
     if (udp_socket_) {
         udp_socket_->disconnect();
     }
@@ -772,12 +779,12 @@ void YaskawaController::disconnect() {
         broadcast_listener_->stop();
     }
     if (heartbeat_.joinable()) {
-        LOGGING(debug) << "Yaskawa Controller shutdown waiting for heartbeat thread to terminate";
+        LOGGING(info) << "Yaskawa Controller shutdown waiting for heartbeat thread to terminate";
         // the heartbeat thread will shutdown once the tcp_socket has closed. Wait for the heartbeat thread to finish
         try {
             heartbeat_.join();
         } catch (const std::exception& e) {
-            LOGGING(debug) << "Yaskawa Controller shutdown failed to join heartbeat thread with " << e.what();
+            LOGGING(info) << "Yaskawa Controller shutdown failed to join heartbeat thread with " << e.what();
         }
 
         LOGGING(debug) << "heartbeat thread terminated";

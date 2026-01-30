@@ -300,7 +300,7 @@ class RobotSocketBase {
     static protocol_header_t parse_header(const std::vector<uint8_t>& buffer);
 };
 
-class TcpRobotSocket : public RobotSocketBase {
+class TcpRobotSocket : public RobotSocketBase, public std::enable_shared_from_this<TcpRobotSocket> {
    public:
     TcpRobotSocket(boost::asio::io_context& io_context, const std::string& host = "127.0.0.1", uint16_t port = TCP_PORT);
     ~TcpRobotSocket() override;
@@ -316,12 +316,12 @@ class TcpRobotSocket : public RobotSocketBase {
     std::shared_ptr<AsyncQueue<std::pair<Message, std::promise<Message>>>> request_queue_;
     std::atomic<bool> running_{false};
 
-    boost::asio::awaitable<void> process_requests();
+    boost::asio::awaitable<void> process_requests(std::shared_ptr<TcpRobotSocket> self);
     std::future<void> async_send(Message message);
     std::future<Message> async_receive();
 };
 
-class UdpRobotSocket : public RobotSocketBase {
+class UdpRobotSocket : public RobotSocketBase, public std::enable_shared_from_this<UdpRobotSocket> {
    public:
     UdpRobotSocket(boost::asio::io_context& io_context, State& state);
     ~UdpRobotSocket() override;
@@ -346,13 +346,13 @@ class UdpRobotSocket : public RobotSocketBase {
     std::variant<std::monostate, Message, std::promise<Message>> cached_status_;
     std::variant<std::monostate, Message, std::promise<Message>> cached_robot_status_;
 
-    boost::asio::awaitable<void> receive_messages();
+    boost::asio::awaitable<void> receive_messages(std::shared_ptr<UdpRobotSocket> self);
     void handle_status_message(const Message& message);
     void handle_robot_status_message(const Message& message);
     static Message parse_message(const std::vector<uint8_t>& buffer);
 };
 
-class UdpBroadcastListener {
+class UdpBroadcastListener : public std::enable_shared_from_this<UdpBroadcastListener> {
    public:
     explicit UdpBroadcastListener(boost::asio::io_context& io_context, uint16_t port = 21789);
     ~UdpBroadcastListener();
@@ -369,7 +369,7 @@ class UdpBroadcastListener {
     std::atomic<bool> running_{false};
     std::array<char, 1024> recv_buffer_;
     std::unique_ptr<viam::yaskawa::ViamControllerLogParser> log_parser_;
-    boost::asio::awaitable<void> receive_broadcasts();
+    boost::asio::awaitable<void> receive_broadcasts(std::shared_ptr<UdpBroadcastListener> self);
 };
 
 class GoalRequestHandle;
@@ -413,9 +413,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::string host_;
     State robot_state_;
 
-    std::unique_ptr<TcpRobotSocket> tcp_socket_;
-    std::unique_ptr<UdpRobotSocket> udp_socket_;
-    std::unique_ptr<UdpBroadcastListener> broadcast_listener_;
+    std::shared_ptr<TcpRobotSocket> tcp_socket_;
+    std::shared_ptr<UdpRobotSocket> udp_socket_;
+    std::shared_ptr<UdpBroadcastListener> broadcast_listener_;
     double speed_;
     double acceleration_;
     uint32_t group_index_;
