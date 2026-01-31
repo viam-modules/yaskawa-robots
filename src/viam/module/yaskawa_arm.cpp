@@ -80,26 +80,6 @@ pose cartesian_position_to_pose(CartesianPosition&& pos) {
     return {position, orientation, theta};
 }
 
-std::string unix_time_iso8601() {
-    namespace chrono = std::chrono;
-    std::stringstream stream;
-
-    const auto now = chrono::system_clock::now();
-    const auto seconds_part = chrono::duration_cast<chrono::seconds>(now.time_since_epoch());
-    const auto tt = chrono::system_clock::to_time_t(chrono::system_clock::time_point{seconds_part});
-    const auto delta_us = chrono::duration_cast<chrono::microseconds>(now.time_since_epoch() - seconds_part);
-
-    struct tm buf;
-    auto* ret = gmtime_r(&tt, &buf);
-    if (ret == nullptr) {
-        throw std::runtime_error("failed to convert time to iso8601");
-    }
-    stream << std::put_time(&buf, "%FT%T");
-    stream << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
-
-    return stream.str();
-}
-
 std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     if (!find_config_attribute<std::string>(cfg, "host")) {
         throw std::invalid_argument("attribute `host` is required");
@@ -139,6 +119,12 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
                         k_min_waypoint_dedup_tolerance_deg,
                         k_max_waypoint_dedup_tolerance_deg,
                         *waypoint_dedup_tolerance));
+    }
+
+    // Validate telemetry_output_path if provided
+    auto telemetry_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
+    if (telemetry_path && telemetry_path->empty()) {
+        throw std::invalid_argument("attribute `telemetry_output_path` cannot be empty");
     }
 
     auto group_index = find_config_attribute<double>(cfg, "group_index");
@@ -198,7 +184,11 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
             model,
             // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is
             // fixed by ModelRegistration.
-            [&, model](const auto& deps, const auto& config) { return std::make_shared<YaskawaArm>(model, deps, config, io_context); },
+            [&, model](const auto& deps, const auto& config) {
+                auto robot = std::make_shared<YaskawaArm>(model, deps, config, io_context);
+                robot->configure(deps, config);
+                return robot;
+            },
             [](auto const& config) { return validate_config_(config); });
     };
 
@@ -206,9 +196,12 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
     return {std::make_move_iterator(begin(registrations)), std::make_move_iterator(end(registrations))};
 }
 
-YaskawaArm::YaskawaArm(Model model, const Dependencies& deps, const ResourceConfig& cfg, boost::asio::io_context& io_context)
+YaskawaArm::YaskawaArm(Model model, const Dependencies&, const ResourceConfig& cfg, boost::asio::io_context& io_context)
     : Arm(cfg.name()), model_(std::move(model)), io_context_(io_context) {
     // Configure the global logger to use VIAM SDK logging
+}
+
+void YaskawaArm::configure(const Dependencies& deps, const ResourceConfig& cfg) {
     configure_logger(cfg);
 
     VIAM_SDK_LOG(info) << "Yaskawa Arm constructor called (model: " << model_.to_string() << ")";
@@ -228,7 +221,35 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
 
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
+    // Get telemetry output path from config or fall back to VIAM_MODULE_DATA
+    telemetry_output_path_ = [&] {
+        auto path = find_config_attribute<std::string>(config, "telemetry_output_path");
+        if (path) {
+            return path.value();
+        }
+
+        auto* const viam_module_data = std::getenv("VIAM_MODULE_DATA");  // NOLINT: Yes, we know getenv isn't thread safe
+        if (!viam_module_data) {
+            throw std::runtime_error("required environment variable `VIAM_MODULE_DATA` unset");
+        }
+        VIAM_SDK_LOG(debug) << "VIAM_MODULE_DATA: " << viam_module_data;
+
+        return std::string{viam_module_data};
+    }();
+
+    VIAM_SDK_LOG(debug) << "telemetry output path set : " << telemetry_output_path_;
+
     robot_ = std::make_shared<YaskawaController>(io_context_, config);
+
+    // Setup trajectory logging (always enabled)
+    robot_->set_trajectory_loggers(model_.model_name(), [weak = weak_from_this()]() -> std::optional<std::string> {
+        auto self = weak.lock();
+        if (!self) {
+            return std::nullopt;
+        }
+        std::string res = self->telemetry_output_path();
+        return std::make_optional(res);
+    });
 
     constexpr int k_max_connection_try = 5;
     int connection_try = 0;
