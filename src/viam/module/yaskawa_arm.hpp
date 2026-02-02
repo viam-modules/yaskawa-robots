@@ -112,8 +112,4 @@ class YaskawaArm final : public Arm, public Reconfigurable {
     std::optional<double> threshold_;
     boost::asio::io_context& io_context_;
     std::filesystem::path resource_root_;
-
-    // Move locking: prevents concurrent move calls
-    std::mutex move_mutex_;
-    std::unique_ptr<GoalRequestHandle> active_move_;
 };

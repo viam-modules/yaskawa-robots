@@ -421,6 +421,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     double waypoint_dedup_tolerance_rad_;
     std::thread heartbeat_;
 
+    // Move locking: prevents concurrent moves
+    std::atomic<bool> move_in_progress_{false};
+
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;
     std::future<Message> make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
