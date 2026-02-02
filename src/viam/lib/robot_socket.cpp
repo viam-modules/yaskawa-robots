@@ -316,7 +316,8 @@ std::ostream& operator<<(std::ostream& os, const Message& msg) {
 TcpRobotSocket::TcpRobotSocket(boost::asio::io_context& io_context, const std::string& host, uint16_t port)
     : RobotSocketBase(io_context, host, port),
       socket_(io_context),
-      request_queue_(AsyncQueue<std::pair<Message, std::promise<Message>>>::create(io_context.get_executor())) {}
+      request_queue_(AsyncQueue<std::pair<Message, std::promise<Message>>>::create(io_context.get_executor())),
+      coroutine_done_future_(coroutine_done_.get_future()) {}
 
 TcpRobotSocket::~TcpRobotSocket() {
     try {
@@ -340,8 +341,8 @@ std::future<void> TcpRobotSocket::connect() {
 
                 connected_ = true;
                 running_ = true;
-                // Start the request processing coroutine
-                co_spawn(io_context_, process_requests(shared_from_this()), detached);
+                // Start the request processing coroutine with completion handler
+                co_spawn(io_context_, process_requests(), [this](std::exception_ptr) { coroutine_done_.set_value(); });
 
                 promise->set_value();
             } catch (const std::exception& e) {
@@ -369,8 +370,14 @@ void TcpRobotSocket::disconnect() {
         // stop processing requests
         running_.store(false);
         connected_ = false;
+        request_queue_->clear();
         if (socket_.is_open()) {
             socket_.close();
+        }
+
+        // Wait for the coroutine to finish
+        if (coroutine_done_future_.valid()) {
+            coroutine_done_future_.wait();
         }
 
         while (!request_queue_->empty()) {
@@ -380,9 +387,7 @@ void TcpRobotSocket::disconnect() {
     }
 }
 
-awaitable<void> TcpRobotSocket::process_requests(std::shared_ptr<TcpRobotSocket> self) {
-    // self keeps this object alive for the duration of the coroutine
-    (void)self;
+awaitable<void> TcpRobotSocket::process_requests() {
     while (running_.load()) {
         auto [result, error] = co_await request_queue_->async_pop(boost::asio::use_awaitable);
         if (error) {
@@ -437,7 +442,10 @@ protocol_header_t RobotSocketBase::parse_header(const std::vector<uint8_t>& buff
 
 // UdpRobotSocket Implementation
 UdpRobotSocket::UdpRobotSocket(boost::asio::io_context& io_context, State& state)
-    : RobotSocketBase(io_context, "127.0.0.1", 0), robot_state_(state), socket_(io_context) {}
+    : RobotSocketBase(io_context, "127.0.0.1", 0),
+      robot_state_(state),
+      socket_(io_context),
+      coroutine_done_future_(coroutine_done_.get_future()) {}
 
 UdpRobotSocket::~UdpRobotSocket() {
     try {
@@ -456,7 +464,7 @@ std::future<void> UdpRobotSocket::connect() {
 
         connected_ = true;
         running_ = true;
-        co_spawn(io_context_, receive_messages(shared_from_this()), detached);
+        co_spawn(io_context_, receive_messages(), [this](std::exception_ptr) { coroutine_done_.set_value(); });
 
         promise->set_value();
     } catch (const std::exception& e) {
@@ -481,6 +489,11 @@ void UdpRobotSocket::disconnect() {
         connected_ = false;
         if (socket_.is_open()) {
             socket_.close();
+        }
+
+        // Wait for the coroutine to finish
+        if (coroutine_done_future_.valid()) {
+            coroutine_done_future_.wait();
         }
     }
 }
@@ -538,9 +551,7 @@ uint16_t UdpRobotSocket::get_local_port() const {
     return 0;
 }
 
-awaitable<void> UdpRobotSocket::receive_messages(std::shared_ptr<UdpRobotSocket> self) {
-    // self keeps this object alive for the duration of the coroutine
-    (void)self;
+awaitable<void> UdpRobotSocket::receive_messages() {
     while (running_) {
         try {
             std::vector<uint8_t> buffer(8192);
@@ -626,7 +637,7 @@ Message UdpRobotSocket::parse_message(const std::vector<uint8_t>& buffer) {
 
 // UdpBroadcastListener Implementation
 UdpBroadcastListener::UdpBroadcastListener(boost::asio::io_context& io_context, uint16_t port)
-    : io_context_(io_context), socket_(io_context), port_(port) {
+    : io_context_(io_context), socket_(io_context), port_(port), coroutine_done_future_(coroutine_done_.get_future()) {
     log_parser_ = std::make_unique<viam::yaskawa::ViamControllerLogParser>();
 }
 
@@ -644,8 +655,8 @@ void UdpBroadcastListener::start() {
         socket_.open(udp::v4());
         socket_.set_option(udp::socket::reuse_address(true));
         socket_.bind(udp::endpoint(udp::v4(), port_));
-        // Start receiving broadcasts
-        co_spawn(io_context_, receive_broadcasts(shared_from_this()), detached);
+        // Start receiving broadcasts with completion handler
+        co_spawn(io_context_, receive_broadcasts(), [this](std::exception_ptr) { coroutine_done_.set_value(); });
 
         LOGGING(info) << "UDP broadcast listener started on port " << port_;
     } catch (const std::exception& e) {
@@ -668,15 +679,19 @@ void UdpBroadcastListener::stop() {
         if (socket_.is_open()) {
             socket_.close();
         }
+
+        // Wait for the coroutine to finish
+        if (coroutine_done_future_.valid()) {
+            coroutine_done_future_.wait();
+        }
+
         LOGGING(info) << "UDP broadcast listener stopped";
     } catch (const std::exception& e) {
         LOGGING(error) << "Error stopping UDP broadcast listener: " << e.what();
     }
 }
 
-boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts(std::shared_ptr<UdpBroadcastListener> self) {
-    // self keeps this object alive for the duration of the coroutine
-    (void)self;
+boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
     using namespace boost::asio::experimental::awaitable_operators;
     while (running_) {
         try {
@@ -718,8 +733,8 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts(std::share
 YaskawaController::YaskawaController(
     boost::asio::io_context& io_context, double speed, double acceleration, uint32_t group_index, const std::string& host)
     : io_context_(io_context), host_(host), speed_(speed), acceleration_(acceleration), group_index_(group_index) {
-    tcp_socket_ = std::make_shared<TcpRobotSocket>(io_context_, host_);
-    broadcast_listener_ = std::make_shared<UdpBroadcastListener>(io_context_);
+    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
+    broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
 }
 
 std::future<void> YaskawaController::connect() {
@@ -729,7 +744,7 @@ std::future<void> YaskawaController::connect() {
             tcp_socket_->connect().get();
 
             // Create and connect UDP socket for receiving status updates
-            udp_socket_ = std::make_shared<UdpRobotSocket>(io_context_, robot_state_);
+            udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
             udp_socket_->connect().get();
 
             // Register UDP port with robot so it knows where to send status messages
