@@ -296,8 +296,7 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
 
         // Skip waypoints that are too close to the previous one to avoid
         // redundant motion
-        if ((!waypoints.empty()) &&
-            (next_waypoint_rad.isApprox(waypoints.back(), robot_->get_waypoint_deduplication_tolerance_rad()))) {
+        if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), robot_->get_waypoint_deduplication_tolerance_rad()))) {
             continue;
         }
         waypoints.emplace_back(std::move(next_waypoint_rad));

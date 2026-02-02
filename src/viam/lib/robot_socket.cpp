@@ -1,5 +1,4 @@
 #include "robot_socket.hpp"
-#include "scope_guard.hpp"
 #include <algorithm>
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -42,6 +41,7 @@
 #include <vector>
 #include <viam/lib/logger.hpp>
 #include "protocol.h"
+#include "scope_guard.hpp"
 
 #include <third_party/trajectories/Trajectory.h>
 #include <viam/module/utils.hpp>
@@ -987,7 +987,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 
     std::thread([promise = std::move(promise), self = weak_from_this(), goal_id = accepted->goal_id]() mutable {
         // Scope guard clears move_in_progress_ when thread exits (success or failure)
-        ScopeGuard thread_cleanup{[&self]() {
+        const ScopeGuard thread_cleanup{[&self]() {
             if (auto shared = self.lock()) {
                 shared->move_in_progress_ = false;
             }

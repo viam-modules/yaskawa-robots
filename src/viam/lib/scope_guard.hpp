@@ -15,7 +15,9 @@ class ScopeGuard {
             func_();
         }
     }
-    void dismiss() { active_ = false; }
+    void dismiss() {
+        active_ = false;
+    }
 
     ScopeGuard(const ScopeGuard&) = delete;
     ScopeGuard& operator=(const ScopeGuard&) = delete;
