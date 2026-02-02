@@ -339,7 +339,7 @@ std::future<void> TcpRobotSocket::connect() {
                 connected_ = true;
                 running_ = true;
                 // Start the request processing coroutine with completion handler
-                co_spawn(io_context_, process_requests(), [this](std::exception_ptr) { coroutine_done_.set_value(); });
+                co_spawn(io_context_, process_requests(), [this](const std::exception_ptr&) { coroutine_done_.set_value(); });
 
                 promise->set_value();
             } catch (const std::exception& e) {
@@ -461,7 +461,7 @@ std::future<void> UdpRobotSocket::connect() {
 
         connected_ = true;
         running_ = true;
-        co_spawn(io_context_, receive_messages(), [this](std::exception_ptr) { coroutine_done_.set_value(); });
+        co_spawn(io_context_, receive_messages(), [this](const std::exception_ptr&) { coroutine_done_.set_value(); });
 
         promise->set_value();
     } catch (const std::exception& e) {
@@ -653,7 +653,7 @@ void UdpBroadcastListener::start() {
         socket_.set_option(udp::socket::reuse_address(true));
         socket_.bind(udp::endpoint(udp::v4(), port_));
         // Start receiving broadcasts with completion handler
-        co_spawn(io_context_, receive_broadcasts(), [this](std::exception_ptr) { coroutine_done_.set_value(); });
+        co_spawn(io_context_, receive_broadcasts(), [this](const std::exception_ptr&) { coroutine_done_.set_value(); });
 
         LOGGING(info) << "UDP broadcast listener started on port " << port_;
     } catch (const std::exception& e) {
