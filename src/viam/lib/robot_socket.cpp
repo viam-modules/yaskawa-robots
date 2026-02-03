@@ -957,7 +957,7 @@ std::future<GoalAcceptedMessage> YaskawaController::send_goal_(uint32_t group_in
     const std::shared_future<Message> first_future = send_chunk(first_chunk, tolerance).share();
 
     // Send remaining chunks in a background thread
-    std::thread([this, trajectory, first_future, chunk_size, queue_threshold, poll_interval, send_chunk]() {
+    std::thread([this, trajectory, first_future, poll_interval, send_chunk]() {
         // Wait for first chunk response to get goal_id
         const Message& first_response = first_future.get();
         if (first_response.header.message_type != MSG_GOAL_ACCEPTED || first_response.payload.size() < sizeof(goal_accepted_payload_t)) {
