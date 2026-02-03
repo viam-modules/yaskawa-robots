@@ -917,8 +917,16 @@ std::future<GoalAcceptedMessage> YaskawaController::send_goal_(uint32_t group_in
     constexpr auto poll_interval = std::chrono::milliseconds(100);
     LOGGING(debug) << "sending trajectory with total number of points:  " << trajectory.size();
 
-    auto send_chunk = [this, group_index, axes_controlled](const std::vector<trajectory_point_t>& chunk,
-                                                           const std::vector<tolerance_t>& tol) {
+    auto send_chunk = [weak_self = weak_from_this(), group_index, axes_controlled](const std::vector<trajectory_point_t>& chunk,
+                                                                                    const std::vector<tolerance_t>& tol)
+        -> std::future<Message> {
+        auto self = weak_self.lock();
+        if (!self) {
+            std::promise<Message> p;
+            p.set_exception(std::make_exception_ptr(std::runtime_error("controller destroyed")));
+            return p.get_future();
+        }
+
         std::vector<uint8_t> payload;
         payload.reserve((sizeof(uint32_t) * 3) + (chunk.size() * sizeof(trajectory_point_t)) + (tol.size() * sizeof(tolerance_t)));
 
@@ -934,7 +942,7 @@ std::future<GoalAcceptedMessage> YaskawaController::send_goal_(uint32_t group_in
         append_to(static_cast<uint32_t>(tol.size()));
         boost::for_each(tol, append_to);
 
-        return tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload)));
+        return self->tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload)));
     };
 
     // If trajectory fits in one chunk, send it directly and convert to GoalAcceptedMessage
@@ -957,7 +965,7 @@ std::future<GoalAcceptedMessage> YaskawaController::send_goal_(uint32_t group_in
     const std::shared_future<Message> first_future = send_chunk(first_chunk, tolerance).share();
 
     // Send remaining chunks in a background thread
-    std::thread([this, trajectory, first_future, poll_interval, send_chunk]() {
+    std::thread([weak_self = weak_from_this(), trajectory, first_future, poll_interval, send_chunk]() {
         // Wait for first chunk response to get goal_id
         const Message& first_response = first_future.get();
         if (first_response.header.message_type != MSG_GOAL_ACCEPTED || first_response.payload.size() < sizeof(goal_accepted_payload_t)) {
@@ -974,7 +982,12 @@ std::future<GoalAcceptedMessage> YaskawaController::send_goal_(uint32_t group_in
         while (offset < trajectory.size()) {
             // Poll goal status until queue has <= threshold points remaining
             while (true) {
-                auto status_future = get_goal_status(goal_id);
+                auto self = weak_self.lock();
+                if (!self) {
+                    LOGGING(debug) << "controller destroyed, stopping chunk sends";
+                    return;
+                }
+                auto status_future = self->get_goal_status(goal_id);
                 auto status_response = status_future.get();
 
                 if (status_response.header.message_type != MSG_GOAL_STATUS ||
