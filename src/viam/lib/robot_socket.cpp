@@ -917,9 +917,8 @@ std::future<GoalAcceptedMessage> YaskawaController::send_goal_(uint32_t group_in
     constexpr auto poll_interval = std::chrono::milliseconds(100);
     LOGGING(debug) << "sending trajectory with total number of points:  " << trajectory.size();
 
-    auto send_chunk = [weak_self = weak_from_this(), group_index, axes_controlled](const std::vector<trajectory_point_t>& chunk,
-                                                                                    const std::vector<tolerance_t>& tol)
-        -> std::future<Message> {
+    auto send_chunk = [weak_self = weak_from_this(), group_index, axes_controlled](
+                          const std::vector<trajectory_point_t>& chunk, const std::vector<tolerance_t>& tol) -> std::future<Message> {
         auto self = weak_self.lock();
         if (!self) {
             std::promise<Message> p;
