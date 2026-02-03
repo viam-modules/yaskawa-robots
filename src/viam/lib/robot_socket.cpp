@@ -912,9 +912,10 @@ std::future<GoalAcceptedMessage> YaskawaController::send_goal_(uint32_t group_in
                                                               uint32_t axes_controlled,
                                                               const std::vector<trajectory_point_t>& trajectory,
                                                               const std::vector<tolerance_t>& tolerance) {
-    constexpr size_t chunk_size = 200;
+    constexpr size_t chunk_size = 199;
     constexpr size_t queue_threshold = 50;
     constexpr auto poll_interval = std::chrono::milliseconds(100);
+    LOGGING(warning) << "sending trajectory with total number of points:  " << trajectory.size();
 
     auto send_chunk = [this, group_index, axes_controlled](const std::vector<trajectory_point_t>& chunk,
                                                             const std::vector<tolerance_t>& tol) {
@@ -971,7 +972,7 @@ std::future<GoalAcceptedMessage> YaskawaController::send_goal_(uint32_t group_in
         int32_t goal_id = first_accepted.goal_id;
         size_t offset = first_accepted.num_trajectory_accepted;
 
-        LOGGING(info) << "first chunk accepted: " << offset << " points, goal_id=" << goal_id;
+        LOGGING(warning) << "first chunk accepted: " << offset << " points, goal_id=" << goal_id;
 
         while (offset < trajectory.size()) {
             // Poll goal status until queue has <= threshold points remaining
@@ -990,13 +991,13 @@ std::future<GoalAcceptedMessage> YaskawaController::send_goal_(uint32_t group_in
 
                 // Check if goal is no longer active
                 if (status->state != GOAL_STATE_ACTIVE && status->state != GOAL_STATE_PENDING) {
-                    LOGGING(info) << "goal is no longer active (state=" << static_cast<int>(status->state)
+                    LOGGING(warning) << "goal is no longer active (state=" << static_cast<int>(status->state)
                                   << "), stopping chunk sends";
                     return;
                 }
 
                 if (status->current_queue_size <= queue_threshold) {
-                    LOGGING(info) << "queue size is " << status->current_queue_size
+                    LOGGING(warning) << "queue size is " << status->current_queue_size
                                   << ", sending next chunk";
                     break;
                 }
@@ -1008,7 +1009,7 @@ std::future<GoalAcceptedMessage> YaskawaController::send_goal_(uint32_t group_in
             std::vector<trajectory_point_t> chunk(trajectory.begin() + static_cast<ptrdiff_t>(offset),
                                                    trajectory.begin() + static_cast<ptrdiff_t>(end));
 
-            LOGGING(info) << "sending trajectory chunk: points " << offset << " to " << end
+            LOGGING(warning) << "sending trajectory chunk: points " << offset << " to " << end
                           << " (" << chunk.size() << " points)";
 
             // Send chunk and wait for response
@@ -1024,14 +1025,14 @@ std::future<GoalAcceptedMessage> YaskawaController::send_goal_(uint32_t group_in
             if (response.header.message_type == MSG_GOAL_ACCEPTED &&
                 response.payload.size() >= sizeof(goal_accepted_payload_t)) {
                 GoalAcceptedMessage accepted(response);
-                LOGGING(info) << "chunk accepted: " << accepted.num_trajectory_accepted << " points";
+                LOGGING(warning) << "chunk accepted: " << accepted.num_trajectory_accepted << " points";
                 offset += accepted.num_trajectory_accepted;
             } else {
                 // Fallback: assume all points in chunk were accepted
                 offset = end;
             }
         }
-        LOGGING(info) << "finished sending all trajectory chunks";
+        LOGGING(warning) << "finished sending all trajectory chunks";
     }).detach();
 
     // Return a future that wraps the shared_future and converts to GoalAcceptedMessage
@@ -1074,7 +1075,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
         return std::make_unique<GoalRequestHandle>(0, shared_from_this(), promise.get_future());
     }
     auto accepted = make_goal_future.get();
-    LOGGING(info) << "goal accepted: goal_id=" << accepted.goal_id
+    LOGGING(warning) << "goal accepted: goal_id=" << accepted.goal_id
                   << " num_trajectory_accepted=" << accepted.num_trajectory_accepted;
 
     auto handle = std::make_unique<GoalRequestHandle>(accepted.goal_id, shared_from_this(), promise.get_future());
