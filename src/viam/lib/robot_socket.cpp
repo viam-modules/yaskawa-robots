@@ -43,16 +43,13 @@
 #include "protocol.h"
 
 #include <third_party/trajectories/Trajectory.h>
-
-// Tolerance for comparing waypoint positions to detect duplicates (radians)
-constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
-
-// Minimum timestep between trajectory points (seconds)
-// Determined experimentally: the arm appears to error when given timesteps
-// ~2e-5 and lower
-constexpr double k_min_timestep_sec = 1e-2;
+#include <viam/module/utils.hpp>
 
 namespace {
+
+constexpr double k_default_waypoint_deduplication_tolerance_rads = 1e-3;
+constexpr double k_default_min_timestep_sec = 1e-2;
+constexpr double k_default_trajectory_sampling_freq = 3;
 
 constexpr const char* goal_state_to_string(goal_state_t state) {
     switch (state) {
@@ -709,11 +706,38 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts() {
 }
 
 // Robot Implementation
-YaskawaController::YaskawaController(
-    boost::asio::io_context& io_context, double speed, double acceleration, uint32_t group_index, const std::string& host)
-    : io_context_(io_context), host_(host), speed_(speed), acceleration_(acceleration), group_index_(group_index) {
+YaskawaController::YaskawaController(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config)
+    : io_context_(io_context) {
+    host_ = find_config_attribute<std::string>(config, "host").value();
+    speed_ = find_config_attribute<double>(config, "speed_rad_per_sec").value();
+    acceleration_ = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
+
+    auto group_index = find_config_attribute<double>(config, "group_index");
+    constexpr int k_min_group_index = 0;
+    // TODO(RSDK-12470) support multiple arms
+    constexpr int k_max_group_index = 0;
+    if (group_index && (*group_index < k_min_group_index || *group_index > k_max_group_index || floor(*group_index) != *group_index)) {
+        throw std::invalid_argument(std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
+                                                k_min_group_index,
+                                                k_max_group_index,
+                                                *group_index));
+    }
+    group_index_ = static_cast<std::uint32_t>(group_index.value_or(k_min_group_index));
+    trajectory_sampling_freq_ =
+        find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(k_default_trajectory_sampling_freq);
+
+    auto waypoint_dedup_tolerance_deg = find_config_attribute<double>(config, "waypoint_deduplication_tolerance_deg");
+    waypoint_dedup_tolerance_rad_ =
+        waypoint_dedup_tolerance_deg ? degrees_to_radians(*waypoint_dedup_tolerance_deg) : k_default_waypoint_deduplication_tolerance_rads;
+
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
+}
+
+void YaskawaController::set_trajectory_loggers(std::string robot_model,
+                                               std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn) {
+    robot_model_ = std::move(robot_model);
+    telemetry_path_fn_ = std::move(telemetry_path_fn);
 }
 
 std::future<void> YaskawaController::connect() {
@@ -786,6 +810,10 @@ void YaskawaController::disconnect() {
 
 uint32_t YaskawaController::get_group_index() const {
     return group_index_;
+}
+
+double YaskawaController::get_waypoint_deduplication_tolerance_rad() const {
+    return waypoint_dedup_tolerance_rad_;
 }
 
 std::future<Message> YaskawaController::get_goal_status(int32_t goal_id) {
@@ -1094,13 +1122,16 @@ std::future<GoalAcceptedMessage> YaskawaController::make_goal_(std::list<Eigen::
     auto curr_joint_pos = StatusMessage(get_robot_position_velocity_torque().get()).position;
 
     auto curr_waypoint_rad = Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
-    if (!curr_waypoint_rad.isApprox(waypoints.front(), k_waypoint_equivalancy_epsilon_rad)) {
+    if (!curr_waypoint_rad.isApprox(waypoints.front(), get_waypoint_deduplication_tolerance_rad())) {
         waypoints.emplace_front(std::move(curr_waypoint_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
         // return an invalid future to signify no motion needs to be done
         return std::future<GoalAcceptedMessage>();
     }
+
+    // Save original waypoints for logging before segmentation modifies the list
+    const std::list<Eigen::VectorXd> original_waypoints = waypoints;
 
     std::vector<std::list<Eigen::VectorXd>> segments;
     // Walk interior points and cut at 180 degree direction reversals (dot == -1)
@@ -1129,41 +1160,57 @@ std::future<GoalAcceptedMessage> YaskawaController::make_goal_(std::list<Eigen::
     for (const auto& segment : segments) {
         const Trajectory trajectory(Path(segment, 0.1), max_velocity_vec, max_acceleration_vec);
         if (!trajectory.isValid()) {
-            std::stringstream buffer;
-            buffer << "trajectory generation failed for path:";
-            for (const auto& position : segment) {
-                buffer << "{";
-                for (Eigen::Index j = 0; j < 6; j++) {
-                    buffer << position[j] << " ";
+            const std::string error_msg = "trajectory.isValid() was false";
+            if (telemetry_path_fn_) {
+                auto telemetry_path = (*telemetry_path_fn_)();
+                if (telemetry_path) {
+                    FailedTrajectoryLogger::log_failure(
+                        *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg);
                 }
-                buffer << "}";
             }
-            throw std::runtime_error(buffer.str());
+            throw std::runtime_error(error_msg);
         }
 
         const double duration = trajectory.getDuration();
 
         if (!std::isfinite(duration)) {
-            throw std::runtime_error("trajectory.getDuration() was not a finite number");
+            const std::string error_msg = "trajectory.getDuration() was not a finite number";
+
+            if (telemetry_path_fn_) {
+                auto telemetry_path = (*telemetry_path_fn_)();
+                if (telemetry_path) {
+                    FailedTrajectoryLogger::log_failure(
+                        *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg);
+                }
+            }
+
+            throw std::runtime_error(error_msg);
         }
 
         // TODO(RSDK-12566): Make this configurable
         // viam.atlassian.net/browse/RSDK-12566
         if (duration > 600) {  // if the duration is longer than 10 minutes
-            throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
+            const std::string error_msg = "trajectory.getDuration() exceeds 10 minutes";
+
+            if (telemetry_path_fn_) {
+                auto telemetry_path = (*telemetry_path_fn_)();
+                if (telemetry_path) {
+                    FailedTrajectoryLogger::log_failure(
+                        *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg);
+                }
+            }
+
+            throw std::runtime_error(error_msg);
         }
 
-        if (duration < k_min_timestep_sec) {
+        if (duration < k_default_min_timestep_sec) {
             LOGGING(debug) << "duration of move is too small, assuming arm is at goal";
             continue;
         }
 
         trajectory.outputPhasePlaneTrajectory();
 
-        // desired sampling frequency. if the duration is small we will oversample but that should be fine.
-        constexpr double k_sampling_freq_hz = 3;
-
-        sampling_func(samples, duration, k_sampling_freq_hz, [&](const double t, const double) {
+        sampling_func(samples, duration, trajectory_sampling_freq_, [&](const double t, const double) {
             auto p_eigen = trajectory.getPosition(t);
             auto v_eigen = trajectory.getVelocity(t);
             const auto absolute_time = cumulative_time + std::chrono::duration<double>(t);
@@ -1177,6 +1224,15 @@ std::future<GoalAcceptedMessage> YaskawaController::make_goal_(std::list<Eigen::
         });
 
         cumulative_time += std::chrono::duration<double>(duration);
+    }
+
+    // Log the successfully generated trajectory
+    if (telemetry_path_fn_) {
+        auto telemetry_path = (*telemetry_path_fn_)();
+        if (telemetry_path) {
+            GeneratedTrajectoryLogger::log_trajectory(
+                *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, samples);
+        }
     }
 
     return send_goal_(group_index_, 6, samples, {});

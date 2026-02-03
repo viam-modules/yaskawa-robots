@@ -91,6 +91,7 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(viam-cpp-sdk)
 
 find_package(Eigen3 3.4 CONFIG REQUIRED)
+find_package(jsoncpp REQUIRED)
 find_package(viam-cpp-sdk 0.30 CONFIG REQUIRED viamsdk)
 
 # Everything needs threads, and prefer -pthread if available
@@ -99,13 +100,17 @@ find_package(Threads REQUIRED)
 
 # Get boost pulled in
 set(BOOST_MIN_VERSION "1.80.0")
-find_package(Boost CONFIG REQUIRED
+
+# Boost::system became header-only in 1.85.0 and no longer needs explicit linking.
+# Make it optional to support both old and new versions.
+find_package(Boost ${BOOST_MIN_VERSION} CONFIG REQUIRED
   COMPONENTS
-  headers
-  regex
-  system
-  thread
-  unit_test_framework
+    headers
+    regex
+    thread
+    unit_test_framework
+  OPTIONAL_COMPONENTS
+    system
 )
 
 enable_testing()
@@ -147,6 +152,7 @@ target_sources(viam-yaskawa
   PRIVATE
     src/viam/lib/robot_socket.cpp
     src/viam/lib/logger.cpp
+    src/viam/lib/trajectory_logger.cpp
 )
 
 target_compile_options( viam-yaskawa PRIVATE -O0)
@@ -161,6 +167,8 @@ target_link_libraries(viam-yaskawa
   PUBLIC
     trajectories
     Boost::regex
+    jsoncpp_lib
+    viam-cpp-sdk::viamsdk
 )
 
 install(
@@ -248,6 +256,7 @@ target_sources(yaskawa-example
 target_link_libraries(yaskawa-example
   PRIVATE
   viam-yaskawa
+  viam-cpp-sdk::viamsdk
 )
 
 target_include_directories(yaskawa-example PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/viam/lib)

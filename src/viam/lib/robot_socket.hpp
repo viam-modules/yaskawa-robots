@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <iostream>
 #include <list>
@@ -27,12 +28,14 @@
 #include <vector>
 
 #include <third_party/trajectories/Path.h>
+#include <viam/sdk/config/resource.hpp>
 
 extern "C" {
 #include "protocol.h"
 }
 
 #include "logger.hpp"
+#include "trajectory_logger.hpp"
 
 template <typename T>
 [[nodiscard]] constexpr decltype(auto) degrees_to_radians(T&& degrees) {
@@ -385,16 +388,13 @@ class GoalRequestHandle;
 
 class YaskawaController : public std::enable_shared_from_this<YaskawaController> {
    public:
-    explicit YaskawaController(boost::asio::io_context& io_context,
-                               double speed,
-                               double acceleration,
-                               uint32_t group_index,
-                               const std::string& host = "127.0.0.1");
+    explicit YaskawaController(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config);
     ~YaskawaController() = default;
 
     std::future<void> connect();
     void disconnect();
     uint32_t get_group_index() const;
+    double get_waypoint_deduplication_tolerance_rad() const;
 
     std::future<Message> send_test_trajectory();
     std::future<Message> turn_servo_power_on();
@@ -417,6 +417,8 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
 
+    void set_trajectory_loggers(std::string robot_model, std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn);
+
    private:
     boost::asio::io_context& io_context_;
     std::string host_;
@@ -428,7 +430,12 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     double speed_;
     double acceleration_;
     uint32_t group_index_;
+    double trajectory_sampling_freq_;
+    double waypoint_dedup_tolerance_rad_;
     std::thread heartbeat_;
+
+    std::string robot_model_;
+    std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn_;
 
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;
