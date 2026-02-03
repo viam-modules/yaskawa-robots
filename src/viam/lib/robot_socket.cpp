@@ -73,7 +73,7 @@ void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec
     if (duration_sec <= 0.0 || sampling_frequency_hz <= 0.0) {
         throw std::invalid_argument("duration_sec and sampling_frequency_hz are not both positive");
     }
-    static constexpr std::size_t k_max_samples = 200;
+    static constexpr std::size_t k_max_samples = 2000000;
     const auto putative_samples = duration_sec * sampling_frequency_hz;
     if (!std::isfinite(putative_samples) || putative_samples > k_max_samples) {
         throw std::invalid_argument(
@@ -87,7 +87,7 @@ void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec
     const double step = duration_sec / static_cast<double>((num_samples - 1));
 
     // Generate samples by evaluating f at each time point
-    for (std::size_t i = 0; i < num_samples - 1; ++i) {
+    for (std::size_t i = 1; i < num_samples - 1; ++i) {
         samples.push_back(f(static_cast<double>(i) * step, step));
     }
 
@@ -1209,6 +1209,17 @@ std::future<GoalAcceptedMessage> YaskawaController::make_goal_(std::list<Eigen::
         }
 
         trajectory.outputPhasePlaneTrajectory();
+
+        // Add the t=0 point for the first segment
+        if (samples.empty()) {
+            auto p_eigen = trajectory.getPosition(0.0);
+            auto v_eigen = trajectory.getVelocity(0.0);
+            samples.push_back(trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                                  {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+                                                  {0},
+                                                  {0},
+                                                  {0, 0}});
+        }
 
         sampling_func(samples, duration, trajectory_sampling_freq_, [&](const double t, const double) {
             auto p_eigen = trajectory.getPosition(t);
