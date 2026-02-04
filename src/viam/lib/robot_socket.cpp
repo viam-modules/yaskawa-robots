@@ -999,7 +999,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                     }
                 }
 
-                if (iteration % 50 == 0) {
+                if (iteration % 10 == 0) {
                     auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
                     if (status_msg.state != GOAL_STATE_ACTIVE) {
                         if (status_msg.state == GOAL_STATE_SUCCEEDED) {
@@ -1017,7 +1017,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                 }
 
                 ++iteration;
-                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
         } catch (std::exception& e) {
             try {
