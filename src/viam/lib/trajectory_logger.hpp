@@ -3,7 +3,6 @@
 #include <json/json.h>
 #include <Eigen/Core>
 #include <list>
-#include <mutex>
 #include <string>
 #include <vector>
 

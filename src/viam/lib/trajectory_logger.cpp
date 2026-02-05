@@ -217,8 +217,7 @@ void RealtimeTrajectoryLogger::set_planned_trajectory(const std::vector<trajecto
 
 RealtimeTrajectoryLogger::RealtimeTrajectoryLogger(RealtimeTrajectoryLogger&& other) noexcept
     : filepath_(std::move(other.filepath_)), root_(std::move(other.root_)), last_timestamp_(other.last_timestamp_) {
-    other.filepath_.clear();
-    root_ = Json::ValueType::nullValue;
+    other.root_ = Json::ValueType::nullValue;
     last_timestamp_ = -1;
 }
 
