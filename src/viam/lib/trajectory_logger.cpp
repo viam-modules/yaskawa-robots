@@ -1,10 +1,12 @@
 #include "trajectory_logger.hpp"
+#include <json/value.h>
 
 #include <boost/format.hpp>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <system_error>
+#include <utility>
 
 #include "logger.hpp"
 #include "robot_socket.hpp"
@@ -216,6 +218,18 @@ void RealtimeTrajectoryLogger::set_planned_trajectory(const std::vector<trajecto
 RealtimeTrajectoryLogger::RealtimeTrajectoryLogger(RealtimeTrajectoryLogger&& other) noexcept
     : filepath_(std::move(other.filepath_)), root_(std::move(other.root_)), last_timestamp_(other.last_timestamp_) {
     other.filepath_.clear();
+    root_ = Json::ValueType::nullValue;
+    last_timestamp_ = -1;
+}
+
+RealtimeTrajectoryLogger& RealtimeTrajectoryLogger::operator=(RealtimeTrajectoryLogger&& other) noexcept {
+    if (this != &other) {
+        root_.clear();
+        root_ = std::move(other.root_);
+        filepath_ = std::move(other.filepath_);
+        last_timestamp_ = other.last_timestamp_;
+    }
+    return *this;
 }
 
 RealtimeTrajectoryLogger::~RealtimeTrajectoryLogger() {
@@ -223,7 +237,6 @@ RealtimeTrajectoryLogger::~RealtimeTrajectoryLogger() {
         return;  // Moved-from state, nothing to write
     }
     try {
-        LOGGING(debug) << "flush and RT buffers";
         write_and_flush();
     } catch (const std::exception& e) {
         LOGGING(error) << "Failed to write realtime trajectory log: " << e.what();
@@ -231,8 +244,6 @@ RealtimeTrajectoryLogger::~RealtimeTrajectoryLogger() {
 }
 
 void RealtimeTrajectoryLogger::append_realtime_sample(const StatusMessage& status) {
-    const std::lock_guard<std::mutex> lock(mutex_);
-
     if (status.timestamp == last_timestamp_) {
         return;
     }
@@ -249,8 +260,6 @@ void RealtimeTrajectoryLogger::append_realtime_sample(const StatusMessage& statu
 }
 
 void RealtimeTrajectoryLogger::write_and_flush() {
-    const std::lock_guard<std::mutex> lock(mutex_);
-
     Json::StreamWriterBuilder builder;
     builder["precision"] = k_json_precision;
     builder["precisionType"] = "decimal";

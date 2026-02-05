@@ -34,7 +34,7 @@ class FailedTrajectoryLogger {
                                                   const std::string& unix_time);
 };
 
-// Real-time trajectory logger using RAII pattern
+// Real-time trajectory logger this is a move only type and should not be shared between threads
 class RealtimeTrajectoryLogger {
    public:
     RealtimeTrajectoryLogger(const std::string& telemetry_path,
@@ -54,12 +54,11 @@ class RealtimeTrajectoryLogger {
     RealtimeTrajectoryLogger(const RealtimeTrajectoryLogger&) = delete;
     RealtimeTrajectoryLogger& operator=(const RealtimeTrajectoryLogger&) = delete;
     RealtimeTrajectoryLogger(RealtimeTrajectoryLogger&&) noexcept;
-    RealtimeTrajectoryLogger& operator=(RealtimeTrajectoryLogger&&) = delete;
+    RealtimeTrajectoryLogger& operator=(RealtimeTrajectoryLogger&&) noexcept;
 
    private:
     std::string filepath_;
     Json::Value root_;
-    std::mutex mutex_;
     int64_t last_timestamp_{-1};
 
     void write_and_flush();
