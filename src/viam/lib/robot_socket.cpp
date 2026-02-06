@@ -956,13 +956,12 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     }
 
     const auto& accepted = goal_result->accepted;
-    LOGGING(info) << "goal accepted: goal_id=" << accepted.goal_id << " num_trajectory_accepted=" << accepted.num_trajectory_accepted;
+    LOGGING(debug) << "goal accepted: goal_id=" << accepted.goal_id;
 
     auto handle = std::make_unique<GoalRequestHandle>(accepted.goal_id, shared_from_this(), promise.get_future());
 
     // Derive poll interval from trajectory sampling frequency
     const auto poll_interval = std::chrono::milliseconds(static_cast<int64_t>(1000.0 / trajectory_sampling_freq_));
-    LOGGING(info) << "polling interval=" << poll_interval;
     // Single thread handles both chunk streaming and goal monitoring
     std::thread([promise = std::move(promise),
                  self = weak_from_this(),
