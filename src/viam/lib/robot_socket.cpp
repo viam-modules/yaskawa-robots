@@ -970,7 +970,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                  remaining = std::move(goal_result->remaining_trajectory),
                  poll_interval]() mutable {
         try {
-            constexpr size_t chunk_size = 199;
+            constexpr size_t chunk_size = 200;
             constexpr size_t queue_threshold = 50;
             size_t offset = 0;
 
@@ -1154,7 +1154,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
         }
     }
 
-    constexpr size_t chunk_size = 199;  // controller cannot exceed 200 points per message
+    constexpr size_t chunk_size = 200;  // controller cannot exceed 200 points per message
     LOGGING(debug) << "total trajectory points: " << samples.size();
 
     // Send the first chunk
