@@ -981,38 +981,38 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                     return;
                 }
 
-                auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
+                const auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
 
-                // Stream remaining chunks when queue is running low
-                if (offset < remaining.size() && status_msg.state == GOAL_STATE_ACTIVE) {
-                    LOGGING(debug) << "queue size: " << status_msg.current_queue_size << " points";
-                    if (status_msg.current_queue_size <= queue_threshold) {
-                        
-                        const size_t end = std::min(offset + chunk_size, remaining.size());
-                        const std::vector<trajectory_point_t> chunk(std::next(remaining.begin(), static_cast<ptrdiff_t>(offset)),
-                                                                    std::next(remaining.begin(), static_cast<ptrdiff_t>(end)));
+                switch (status_msg.state) {
+                    case GOAL_STATE_ACTIVE:
+                        // Stream remaining chunks when queue is running low
+                        if (offset < remaining.size()) {
+                            LOGGING(debug) << "queue size: " << status_msg.current_queue_size << " points";
+                            if (status_msg.current_queue_size <= queue_threshold) {
+                                const size_t end = std::min(offset + chunk_size, remaining.size());
+                                const std::vector<trajectory_point_t> chunk(std::next(remaining.begin(), static_cast<ptrdiff_t>(offset)),
+                                                                            std::next(remaining.begin(), static_cast<ptrdiff_t>(end)));
 
-                        LOGGING(debug) << "sending chunk: points " << offset << " to " << end << " (" << chunk.size() << " points)";
+                                LOGGING(debug) << "sending chunk: points " << offset << " to " << end << " (" << chunk.size() << " points)";
 
-                        // tolerance can be threaded through here when needed
-                        const auto chunk_accepted = shared->send_goal_(shared->group_index_, 6, chunk, {});
-                        LOGGING(debug) << "chunk accepted: " << chunk_accepted.num_trajectory_accepted << " points";
-                        offset += chunk_accepted.num_trajectory_accepted;
-                    }
-                }
-
-                // Check goal completion
-                if (status_msg.state == GOAL_STATE_SUCCEEDED) {
-                    if (RobotStatusMessage(shared->get_robot_status().get()).in_motion) {
-                        std::this_thread::sleep_for(poll_interval);
-                        continue;
-                    }
-                    promise.set_value_at_thread_exit(status_msg.state);
-                    break;
-                }
-
-                if (status_msg.state != GOAL_STATE_ACTIVE && status_msg.state != GOAL_STATE_PENDING) {
-                    throw std::runtime_error(std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
+                                // tolerance can be threaded through here when needed
+                                const auto chunk_accepted = shared->send_goal_(shared->group_index_, 6, chunk, {});
+                                LOGGING(debug) << "chunk accepted: " << chunk_accepted.num_trajectory_accepted << " points";
+                                offset += chunk_accepted.num_trajectory_accepted;
+                            }
+                        }
+                        break;
+                    case GOAL_STATE_SUCCEEDED:
+                        if (RobotStatusMessage(shared->get_robot_status().get()).in_motion) {
+                            break;
+                        }
+                        promise.set_value_at_thread_exit(status_msg.state);
+                        return;
+                    case GOAL_STATE_PENDING:
+                        break;
+                    case GOAL_STATE_CANCELLED:
+                    case GOAL_STATE_ABORTED:
+                        throw std::runtime_error(std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
                 }
             }
         } catch (std::exception& e) {
