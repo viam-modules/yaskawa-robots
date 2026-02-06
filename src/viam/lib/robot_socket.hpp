@@ -269,6 +269,7 @@ struct State {
 struct GoalStatusMessage {
     int32_t goal_id;
     goal_state_t state;
+    uint32_t current_queue_size;
     double progress;
     int64_t timestamp_ms;
 

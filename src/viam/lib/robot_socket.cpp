@@ -962,7 +962,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 
     // Derive poll interval from trajectory sampling frequency
     const auto poll_interval = std::chrono::milliseconds(static_cast<int64_t>(1000.0 / trajectory_sampling_freq_));
-
+    LOGGING(info) << "polling interval=" << poll_interval;
     // Single thread handles both chunk streaming and goal monitoring
     std::thread([promise = std::move(promise),
                  self = weak_from_this(),
@@ -975,6 +975,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             size_t offset = 0;
 
             while (true) {
+                std::this_thread::sleep_for(poll_interval);
                 auto shared = self.lock();
                 if (!shared) {
                     return;
@@ -984,9 +985,9 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 
                 // Stream remaining chunks when queue is running low
                 if (offset < remaining.size() && status_msg.state == GOAL_STATE_ACTIVE) {
-                    const auto* status_payload =
-                        reinterpret_cast<const goal_status_payload_t*>(shared->get_goal_status(goal_id).get().payload.data());
-                    if (status_payload->current_queue_size <= queue_threshold) {
+                    LOGGING(debug) << "queue size: " << status_msg.current_queue_size << " points";
+                    if (status_msg.current_queue_size <= queue_threshold) {
+                        
                         const size_t end = std::min(offset + chunk_size, remaining.size());
                         const std::vector<trajectory_point_t> chunk(std::next(remaining.begin(), static_cast<ptrdiff_t>(offset)),
                                                                     std::next(remaining.begin(), static_cast<ptrdiff_t>(end)));
@@ -1013,8 +1014,6 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                 if (status_msg.state != GOAL_STATE_ACTIVE && status_msg.state != GOAL_STATE_PENDING) {
                     throw std::runtime_error(std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
                 }
-
-                std::this_thread::sleep_for(poll_interval);
             }
         } catch (std::exception& e) {
             try {
@@ -1237,6 +1236,7 @@ GoalStatusMessage::GoalStatusMessage(const Message& msg) {
     const goal_status_payload_t* payload = reinterpret_cast<const goal_status_payload_t*>(msg.payload.data());
     goal_id = payload->goal_id;
     state = static_cast<goal_state_t>(payload->state);
+    current_queue_size = payload->current_queue_size;
     progress = payload->progress;
     timestamp_ms = payload->timestamp_ms;
 }
