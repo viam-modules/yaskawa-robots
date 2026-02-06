@@ -1,4 +1,3 @@
-#include <cstdint>
 #define BOOST_TEST_MODULE RealtimeTrajectoryLoggerTest
 #include <boost/test/included/unit_test.hpp>
 
