@@ -934,13 +934,14 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
 }
 
 std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
-    // Atomically claim the move slot - exchange returns the previous value
-    if (move_in_progress_.exchange(true)) {
+    // If move_in_progress_ is already true, it fails and we throw.
+    bool expected = false;
+    if (!move_in_progress_.compare_exchange_strong(expected, true)) {
         throw std::runtime_error("an actuation is already in progress");
     }
 
     // Scope guard clears move_in_progress_ on any exit path.
-    // Dismissed before spawning the monitoring thread (which takes over cleanup responsibility).
+    // Dismissed after the monitoring thread is successfully created (which takes over cleanup responsibility).
     ScopeGuard cleanup{[this]() { move_in_progress_ = false; }};
 
     if (!robot_state_.IsReady()) {
@@ -981,9 +982,6 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     const goal_accepted_payload_t* accepted = reinterpret_cast<const goal_accepted_payload_t*>(response.payload.data());
 
     auto handle = std::make_unique<GoalRequestHandle>(accepted->goal_id, shared_from_this(), promise.get_future());
-
-    // Dismiss the cleanup guard - the monitoring thread takes over cleanup responsibility
-    cleanup.dismiss();
 
     std::thread([promise = std::move(promise), self = weak_from_this(), goal_id = accepted->goal_id]() mutable {
         // Scope guard clears move_in_progress_ when thread exits (success or failure)
@@ -1026,6 +1024,10 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             }
         }
     }).detach();
+
+    // Thread was successfully created and detached — thread_cleanup now owns the
+    // responsibility of clearing move_in_progress_, so dismiss the outer guard.
+    cleanup.dismiss();
     return handle;
 }
 
