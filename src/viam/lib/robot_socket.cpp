@@ -978,6 +978,9 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             "Invalid goal accepted payload size expected {} got {}", sizeof(goal_accepted_payload_t), (int)response.payload.size()));
     }
     const goal_accepted_payload_t* accepted = reinterpret_cast<const goal_accepted_payload_t*>(response.payload.data());
+    if (logger.has_value()) {
+        logger->set_goal_accepted_timestamp(accepted->timestamp_ms);
+    }
     auto handle = std::make_unique<GoalRequestHandle>(accepted->goal_id, shared_from_this(), promise.get_future());
 
     std::thread([promise = std::move(promise), self = weak_from_this(), goal_id = accepted->goal_id, logger = std::move(logger)]() mutable {

@@ -193,6 +193,10 @@ RealtimeTrajectoryLogger::RealtimeTrajectoryLogger(const std::string& telemetry_
     LOGGING(debug) << "Saving trajectory and real time data at " << filepath_;
 }
 
+void RealtimeTrajectoryLogger::set_goal_accepted_timestamp(int64_t timestamp_ms) {
+    root_["goal_accepted_timestamps_ms"] = timestamp_ms;
+}
+
 void RealtimeTrajectoryLogger::set_max_velocity(double max_velocity_rad_per_sec) {
     if (!root_.isMember("configuration")) {
         root_["configuration"] = Json::Value(Json::objectValue);

@@ -45,6 +45,7 @@ class RealtimeTrajectoryLogger {
 
     void set_max_velocity(double max_velocity_rad_per_sec);
     void set_max_acceleration(double max_acceleration_rad_per_sec2);
+    void set_goal_accepted_timestamp(int64_t timestamp_ms);
     void set_waypoints(const std::list<Eigen::VectorXd>& waypoints_rad);
     void set_planned_trajectory(const std::vector<trajectory_point_t>& planned_trajectory_points);
 
