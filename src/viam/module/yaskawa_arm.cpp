@@ -219,6 +219,10 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     VIAM_SDK_LOG(info) << "Yaskawa robots module executable found in `" << module_executable_path << "; resources will be found in `"
                        << resource_root_ << "`";
 
+    if (robot_) {
+        VIAM_SDK_LOG(info) << "already connected to a Yaskawa arm, resetting connection";
+        robot_->disconnect();
+    }
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
     // Get telemetry output path from config or fall back to VIAM_MODULE_DATA
@@ -270,14 +274,14 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
         }
     }
     if (!CheckGroupMessage(robot_->checkGroupIndex().get()).is_known_group) {
-        // added the disconnect so the yaskawa can successfully reconfigure if this error occurs.
-        // TODO investigate the need for disconnect.
-        robot_->disconnect();
         std::ostringstream buffer;
         buffer << std::format("group_index {} is not available on the arm controller", robot_->get_group_index());
         throw std::invalid_argument(buffer.str());
     }
+
+    VIAM_SDK_LOG(info) << "configure done ";
 }
+
 void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     const std::unique_lock wlock{config_mutex_};
     VIAM_SDK_LOG(warn) << "Reconfigure called: configuring new state";

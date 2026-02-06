@@ -22,7 +22,6 @@
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -315,18 +314,31 @@ class TcpRobotSocket : public RobotSocketBase {
    private:
     using tcp = boost::asio::ip::tcp;
 
-    tcp::socket socket_;
+    std::shared_ptr<tcp::socket> socket_;
     std::shared_ptr<AsyncQueue<std::pair<Message, std::promise<Message>>>> request_queue_;
-    std::atomic<bool> running_{false};
 
-    boost::asio::awaitable<void> process_requests();
-    std::future<void> async_send(Message message);
-    std::future<Message> async_receive();
+    static boost::asio::awaitable<void> process_requests(std::shared_ptr<tcp::socket> socket,
+                                                         std::shared_ptr<AsyncQueue<std::pair<Message, std::promise<Message>>>> queue);
+};
+
+struct UdpSession {
+    using udp = boost::asio::ip::udp;
+
+    udp::socket socket;
+    mutable std::shared_mutex status_mutex;
+    std::variant<std::monostate, Message, std::promise<Message>> cached_status;
+    std::variant<std::monostate, Message, std::promise<Message>> cached_robot_status;
+    std::shared_ptr<State> robot_state;
+
+    UdpSession(boost::asio::io_context& io_context, std::shared_ptr<State> state) : socket(io_context), robot_state(std::move(state)) {}
+
+    void handle_status_message(const Message& message);
+    void handle_robot_status_message(const Message& message);
 };
 
 class UdpRobotSocket : public RobotSocketBase {
    public:
-    UdpRobotSocket(boost::asio::io_context& io_context, State& state);
+    UdpRobotSocket(boost::asio::io_context& io_context, std::shared_ptr<State> state);
     ~UdpRobotSocket() override;
 
     std::future<void> connect() override;
@@ -340,19 +352,22 @@ class UdpRobotSocket : public RobotSocketBase {
    private:
     using udp = boost::asio::ip::udp;
 
-    State& robot_state_;
+    std::shared_ptr<State> robot_state_;
+    std::shared_ptr<UdpSession> session_;
 
-    udp::socket socket_;
-    std::atomic<bool> running_{false};
-
-    mutable std::shared_mutex status_mutex_;
-    std::variant<std::monostate, Message, std::promise<Message>> cached_status_;
-    std::variant<std::monostate, Message, std::promise<Message>> cached_robot_status_;
-
-    boost::asio::awaitable<void> receive_messages();
-    void handle_status_message(const Message& message);
-    void handle_robot_status_message(const Message& message);
+    static boost::asio::awaitable<void> receive_messages(std::shared_ptr<UdpSession> session);
     static Message parse_message(const std::vector<uint8_t>& buffer);
+};
+
+struct BroadcastSession {
+    using udp = boost::asio::ip::udp;
+
+    udp::socket socket;
+    std::array<char, 1024> recv_buffer{};
+    std::unique_ptr<viam::yaskawa::ViamControllerLogParser> log_parser;
+
+    explicit BroadcastSession(boost::asio::io_context& io_context)
+        : socket(io_context), log_parser(std::make_unique<viam::yaskawa::ViamControllerLogParser>()) {}
 };
 
 class UdpBroadcastListener {
@@ -367,12 +382,11 @@ class UdpBroadcastListener {
     using udp = boost::asio::ip::udp;
 
     boost::asio::io_context& io_context_;
-    udp::socket socket_;
     uint16_t port_;
-    std::atomic<bool> running_{false};
-    std::array<char, 1024> recv_buffer_;
-    std::unique_ptr<viam::yaskawa::ViamControllerLogParser> log_parser_;
-    boost::asio::awaitable<void> receive_broadcasts();
+    bool started_{false};
+    std::shared_ptr<BroadcastSession> session_;
+
+    static boost::asio::awaitable<void> receive_broadcasts(std::shared_ptr<BroadcastSession> session);
 };
 
 class GoalRequestHandle;
@@ -413,7 +427,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
    private:
     boost::asio::io_context& io_context_;
     std::string host_;
-    State robot_state_;
+    std::shared_ptr<State> robot_state_;
 
     std::unique_ptr<TcpRobotSocket> tcp_socket_;
     std::unique_ptr<UdpRobotSocket> udp_socket_;
@@ -423,7 +437,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     uint32_t group_index_;
     double trajectory_sampling_freq_;
     double waypoint_dedup_tolerance_rad_;
-    std::thread heartbeat_;
 
     std::string robot_model_;
     std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn_;
