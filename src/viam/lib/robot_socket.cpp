@@ -909,12 +909,11 @@ std::future<Message> YaskawaController::reset_errors() {
 }
 
 GoalAcceptedMessage YaskawaController::send_goal_(uint32_t group_index,
-                                                   uint32_t axes_controlled,
-                                                   const std::vector<trajectory_point_t>& trajectory,
-                                                   const std::vector<tolerance_t>& tolerance) {
+                                                  uint32_t axes_controlled,
+                                                  const std::vector<trajectory_point_t>& trajectory,
+                                                  const std::vector<tolerance_t>& tolerance) {
     std::vector<uint8_t> payload;
-    payload.reserve((sizeof(uint32_t) * 3) + (trajectory.size() * sizeof(trajectory_point_t)) +
-                    (tolerance.size() * sizeof(tolerance_t)));
+    payload.reserve((sizeof(uint32_t) * 3) + (trajectory.size() * sizeof(trajectory_point_t)) + (tolerance.size() * sizeof(tolerance_t)));
 
     auto append_to = [&](auto obj) {
         const uint8_t* as_bytes = reinterpret_cast<const uint8_t*>(&obj);
@@ -957,18 +956,19 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     }
 
     const auto& accepted = goal_result->accepted;
-    LOGGING(info) << "goal accepted: goal_id=" << accepted.goal_id
-                  << " num_trajectory_accepted=" << accepted.num_trajectory_accepted;
+    LOGGING(info) << "goal accepted: goal_id=" << accepted.goal_id << " num_trajectory_accepted=" << accepted.num_trajectory_accepted;
 
     auto handle = std::make_unique<GoalRequestHandle>(accepted.goal_id, shared_from_this(), promise.get_future());
 
     // Derive poll interval from trajectory sampling frequency
-    const auto poll_interval =
-        std::chrono::milliseconds(static_cast<int64_t>(1000.0 / trajectory_sampling_freq_));
+    const auto poll_interval = std::chrono::milliseconds(static_cast<int64_t>(1000.0 / trajectory_sampling_freq_));
 
     // Single thread handles both chunk streaming and goal monitoring
-    std::thread([promise = std::move(promise), self = weak_from_this(), goal_id = accepted.goal_id,
-                 remaining = std::move(goal_result->remaining_trajectory), poll_interval]() mutable {
+    std::thread([promise = std::move(promise),
+                 self = weak_from_this(),
+                 goal_id = accepted.goal_id,
+                 remaining = std::move(goal_result->remaining_trajectory),
+                 poll_interval]() mutable {
         try {
             constexpr size_t chunk_size = 199;
             constexpr size_t queue_threshold = 50;
@@ -988,12 +988,10 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                         reinterpret_cast<const goal_status_payload_t*>(shared->get_goal_status(goal_id).get().payload.data());
                     if (status_payload->current_queue_size <= queue_threshold) {
                         const size_t end = std::min(offset + chunk_size, remaining.size());
-                        const std::vector<trajectory_point_t> chunk(
-                            std::next(remaining.begin(), static_cast<ptrdiff_t>(offset)),
-                            std::next(remaining.begin(), static_cast<ptrdiff_t>(end)));
+                        const std::vector<trajectory_point_t> chunk(std::next(remaining.begin(), static_cast<ptrdiff_t>(offset)),
+                                                                    std::next(remaining.begin(), static_cast<ptrdiff_t>(end)));
 
-                        LOGGING(debug) << "sending chunk: points " << offset << " to " << end
-                                       << " (" << chunk.size() << " points)";
+                        LOGGING(debug) << "sending chunk: points " << offset << " to " << end << " (" << chunk.size() << " points)";
 
                         // tolerance can be threaded through here when needed
                         const auto chunk_accepted = shared->send_goal_(shared->group_index_, 6, chunk, {});
@@ -1013,8 +1011,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                 }
 
                 if (status_msg.state != GOAL_STATE_ACTIVE && status_msg.state != GOAL_STATE_PENDING) {
-                    throw std::runtime_error(
-                        std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
+                    throw std::runtime_error(std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
                 }
 
                 std::this_thread::sleep_for(poll_interval);
