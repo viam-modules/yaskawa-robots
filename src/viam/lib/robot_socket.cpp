@@ -408,10 +408,14 @@ awaitable<void> TcpRobotSocket::process_requests(std::shared_ptr<tcp::socket> so
                 request_pair.second.set_exception(std::current_exception());
             }
         }
+    } catch (const boost::system::system_error& e) {
+        if (e.code() == boost::asio::error::operation_aborted) {
+            LOGGING(debug) << "TCP process_requests exiting: " << e.what();
+        } else {
+            LOGGING(error) << "TCP process_requests exiting: " << e.what();
+        }
     } catch (const std::exception& ex) {
-        LOGGING(debug) << "TCP process_requests exiting: " << ex.what();
-    } catch (...) {
-        LOGGING(debug) << "TCP process_requests exiting due to unknown exception";
+        LOGGING(error) << "TCP process_requests exiting: " << ex.what();
     }
 }
 
@@ -545,6 +549,13 @@ awaitable<void> UdpRobotSocket::receive_messages(std::shared_ptr<UdpSession> ses
                 session->handle_robot_status_message(message);
                 session->robot_state->UpdateState(RobotStatusMessage(message));
             }
+        }
+    } catch (const boost::system::system_error& e) {
+        if (e.code() == boost::asio::error::operation_aborted) {
+            LOGGING(debug) << "error " << e.what() << " while waiting on UDP messages";
+        } else {
+            session->robot_state->in_error.store(true);
+            LOGGING(error) << "error " << e.what() << " while waiting on UDP messages";
         }
     } catch (const std::exception& e) {
         session->robot_state->in_error.store(true);
@@ -682,6 +693,12 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts(std::share
             } else {
                 session->log_parser->flush();
             }
+        }
+    } catch (const boost::system::system_error& e) {
+        if (e.code() == boost::asio::error::operation_aborted) {
+            LOGGING(debug) << "Error receiving broadcast: " << e.what();
+        } else {
+            LOGGING(error) << "Error receiving broadcast: " << e.what();
         }
     } catch (const std::exception& e) {
         LOGGING(error) << "Error receiving broadcast: " << e.what();
