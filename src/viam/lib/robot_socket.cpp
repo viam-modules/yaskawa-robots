@@ -948,7 +948,19 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 
     auto promise = std::promise<goal_state_t>();
 
-    auto make_goal_future = make_goal_(std::move(waypoints), unix_time);
+    std::optional<RealtimeTrajectoryLogger> logger;
+    if (telemetry_path_fn_) {
+        auto telemetry_path = (*telemetry_path_fn_)();
+        if (telemetry_path) {
+            try {
+                logger.emplace(*telemetry_path, unix_time, robot_model_, group_index_);
+            } catch (const std::exception& e) {
+                LOGGING(warning) << "Failed to create realtime trajectory logger: " << e.what();
+            }
+        }
+    }
+
+    auto make_goal_future = make_goal_(std::move(waypoints), unix_time, logger);
     // we only want to move if the future was valid
     if (!make_goal_future.valid()) {
         LOGGING(debug) << "already at desired position";
@@ -966,34 +978,49 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             "Invalid goal accepted payload size expected {} got {}", sizeof(goal_accepted_payload_t), (int)response.payload.size()));
     }
     const goal_accepted_payload_t* accepted = reinterpret_cast<const goal_accepted_payload_t*>(response.payload.data());
+    if (logger.has_value()) {
+        logger->set_goal_accepted_timestamp(accepted->timestamp_ms);
+    }
     auto handle = std::make_unique<GoalRequestHandle>(accepted->goal_id, shared_from_this(), promise.get_future());
 
-    std::thread([promise = std::move(promise), self = weak_from_this(), goal_id = accepted->goal_id]() mutable {
+    std::thread([promise = std::move(promise), self = weak_from_this(), goal_id = accepted->goal_id, logger = std::move(logger)]() mutable {
         try {
+            uint32_t iteration = 0;
             while (1) {
                 auto shared = self.lock();
                 if (!shared) {
+                    LOGGING(error) << "cancelling goal monitor thread : the socket was destroyed!";
                     return;
                 }
-                // this blocks until we receive the goal status from the yaskawa-controller.
-                // this will not block for long unless we have connection problems.
-                auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
-                if (status_msg.state == GOAL_STATE_ACTIVE) {
-                    continue;
-                }
-                if (status_msg.state == GOAL_STATE_SUCCEEDED) {
-                    // this blocks while we read from the cached robot status or read a new status
-                    // this will not block for long unless we have connection problems.
-                    if (RobotStatusMessage(shared->get_robot_status().get()).in_motion) {
-                        continue;
+
+                if (logger.has_value()) {
+                    try {
+                        auto status_msg = StatusMessage(shared->get_robot_position_velocity_torque().get());
+                        logger->append_realtime_sample(status_msg);
+                    } catch (const std::exception& e) {
+                        LOGGING(warning) << "Failed to log realtime sample: " << e.what();
                     }
-                    promise.set_value_at_thread_exit(status_msg.state);
-                    break;
-                } else {
-                    throw std::runtime_error(std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
                 }
-                // TODO: can we reduce this?
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+                if (iteration % 10 == 0) {
+                    auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
+                    if (status_msg.state != GOAL_STATE_ACTIVE) {
+                        if (status_msg.state == GOAL_STATE_SUCCEEDED) {
+                            if (RobotStatusMessage(shared->get_robot_status().get()).in_motion) {
+                                // Continue looping
+                            } else {
+                                promise.set_value_at_thread_exit(status_msg.state);
+                                break;
+                            }
+                        } else {
+                            throw std::runtime_error(
+                                std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
+                        }
+                    }
+                }
+
+                ++iteration;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
         } catch (std::exception& e) {
             try {
@@ -1005,7 +1032,9 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     return handle;
 }
 
-std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
+std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints,
+                                                   const std::string& unix_time,
+                                                   std::optional<RealtimeTrajectoryLogger>& logger) {
     LOGGING(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
 
     auto curr_joint_pos = StatusMessage(get_robot_position_velocity_torque().get()).position;
@@ -1115,13 +1144,12 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         cumulative_time += std::chrono::duration<double>(duration);
     }
 
-    // Log the successfully generated trajectory
-    if (telemetry_path_fn_) {
-        auto telemetry_path = (*telemetry_path_fn_)();
-        if (telemetry_path) {
-            GeneratedTrajectoryLogger::log_trajectory(
-                *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, samples);
-        }
+    // Populate logger with trajectory data
+    if (logger.has_value()) {
+        logger->set_max_velocity(speed_);
+        logger->set_max_acceleration(acceleration_);
+        logger->set_waypoints(original_waypoints);
+        logger->set_planned_trajectory(samples);
     }
 
     return send_goal_(group_index_, 6, samples, {});

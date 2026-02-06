@@ -1,11 +1,15 @@
 #include "trajectory_logger.hpp"
+#include <json/value.h>
 
 #include <boost/format.hpp>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <system_error>
+#include <utility>
 
 #include "logger.hpp"
+#include "robot_socket.hpp"
 
 namespace robot {
 
@@ -148,82 +152,140 @@ void FailedTrajectoryLogger::log_failure(const std::string& telemetry_path,
     }
 }
 
-void GeneratedTrajectoryLogger::write_json_file(const std::string& filepath, const Json::Value& root) {
-    try {
-        // Configure high-precision streaming
-        Json::StreamWriterBuilder builder;
-        builder["precision"] = k_json_precision;
-        builder["precisionType"] = "decimal";
-        builder["indentation"] = "  ";
-
-        std::ofstream file(filepath, std::ios::out | std::ios::trunc);
-        if (!file.is_open()) {
-            LOGGING(error) << "Failed to open trajectory log file: " << filepath;
-            return;
-        }
-
-        const std::unique_ptr<Json::StreamWriter> writer(builder.newStreamWriter());
-        writer->write(root, &file);
-        file << '\n';
-
-        file.flush();
-        file.close();
-        if (file.fail()) {
-            LOGGING(error) << "failed to write to file:  " << filepath;
-            return;
-        }
-        LOGGING(debug) << "Generated trajectory logged to: " << filepath;
-
-    } catch (const std::exception& e) {
-        LOGGING(error) << "Failed to write trajectory log: " << e.what();
+namespace {
+Json::Value vector_to_json(const std::vector<double>& vec) {
+    Json::Value arr(Json::arrayValue);
+    for (const auto& val : vec) {
+        arr.append(val);
     }
+    return arr;
 }
+}  // namespace
 
-std::string GeneratedTrajectoryLogger::trajectory_filename(const std::string& telemetry_path,
-                                                           const std::string& robot_model,
-                                                           const std::string& unix_time) {
-    constexpr char k_trajectory_json_name_template[] = "/trajectory_logs/%1%_%2%_trajectory.json";
-    auto fmt = boost::format(telemetry_path + k_trajectory_json_name_template);
+std::string RealtimeTrajectoryLogger::realtime_trajectory_filename(const std::string& telemetry_path,
+                                                                   const std::string& robot_model,
+                                                                   const std::string& unix_time) {
+    constexpr char k_realtime_trajectory_json_name_template[] = "/trajectory_logs/%1%_%2%_realtime_trajectory.json";
+    auto fmt = boost::format(telemetry_path + k_realtime_trajectory_json_name_template);
     return (fmt % unix_time % robot_model).str();
 }
 
-void GeneratedTrajectoryLogger::log_trajectory(const std::string& telemetry_path,
-                                               const std::string& timestamp,
-                                               const std::string& robot_model,
-                                               const uint32_t group_index,
-                                               const double max_velocity_rad_per_sec,
-                                               const double max_acceleration_rad_per_sec2,
-                                               const std::list<Eigen::VectorXd>& waypoints_rad,
-                                               const std::vector<trajectory_point_t>& trajectory_points) {
-    try {
-        // Ensure the trajectory_logs directory exists
-        const std::filesystem::path log_dir = std::filesystem::path(telemetry_path) / "trajectory_logs";
-        std::error_code ec;
-        // returns fals if directory already exists we can safely ignore the return value
-        std::filesystem::create_directories(log_dir, ec);
-        if (ec) {
-            LOGGING(error) << "Failed to created directory " << log_dir << " cause:" << ec.message();
-            return;
-        }
-
-        Json::Value root(Json::objectValue);
-        root["timestamp"] = timestamp;
-        root["robot_model"] = robot_model;
-        root["group_index"] = group_index;
-
-        Json::Value config(Json::objectValue);
-        config["max_velocity_rad_per_sec"] = max_velocity_rad_per_sec;
-        config["max_acceleration_rad_per_sec2"] = max_acceleration_rad_per_sec2;
-        root["configuration"] = config;
-
-        root["waypoints_rad"] = waypoints_to_json(waypoints_rad);
-        root["trajectory_points"] = trajectory_array_to_json(trajectory_points);
-
-        const std::string filename = trajectory_filename(telemetry_path, robot_model, timestamp);
-        write_json_file(filename, root);
-    } catch (const std::exception& e) {
-        LOGGING(error) << "Exception in GeneratedTrajectoryLogger::log_trajectory: " << e.what();
+RealtimeTrajectoryLogger::RealtimeTrajectoryLogger(const std::string& telemetry_path,
+                                                   const std::string& timestamp,
+                                                   const std::string& robot_model,
+                                                   const uint32_t group_index) {
+    // Ensure the trajectory_logs directory exists
+    const std::filesystem::path log_dir = std::filesystem::path(telemetry_path) / "trajectory_logs";
+    std::error_code ec;
+    std::filesystem::create_directories(log_dir, ec);
+    if (ec) {
+        throw std::runtime_error("Failed to create directory " + log_dir.string() + " cause: " + ec.message());
     }
+
+    // Build JSON structure with core fields
+    root_ = Json::Value(Json::objectValue);
+    root_["timestamp"] = timestamp;
+    root_["robot_model"] = robot_model;
+    root_["group_index"] = group_index;
+    root_["realtime_samples"] = Json::Value(Json::arrayValue);
+
+    filepath_ = realtime_trajectory_filename(telemetry_path, robot_model, timestamp);
+    LOGGING(debug) << "Saving trajectory and real time data at " << filepath_;
+}
+
+void RealtimeTrajectoryLogger::set_goal_accepted_timestamp(int64_t timestamp_ms) {
+    root_["goal_accepted_timestamps_ms"] = timestamp_ms;
+}
+
+void RealtimeTrajectoryLogger::set_max_velocity(double max_velocity_rad_per_sec) {
+    if (!root_.isMember("configuration")) {
+        root_["configuration"] = Json::Value(Json::objectValue);
+    }
+    root_["configuration"]["max_velocity_rad_per_sec"] = max_velocity_rad_per_sec;
+}
+
+void RealtimeTrajectoryLogger::set_max_acceleration(double max_acceleration_rad_per_sec2) {
+    if (!root_.isMember("configuration")) {
+        root_["configuration"] = Json::Value(Json::objectValue);
+    }
+    root_["configuration"]["max_acceleration_rad_per_sec2"] = max_acceleration_rad_per_sec2;
+}
+
+void RealtimeTrajectoryLogger::set_waypoints(const std::list<Eigen::VectorXd>& waypoints_rad) {
+    root_["waypoints_rad"] = waypoints_to_json(waypoints_rad);
+}
+
+void RealtimeTrajectoryLogger::set_planned_trajectory(const std::vector<trajectory_point_t>& planned_trajectory_points) {
+    root_["planned_trajectory"] = trajectory_array_to_json(planned_trajectory_points);
+}
+
+RealtimeTrajectoryLogger::RealtimeTrajectoryLogger(RealtimeTrajectoryLogger&& other) noexcept
+    : filepath_(std::move(other.filepath_)), root_(std::move(other.root_)), last_timestamp_(other.last_timestamp_) {
+    other.root_ = Json::ValueType::nullValue;
+    other.last_timestamp_ = -1;
+}
+
+RealtimeTrajectoryLogger& RealtimeTrajectoryLogger::operator=(RealtimeTrajectoryLogger&& other) noexcept {
+    if (this != &other) {
+        root_.clear();
+        root_ = std::move(other.root_);
+        filepath_ = std::move(other.filepath_);
+        last_timestamp_ = other.last_timestamp_;
+        other.root_ = Json::ValueType::nullValue;
+        other.last_timestamp_ = -1;
+    }
+    return *this;
+}
+
+RealtimeTrajectoryLogger::~RealtimeTrajectoryLogger() {
+    if (filepath_.empty()) {
+        return;  // Moved-from state, nothing to write
+    }
+    try {
+        write_and_flush();
+    } catch (const std::exception& e) {
+        LOGGING(error) << "Failed to write realtime trajectory log: " << e.what();
+    }
+}
+
+void RealtimeTrajectoryLogger::append_realtime_sample(const StatusMessage& status) {
+    if (status.timestamp == last_timestamp_) {
+        return;
+    }
+    last_timestamp_ = status.timestamp;
+
+    Json::Value sample(Json::objectValue);
+    sample["timestamp_ms"] = static_cast<Json::Int64>(status.timestamp);
+    sample["positions_rad"] = vector_to_json(status.position);
+    sample["velocities_rad_per_sec"] = vector_to_json(status.velocity);
+    sample["torques_nm"] = vector_to_json(status.torque);
+    sample["positions_corrected_rad"] = vector_to_json(status.position_corrected);
+
+    root_["realtime_samples"].append(sample);
+}
+
+void RealtimeTrajectoryLogger::write_and_flush() {
+    Json::StreamWriterBuilder builder;
+    builder["precision"] = k_json_precision;
+    builder["precisionType"] = "decimal";
+    builder["indentation"] = "  ";
+
+    std::ofstream file(filepath_, std::ios::out | std::ios::trunc);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open trajectory log file: " + filepath_);
+    }
+
+    const std::unique_ptr<Json::StreamWriter> writer(builder.newStreamWriter());
+    writer->write(root_, &file);
+    file << '\n';
+
+    file.flush();
+    file.close();
+    if (file.fail()) {
+        throw std::runtime_error("Failed to write to file: " + filepath_);
+    }
+
+    LOGGING(debug) << "Realtime trajectory logged to: " << filepath_;
 }
 
 }  // namespace robot

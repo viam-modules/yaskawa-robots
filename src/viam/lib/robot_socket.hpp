@@ -430,7 +430,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;
-    std::future<Message> make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
+    std::future<Message> make_goal_(std::list<Eigen::VectorXd> waypoints,
+                                    const std::string& unix_time,
+                                    std::optional<RealtimeTrajectoryLogger>& logger);
     std::future<Message> send_goal_(uint32_t group_index,
                                     uint32_t axes_controlled,
                                     const std::vector<trajectory_point_t>& trajectory,
