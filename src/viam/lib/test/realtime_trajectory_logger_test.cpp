@@ -1,5 +1,5 @@
 #define BOOST_TEST_MODULE RealtimeTrajectoryLoggerTest
-#include <boost/test/included/unit_test.hpp>
+#include <boost/test/unit_test.hpp>
 
 #include <json/json.h>
 #include <Eigen/Core>
