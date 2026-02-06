@@ -35,6 +35,7 @@
 #include <boost/range/algorithm.hpp>
 
 #include <viam/lib/robot_socket.hpp>
+#include <viam/lib/scope_guard.hpp>
 #include <viam/sdk/common/pose.hpp>
 #include <viam/sdk/common/proto_value.hpp>
 #include <viam/sdk/components/component.hpp>
@@ -141,23 +142,7 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     return {};
 }
 
-template <typename Callable>
-auto make_scope_guard(Callable&& cleanup) {
-    struct guard {
-       public:
-        explicit guard(Callable&& cleanup) : cleanup_(std::move(cleanup)) {}
-        void deactivate() {
-            cleanup_ = [] {};
-        }
-        ~guard() {
-            cleanup_();
-        }
-
-       private:
-        std::function<void()> cleanup_;
-    };
-    return guard{std::forward<Callable>(cleanup)};
-}
+using viam::make_scope_guard;
 
 }  // namespace
 
@@ -297,33 +282,36 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
                                               const viam::sdk::ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
 
-    if (!positions.empty()) {
-        std::list<Eigen::VectorXd> waypoints;
-
-        // Convert joint positions from degrees to radians and filter duplicate
-        // waypoints
-        for (const auto& position : positions) {
-            auto next_waypoint_deg = Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
-            auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg)).eval();
-
-            // Skip waypoints that are too close to the previous one to avoid
-            // redundant motion
-            if ((!waypoints.empty()) &&
-                (next_waypoint_rad.isApprox(waypoints.back(), robot_->get_waypoint_deduplication_tolerance_rad()))) {
-                continue;
-            }
-            waypoints.emplace_back(std::move(next_waypoint_rad));
-        }
-
-        const auto unix_time = unix_time_iso8601();
-
-        // Execute the move command and block until completion
-        // This will throw if an error occurs during motion
-        robot_->move(std::move(waypoints), unix_time)->wait();
+    if (positions.empty()) {
+        throw std::invalid_argument("positions must not be empty");
     }
+
+    std::list<Eigen::VectorXd> waypoints;
+
+    // Convert joint positions from degrees to radians and filter duplicate
+    // waypoints
+    for (const auto& position : positions) {
+        auto next_waypoint_deg = Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
+        auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg)).eval();
+
+        // Skip waypoints that are too close to the previous one to avoid
+        // redundant motion
+        if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), robot_->get_waypoint_deduplication_tolerance_rad()))) {
+            continue;
+        }
+        waypoints.emplace_back(std::move(next_waypoint_rad));
+    }
+
+    const auto unix_time = unix_time_iso8601();
+
+    // Execute the move command and block until completion
+    // The controller handles move locking internally
+    robot_->move(std::move(waypoints), unix_time)->wait();
 }
 
 void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
+    const std::shared_lock rlock{config_mutex_};
+
     auto next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size())).eval();
     auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg));
     std::list<Eigen::VectorXd> waypoints;
@@ -331,7 +319,8 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 
     const auto unix_time = unix_time_iso8601();
 
-    // move will throw if an error occurs
+    // Execute the move command and block until completion
+    // The controller handles move locking internally
     robot_->move(std::move(waypoints), unix_time)->wait();
 }
 
