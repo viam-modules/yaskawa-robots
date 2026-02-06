@@ -101,6 +101,8 @@ namespace robot {
 
 using namespace boost::asio;
 
+constexpr size_t k_chunk_size = 200;  // controller cannot exceed 200 points per message
+
 /// Parse cartesian position from a protocol message
 /// Validates message type and payload size before extracting position data
 CartesianPosition::CartesianPosition(const Message& msg) {
@@ -969,7 +971,6 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                  remaining = std::move(goal_result->remaining_trajectory),
                  poll_interval]() mutable {
         try {
-            constexpr size_t chunk_size = 200;
             constexpr size_t queue_threshold = 50;
             size_t offset = 0;
 
@@ -988,7 +989,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                         if (offset < remaining.size()) {
                             LOGGING(debug) << "queue size: " << status_msg.current_queue_size << " points";
                             if (status_msg.current_queue_size <= queue_threshold) {
-                                const size_t end = std::min(offset + chunk_size, remaining.size());
+                                const size_t end = std::min(offset + k_chunk_size, remaining.size());
                                 const std::vector<trajectory_point_t> chunk(std::next(remaining.begin(), static_cast<ptrdiff_t>(offset)),
                                                                             std::next(remaining.begin(), static_cast<ptrdiff_t>(end)));
 
@@ -1153,11 +1154,10 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
         }
     }
 
-    constexpr size_t chunk_size = 200;  // controller cannot exceed 200 points per message
     LOGGING(debug) << "total trajectory points: " << samples.size();
 
     // Send the first chunk
-    const auto first_end = std::min(chunk_size, samples.size());
+    const auto first_end = std::min(k_chunk_size, samples.size());
     const std::vector<trajectory_point_t> first_chunk(samples.begin(), std::next(samples.begin(), static_cast<ptrdiff_t>(first_end)));
     // tolerance can be threaded through here when needed
     auto accepted = send_goal_(group_index_, 6, first_chunk, {});
