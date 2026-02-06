@@ -73,7 +73,7 @@ void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec
     if (duration_sec <= 0.0 || sampling_frequency_hz <= 0.0) {
         throw std::invalid_argument("duration_sec and sampling_frequency_hz are not both positive");
     }
-    static constexpr std::size_t k_max_samples = 200;
+    static constexpr std::size_t k_max_samples = 2000000;
     const auto putative_samples = duration_sec * sampling_frequency_hz;
     if (!std::isfinite(putative_samples) || putative_samples > k_max_samples) {
         throw std::invalid_argument(
@@ -87,7 +87,7 @@ void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec
     const double step = duration_sec / static_cast<double>((num_samples - 1));
 
     // Generate samples by evaluating f at each time point
-    for (std::size_t i = 0; i < num_samples - 1; ++i) {
+    for (std::size_t i = 1; i < num_samples - 1; ++i) {
         samples.push_back(f(static_cast<double>(i) * step, step));
     }
 
@@ -100,6 +100,8 @@ void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec
 namespace robot {
 
 using namespace boost::asio;
+
+constexpr size_t k_chunk_size = 200;  // controller cannot exceed 200 points per message
 
 /// Parse cartesian position from a protocol message
 /// Validates message type and payload size before extracting position data
@@ -908,12 +910,12 @@ std::future<Message> YaskawaController::reset_errors() {
     return tcp_socket_->send_request(Message(MSG_RESET_ERRORS));
 }
 
-std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
-                                                   uint32_t axes_controlled,
-                                                   const std::vector<trajectory_point_t>& trajectory,
-                                                   const std::vector<tolerance_t>& tolerance) {
+GoalAcceptedMessage YaskawaController::send_goal_(uint32_t group_index,
+                                                  uint32_t axes_controlled,
+                                                  const std::vector<trajectory_point_t>& trajectory,
+                                                  const std::vector<tolerance_t>& tolerance) {
     std::vector<uint8_t> payload;
-    payload.reserve((sizeof(uint32_t) * 2) + (trajectory.size() * sizeof(trajectory_point_t)) + (tolerance.size() * sizeof(tolerance_t)));
+    payload.reserve((sizeof(uint32_t) * 3) + (trajectory.size() * sizeof(trajectory_point_t)) + (tolerance.size() * sizeof(tolerance_t)));
 
     auto append_to = [&](auto obj) {
         const uint8_t* as_bytes = reinterpret_cast<const uint8_t*>(&obj);
@@ -922,12 +924,12 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
 
     append_to(axes_controlled);
     append_to(group_index);
-    append_to((uint32_t)trajectory.size());
+    append_to(static_cast<uint32_t>(trajectory.size()));
     boost::for_each(trajectory, append_to);
-    append_to((uint32_t)tolerance.size());
+    append_to(static_cast<uint32_t>(tolerance.size()));
     boost::for_each(tolerance, append_to);
 
-    return tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload)));
+    return GoalAcceptedMessage(tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload))).get());
 }
 
 std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
@@ -948,52 +950,70 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 
     auto promise = std::promise<goal_state_t>();
 
-    auto make_goal_future = make_goal_(std::move(waypoints), unix_time);
-    // we only want to move if the future was valid
-    if (!make_goal_future.valid()) {
+    auto goal_result = make_goal_(std::move(waypoints), unix_time);
+    if (!goal_result) {
         LOGGING(debug) << "already at desired position";
         promise.set_value(GOAL_STATE_SUCCEEDED);
         return std::make_unique<GoalRequestHandle>(0, shared_from_this(), promise.get_future());
     }
-    auto response = make_goal_future.get();
-    LOGGING(info) << response;
-    if (response.header.message_type != MSG_GOAL_ACCEPTED) {
-        throw std::runtime_error(std::format("Expected MSG_GOAL_ACCEPTED, got {}", (int)response.header.message_type));
-    }
 
-    if (response.payload.size() != sizeof(goal_accepted_payload_t)) {
-        throw std::runtime_error(std::format(
-            "Invalid goal accepted payload size expected {} got {}", sizeof(goal_accepted_payload_t), (int)response.payload.size()));
-    }
-    const goal_accepted_payload_t* accepted = reinterpret_cast<const goal_accepted_payload_t*>(response.payload.data());
-    auto handle = std::make_unique<GoalRequestHandle>(accepted->goal_id, shared_from_this(), promise.get_future());
+    const auto& accepted = goal_result->accepted;
+    LOGGING(debug) << "goal accepted: goal_id=" << accepted.goal_id;
 
-    std::thread([promise = std::move(promise), self = weak_from_this(), goal_id = accepted->goal_id]() mutable {
+    auto handle = std::make_unique<GoalRequestHandle>(accepted.goal_id, shared_from_this(), promise.get_future());
+
+    // Derive poll interval from trajectory sampling frequency
+    const auto poll_interval = std::chrono::milliseconds(static_cast<int64_t>(1000.0 / trajectory_sampling_freq_));
+    // Single thread handles both chunk streaming and goal monitoring
+    std::thread([promise = std::move(promise),
+                 self = weak_from_this(),
+                 goal_id = accepted.goal_id,
+                 remaining = std::move(goal_result->remaining_trajectory),
+                 poll_interval]() mutable {
         try {
-            while (1) {
+            constexpr size_t queue_threshold = 50;
+            size_t offset = 0;
+
+            while (true) {
+                std::this_thread::sleep_for(poll_interval);
                 auto shared = self.lock();
                 if (!shared) {
                     return;
                 }
-                // this blocks until we receive the goal status from the yaskawa-controller.
-                // this will not block for long unless we have connection problems.
-                auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
-                if (status_msg.state == GOAL_STATE_ACTIVE) {
-                    continue;
+
+                const auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
+
+                switch (status_msg.state) {
+                    case GOAL_STATE_ACTIVE:
+                        // Stream remaining chunks when queue is running low
+                        if (offset < remaining.size()) {
+                            LOGGING(debug) << "queue size: " << status_msg.current_queue_size << " points";
+                            if (status_msg.current_queue_size <= queue_threshold) {
+                                const size_t end = std::min(offset + k_chunk_size, remaining.size());
+                                const std::vector<trajectory_point_t> chunk(std::next(remaining.begin(), static_cast<ptrdiff_t>(offset)),
+                                                                            std::next(remaining.begin(), static_cast<ptrdiff_t>(end)));
+
+                                LOGGING(debug) << "sending chunk: points " << offset << " to " << end << " (" << chunk.size() << " points)";
+
+                                // tolerance can be threaded through here when needed
+                                const auto chunk_accepted = shared->send_goal_(shared->group_index_, 6, chunk, {});
+                                LOGGING(debug) << "chunk accepted: " << chunk_accepted.num_trajectory_accepted << " points";
+                                offset += chunk_accepted.num_trajectory_accepted;
+                            }
+                        }
+                        break;
+                    case GOAL_STATE_SUCCEEDED:
+                        if (RobotStatusMessage(shared->get_robot_status().get()).in_motion) {
+                            break;
+                        }
+                        promise.set_value_at_thread_exit(status_msg.state);
+                        return;
+                    case GOAL_STATE_PENDING:
+                        break;
+                    case GOAL_STATE_CANCELLED:
+                    case GOAL_STATE_ABORTED:
+                        throw std::runtime_error(std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
                 }
-                if (status_msg.state == GOAL_STATE_SUCCEEDED) {
-                    // this blocks while we read from the cached robot status or read a new status
-                    // this will not block for long unless we have connection problems.
-                    if (RobotStatusMessage(shared->get_robot_status().get()).in_motion) {
-                        continue;
-                    }
-                    promise.set_value_at_thread_exit(status_msg.state);
-                    break;
-                } else {
-                    throw std::runtime_error(std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
-                }
-                // TODO: can we reduce this?
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
         } catch (std::exception& e) {
             try {
@@ -1005,7 +1025,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     return handle;
 }
 
-std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
+std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
     LOGGING(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
 
     auto curr_joint_pos = StatusMessage(get_robot_position_velocity_torque().get()).position;
@@ -1015,8 +1035,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         waypoints.emplace_front(std::move(curr_waypoint_rad));
     }
     if (waypoints.size() == 1) {  // this tells us if we are already at the goal
-        // return an invalid future to signify no motion needs to be done
-        return std::future<Message>();
+        return std::nullopt;
     }
 
     // Save original waypoints for logging before segmentation modifies the list
@@ -1099,6 +1118,17 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
 
         trajectory.outputPhasePlaneTrajectory();
 
+        // Add the t=0 point for the first segment
+        if (samples.empty()) {
+            auto p_eigen = trajectory.getPosition(0.0);
+            auto v_eigen = trajectory.getVelocity(0.0);
+            samples.push_back(trajectory_point_t{{p_eigen[0], p_eigen[1], p_eigen[2], p_eigen[3], p_eigen[4], p_eigen[5]},
+                                                 {v_eigen[0], v_eigen[1], v_eigen[2], v_eigen[3], v_eigen[4], v_eigen[5]},
+                                                 {0},
+                                                 {0},
+                                                 {0, 0}});
+        }
+
         sampling_func(samples, duration, trajectory_sampling_freq_, [&](const double t, const double) {
             auto p_eigen = trajectory.getPosition(t);
             auto v_eigen = trajectory.getVelocity(t);
@@ -1124,7 +1154,22 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         }
     }
 
-    return send_goal_(group_index_, 6, samples, {});
+    LOGGING(debug) << "total trajectory points: " << samples.size();
+
+    // Send the first chunk
+    const auto first_end = std::min(k_chunk_size, samples.size());
+    const std::vector<trajectory_point_t> first_chunk(samples.begin(), std::next(samples.begin(), static_cast<ptrdiff_t>(first_end)));
+    // tolerance can be threaded through here when needed
+    auto accepted = send_goal_(group_index_, 6, first_chunk, {});
+
+    // Return accepted message + any remaining trajectory points
+    const size_t offset = accepted.num_trajectory_accepted;
+    std::vector<trajectory_point_t> remaining;
+    if (offset < samples.size()) {
+        remaining.assign(std::next(samples.begin(), static_cast<ptrdiff_t>(offset)), samples.end());
+    }
+
+    return MakeGoalResult{std::move(accepted), std::move(remaining)};
 }
 
 std::future<Message> YaskawaController::echo_trajectory() {
@@ -1190,7 +1235,25 @@ GoalStatusMessage::GoalStatusMessage(const Message& msg) {
     const goal_status_payload_t* payload = reinterpret_cast<const goal_status_payload_t*>(msg.payload.data());
     goal_id = payload->goal_id;
     state = static_cast<goal_state_t>(payload->state);
+    current_queue_size = payload->current_queue_size;
     progress = payload->progress;
+    timestamp_ms = payload->timestamp_ms;
+}
+
+// GoalAcceptedMessage implementation
+GoalAcceptedMessage::GoalAcceptedMessage(const Message& msg) {
+    if (msg.header.message_type != MSG_GOAL_ACCEPTED) {
+        throw std::runtime_error(
+            std::format("wrong message type expected {} had {}", static_cast<int>(MSG_GOAL_ACCEPTED), msg.header.message_type));
+    }
+    if (msg.payload.size() != sizeof(goal_accepted_payload_t)) {
+        throw std::runtime_error(
+            std::format("incorrect goal accepted payload size expected {} had {}", sizeof(goal_accepted_payload_t), msg.payload.size()));
+    }
+
+    const goal_accepted_payload_t* payload = reinterpret_cast<const goal_accepted_payload_t*>(msg.payload.data());
+    goal_id = payload->goal_id;
+    num_trajectory_accepted = payload->num_trajectory_accepted;
     timestamp_ms = payload->timestamp_ms;
 }
 

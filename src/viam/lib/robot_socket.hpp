@@ -269,11 +269,26 @@ struct State {
 struct GoalStatusMessage {
     int32_t goal_id;
     goal_state_t state;
+    uint32_t current_queue_size;
     double progress;
     int64_t timestamp_ms;
 
     GoalStatusMessage() = default;
     GoalStatusMessage(const Message& msg);
+};
+
+struct GoalAcceptedMessage {
+    int32_t goal_id;
+    uint32_t num_trajectory_accepted;
+    int64_t timestamp_ms;
+
+    GoalAcceptedMessage() = default;
+    GoalAcceptedMessage(const Message& msg);
+};
+
+struct MakeGoalResult {
+    GoalAcceptedMessage accepted;
+    std::vector<trajectory_point_t> remaining_trajectory;
 };
 
 class RobotSocketBase {
@@ -430,11 +445,11 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;
-    std::future<Message> make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
-    std::future<Message> send_goal_(uint32_t group_index,
-                                    uint32_t axes_controlled,
-                                    const std::vector<trajectory_point_t>& trajectory,
-                                    const std::vector<tolerance_t>& tolerance);
+    std::optional<MakeGoalResult> make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
+    GoalAcceptedMessage send_goal_(uint32_t group_index,
+                                   uint32_t axes_controlled,
+                                   const std::vector<trajectory_point_t>& trajectory,
+                                   const std::vector<tolerance_t>& tolerance);
 };
 
 class GoalRequestHandle {
