@@ -1184,6 +1184,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
         trajectory.outputPhasePlaneTrajectory();
 
         // Add the t=0 point for the first segment
+        // TODO: views::drop(1) when using new trajectory generator to skip first sample
         if (samples.empty()) {
             auto p_eigen = trajectory.getPosition(0.0);
             auto v_eigen = trajectory.getVelocity(0.0);
