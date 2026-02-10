@@ -1000,8 +1000,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                  self = weak_from_this(),
                  goal_id = accepted.goal_id,
                  remaining = std::move(goal_result->remaining_trajectory),
-                 k_logging_freq,
-                 goal_status_polling_freq = (k_logging_freq / static_cast<int64_t>(trajectory_sampling_freq_)),
+                 goal_status_polling_trigger = (k_logging_freq / static_cast<uint64_t>(trajectory_sampling_freq_)),
                  logger = std::move(logger)]() mutable {
         // Scope guard clears move_in_progress_ when thread exits (success or failure)
         const ScopeGuard thread_cleanup{[&self]() {
@@ -1031,11 +1030,11 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                         LOGGING(warning) << "Failed to log realtime sample: " << e.what();
                     }
                 }
-                // Check the goal status @goal_status_polling_freq Hz
+                // Check the goal status @goal_status_polling_trigger Hz
                 // in most cases this will not cleanly align with the 100 Hz polling frequency,
                 // but int math should give us a result thats close enough.
                 // TODO : change that with async
-                if (iteration++ % goal_status_polling_freq == 0) {
+                if (iteration++ % goal_status_polling_trigger == 0) {
                     const auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
 
                     switch (status_msg.state) {
