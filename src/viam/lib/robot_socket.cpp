@@ -41,6 +41,7 @@
 #include <vector>
 #include <viam/lib/logger.hpp>
 #include "protocol.h"
+#include "scope_guard.hpp"
 
 #include <third_party/trajectories/Trajectory.h>
 #include <viam/module/utils.hpp>
@@ -48,6 +49,8 @@
 namespace {
 
 constexpr double k_default_waypoint_deduplication_tolerance_rads = 1e-3;
+
+using viam::ScopeGuard;
 constexpr double k_default_min_timestep_sec = 1e-2;
 constexpr double k_default_trajectory_sampling_freq = 3;
 
@@ -931,6 +934,16 @@ std::future<Message> YaskawaController::send_goal_(uint32_t group_index,
 }
 
 std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
+    // If move_in_progress_ is already true, it fails and we throw.
+    bool expected = false;
+    if (!move_in_progress_.compare_exchange_strong(expected, true)) {
+        throw std::runtime_error("an actuation is already in progress");
+    }
+
+    // Scope guard clears move_in_progress_ on any exit path.
+    // Dismissed after the monitoring thread is successfully created (which takes over cleanup responsibility).
+    ScopeGuard cleanup{[this]() { move_in_progress_ = false; }};
+
     if (!robot_state_.IsReady()) {
         auto msg = reset_errors().get();
         if (msg.header.message_type == MSG_ERROR) {
@@ -964,6 +977,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     // we only want to move if the future was valid
     if (!make_goal_future.valid()) {
         LOGGING(debug) << "already at desired position";
+        // cleanup guard will clear move_in_progress_ on return
         promise.set_value(GOAL_STATE_SUCCEEDED);
         return std::make_unique<GoalRequestHandle>(0, shared_from_this(), promise.get_future());
     }
@@ -984,6 +998,13 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     auto handle = std::make_unique<GoalRequestHandle>(accepted->goal_id, shared_from_this(), promise.get_future());
 
     std::thread([promise = std::move(promise), self = weak_from_this(), goal_id = accepted->goal_id, logger = std::move(logger)]() mutable {
+        // Scope guard clears move_in_progress_ when thread exits (success or failure)
+        const ScopeGuard thread_cleanup{[&self]() {
+            if (auto shared = self.lock()) {
+                shared->move_in_progress_ = false;
+            }
+        }};
+
         try {
             uint32_t iteration = 0;
             while (1) {
@@ -1010,7 +1031,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                                 // Continue looping
                             } else {
                                 promise.set_value_at_thread_exit(status_msg.state);
-                                break;
+                                return;
                             }
                         } else {
                             throw std::runtime_error(
@@ -1029,6 +1050,10 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
             }
         }
     }).detach();
+
+    // Thread was successfully created and detached — thread_cleanup now owns the
+    // responsibility of clearing move_in_progress_, so dismiss the outer guard.
+    cleanup.dismiss();
     return handle;
 }
 
