@@ -963,7 +963,20 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 
     auto promise = std::promise<goal_state_t>();
 
-    auto goal_result = make_goal_(std::move(waypoints), unix_time);
+    std::optional<RealtimeTrajectoryLogger> logger;
+    if (telemetry_path_fn_) {
+        auto telemetry_path = (*telemetry_path_fn_)();
+        if (telemetry_path) {
+            try {
+                logger.emplace(*telemetry_path, unix_time, robot_model_, group_index_);
+            } catch (const std::exception& e) {
+                LOGGING(warning) << "Failed to create realtime trajectory logger: " << e.what();
+            }
+        }
+    }
+
+    auto goal_result = make_goal_(std::move(waypoints), unix_time, logger);
+    // we only want to move if the future was valid
     if (!goal_result) {
         LOGGING(debug) << "already at desired position";
         // cleanup guard will clear move_in_progress_ on return
@@ -973,17 +986,25 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 
     const auto& accepted = goal_result->accepted;
     LOGGING(debug) << "goal accepted: goal_id=" << accepted.goal_id;
+    if (logger.has_value()) {
+        logger->set_goal_accepted_timestamp(accepted.timestamp_ms);
+    }
 
     auto handle = std::make_unique<GoalRequestHandle>(accepted.goal_id, shared_from_this(), promise.get_future());
 
+    
     // Derive poll interval from trajectory sampling frequency
-    const auto poll_interval = std::chrono::milliseconds(static_cast<int64_t>(1000.0 / trajectory_sampling_freq_));
+    // we want to log data at 100 Hz and send chunks at trajectory_sampling_freq_ Hz, 
+    // so configure an interval that uses both. 
+    const auto poll_interval = std::chrono::microseconds(static_cast<int64_t>(1000000.0 / trajectory_sampling_freq_ / 100.0));
     // Single thread handles both chunk streaming and goal monitoring
     std::thread([promise = std::move(promise),
                  self = weak_from_this(),
                  goal_id = accepted.goal_id,
                  remaining = std::move(goal_result->remaining_trajectory),
-                 poll_interval]() mutable {
+                 poll_interval,
+                 goal_status_polling_freq = static_cast<int64_t>(trajectory_sampling_freq_),
+                 logger = std::move(logger)]() mutable {
         // Scope guard clears move_in_progress_ when thread exits (success or failure)
         const ScopeGuard thread_cleanup{[&self]() {
             if (auto shared = self.lock()) {
@@ -993,14 +1014,27 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
         try {
             constexpr size_t queue_threshold = 50;
             size_t offset = 0;
-
+            uint64_t iteration = 0;
             while (true) {
                 std::this_thread::sleep_for(poll_interval);
                 auto shared = self.lock();
                 if (!shared) {
+                    LOGGING(error) << "cancelling goal monitor thread : the socket was destroyed!";
                     return;
                 }
 
+                // capture robot status at 100 Hz
+                if ((iteration++ % 100 == 0) && logger.has_value()) {
+                    try {
+                        auto status_msg = StatusMessage(shared->get_robot_position_velocity_torque().get());
+                        logger->append_realtime_sample(status_msg);
+                    } catch (const std::exception& e) {
+                        LOGGING(warning) << "Failed to log realtime sample: " << e.what();
+                    }
+                }
+                // Check the goal status @goal_status_polling_freq Hz
+                // TODO : change that with async
+                if (iteration % goal_status_polling_freq == 0) {
                 const auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
 
                 switch (status_msg.state) {
@@ -1035,6 +1069,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                         throw std::runtime_error(std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
                 }
             }
+            }
         } catch (std::exception& e) {
             try {
                 promise.set_exception_at_thread_exit(std::current_exception());
@@ -1049,7 +1084,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     return handle;
 }
 
-std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
+std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time,
+                                                   std::optional<RealtimeTrajectoryLogger>& logger) {
     LOGGING(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
 
     auto curr_joint_pos = StatusMessage(get_robot_position_velocity_torque().get()).position;
@@ -1169,13 +1205,12 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
         cumulative_time += std::chrono::duration<double>(duration);
     }
 
-    // Log the successfully generated trajectory
-    if (telemetry_path_fn_) {
-        auto telemetry_path = (*telemetry_path_fn_)();
-        if (telemetry_path) {
-            GeneratedTrajectoryLogger::log_trajectory(
-                *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, samples);
-        }
+    // Populate logger with trajectory data
+    if (logger.has_value()) {
+        logger->set_max_velocity(speed_);
+        logger->set_max_acceleration(acceleration_);
+        logger->set_waypoints(original_waypoints);
+        logger->set_planned_trajectory(samples);
     }
 
     LOGGING(debug) << "total trajectory points: " << samples.size();

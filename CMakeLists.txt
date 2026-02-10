@@ -299,6 +299,21 @@ target_link_libraries(broadcast_log_parser_test
 
 add_test(NAME broadcast_log_parser_test COMMAND broadcast_log_parser_test)
 
+add_executable(realtime_trajectory_logger_test)
+
+target_sources(realtime_trajectory_logger_test
+  PRIVATE
+    src/viam/lib/test/realtime_trajectory_logger_test.cpp
+)
+
+target_link_libraries(realtime_trajectory_logger_test
+  PRIVATE
+    viam-yaskawa
+    Boost::unit_test_framework
+)
+
+add_test(NAME realtime_trajectory_logger_test COMMAND realtime_trajectory_logger_test)
+
 set(CPACK_PACKAGE_NAME "viam-yaskawa-robots")
 set(CPACK_PACKAGE_FILE_NAME "module")
 set(CPACK_GENERATOR "TGZ")
