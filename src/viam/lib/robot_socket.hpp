@@ -428,6 +428,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // Move locking: prevents concurrent moves
     std::atomic<bool> move_in_progress_{false};
 
+    bool use_new_trajectory_planner_{false};
     std::string robot_model_;
     std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn_;
 
