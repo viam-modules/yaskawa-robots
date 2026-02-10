@@ -918,7 +918,7 @@ GoalAcceptedMessage YaskawaController::send_goal_(uint32_t group_index,
                                                   const std::vector<trajectory_point_t>& trajectory,
                                                   const std::vector<tolerance_t>& tolerance) {
     std::vector<uint8_t> payload;
-    payload.reserve((sizeof(uint32_t) * 3) + (trajectory.size() * sizeof(trajectory_point_t)) + (tolerance.size() * sizeof(tolerance_t)));
+    payload.reserve((sizeof(uint32_t) * 4) + (trajectory.size() * sizeof(trajectory_point_t)) + (tolerance.size() * sizeof(tolerance_t)));
 
     auto append_to = [&](auto obj) {
         const uint8_t* as_bytes = reinterpret_cast<const uint8_t*>(&obj);
