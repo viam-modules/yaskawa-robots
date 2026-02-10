@@ -1057,6 +1057,11 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                         }
                         break;
                     case GOAL_STATE_SUCCEEDED:
+                        // if we still have data, stop the arm and throw an error. 
+                        if (offset < remaining.size()){
+                            shared->stop().get();
+                            throw std::runtime_error(std::format("goal failed - arm motion ended earlier than expected with {} trajectory points left to process", remaining.size() - offset));
+                        }
                         if (RobotStatusMessage(shared->get_robot_status().get()).in_motion) {
                             break;
                         }
