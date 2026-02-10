@@ -12,6 +12,7 @@ extern "C" {
 
 namespace robot {
 
+// TODO move Message decl in a separate header
 struct StatusMessage;
 
 // Logs failed trajectory generation (waypoints + config only)

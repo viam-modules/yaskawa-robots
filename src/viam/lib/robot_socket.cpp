@@ -1006,7 +1006,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
         }};
 
         try {
-            uint32_t iteration = 0;
+            uint64_t iteration = 0;
             while (1) {
                 auto shared = self.lock();
                 if (!shared) {
@@ -1023,7 +1023,9 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                     }
                 }
 
-                if (iteration % 10 == 0) {
+                // Check the goal status @10hz
+                // TODO : change that with async
+                if (iteration++ % 10 == 0) {
                     auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
                     if (status_msg.state != GOAL_STATE_ACTIVE) {
                         if (status_msg.state == GOAL_STATE_SUCCEEDED) {
@@ -1040,7 +1042,6 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                     }
                 }
 
-                ++iteration;
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
         } catch (std::exception& e) {
