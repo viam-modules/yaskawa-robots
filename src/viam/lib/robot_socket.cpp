@@ -1023,7 +1023,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                 }
 
                 // capture robot status at k_logging_freq Hz
-                if ((iteration++ % k_logging_freq == 0) && logger.has_value()) {
+                if (logger.has_value()) {
                     try {
                         auto status_msg = StatusMessage(shared->get_robot_position_velocity_torque().get());
                         logger->append_realtime_sample(status_msg);
@@ -1035,7 +1035,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                 // in most cases this will not cleanly align with the 100 Hz polling frequency, 
                 // but int math should give us a result thats close enough.
                 // TODO : change that with async
-                if (iteration % goal_status_polling_freq == 0) {
+                if (iteration++ % goal_status_polling_freq == 0) {
                     const auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
 
                     switch (status_msg.state) {
