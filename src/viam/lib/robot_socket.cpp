@@ -314,6 +314,21 @@ std::ostream& operator<<(std::ostream& os, const Message& msg) {
     return os;
 }
 
+// get_error checks the message for an error and returns the appropriate error message based on the result.
+std::string Message::get_error(message_type_t expected_type) const {
+    if (header.message_type == expected_type) {
+        return "";
+    }
+
+    if (header.message_type == MSG_ERROR) {
+        error_payload_t err_msg;
+        std::memcpy(&err_msg, payload.data(), sizeof(err_msg));
+        return std::format("received error code {}", static_cast<const int&>(err_msg.error_code));
+    }
+
+    return std::format("unexpected message type expected {} got {}", static_cast<const int&>(expected_type), header.message_type);
+}
+
 // TcpRobotSocket Implementation
 TcpRobotSocket::TcpRobotSocket(boost::asio::io_context& io_context, const std::string& host, uint16_t port)
     : RobotSocketBase(io_context, host, port), session_(std::make_shared<Session>(io_context, io_context.get_executor())) {}
@@ -747,11 +762,10 @@ std::future<void> YaskawaController::connect() {
 
             // Register UDP port with robot so it knows where to send status messages
             const uint16_t local_udp_port = udp_socket_->get_local_port();
-            auto registration_response = register_udp_port(local_udp_port).get();
-            LOGGING(info) << "UDP port registration response: " << registration_response;
+            register_udp_port(local_udp_port);
 
             // Wait for first status update to ensure connection is fully established
-            get_robot_status().get();
+            get_robot_status();
 
             // Heartbeat thread exits naturally via weak_ptr failure or socket error
             std::thread([self = weak_from_this()]() {
@@ -761,7 +775,7 @@ std::future<void> YaskawaController::connect() {
                         if (!shared) {
                             return;
                         }
-                        shared->send_heartbeat().get();
+                        shared->send_heartbeat();
                         std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     }
                 } catch (const std::exception& e) {
@@ -802,31 +816,44 @@ double YaskawaController::get_waypoint_deduplication_tolerance_rad() const {
     return waypoint_dedup_tolerance_rad_;
 }
 
-std::future<Message> YaskawaController::get_goal_status(int32_t goal_id) {
+GoalStatusMessage YaskawaController::get_goal_status(int32_t goal_id) {
     std::vector<uint8_t> payload(sizeof(cancel_goal_payload_t));
     cancel_goal_payload_t* req = reinterpret_cast<cancel_goal_payload_t*>(payload.data());
     req->goal_id = goal_id;
 
-    return tcp_socket_->send_request(Message(MSG_GET_GOAL_STATUS, std::move(payload)));
+    auto msg = tcp_socket_->send_request(Message(MSG_GET_GOAL_STATUS, std::move(payload))).get();
+    if (msg.header.message_type == MSG_ERROR) {
+        throw std::runtime_error(std::format("received an error message while getting status for goal id {}", goal_id));
+    }
+    return GoalStatusMessage(msg);
 }
 
-std::future<Message> YaskawaController::cancel_goal(int32_t goal_id) {
+void YaskawaController::cancel_goal(int32_t goal_id) {
     std::vector<uint8_t> payload(sizeof(cancel_goal_payload_t));
     cancel_goal_payload_t* req = reinterpret_cast<cancel_goal_payload_t*>(payload.data());
     req->goal_id = goal_id;
-
-    return tcp_socket_->send_request(Message(MSG_CANCEL_GOAL, std::move(payload)));
+    auto msg = tcp_socket_->send_request(Message(MSG_CANCEL_GOAL, std::move(payload))).get();
+    const auto err = msg.get_error(MSG_OK);
+    if (!err.empty()) {
+        throw std::runtime_error(std::format("an error occurred while cancelling goal id {}: {}", goal_id, err));
+    }
+    LOGGING(debug) << "MSG_CANCEL_GOAL: " << msg;
 }
 
-std::future<Message> YaskawaController::setMotionMode(uint8_t mode) {
+void YaskawaController::setMotionMode(uint8_t mode) {
     std::vector<uint8_t> payload(sizeof(motion_mode_payload_t));
     motion_mode_payload_t* req = reinterpret_cast<motion_mode_payload_t*>(payload.data());
     req->motion_mode = mode;
 
-    return tcp_socket_->send_request(Message(MSG_SET_MOTION_MODE, std::move(payload)));
+    auto msg = tcp_socket_->send_request(Message(MSG_SET_MOTION_MODE, std::move(payload))).get();
+    const auto err = msg.get_error(MSG_OK);
+    if (!err.empty()) {
+        throw std::runtime_error(std::format("failed to set motion mode: {}", err));
+    }
+    LOGGING(debug) << "MSG_SET_MOTION_MODE: " << msg;
 }
 
-std::future<Message> YaskawaController::send_test_trajectory() {
+void YaskawaController::send_test_trajectory() {
     if (!robot_state_->IsReady()) {
         throw std::runtime_error(
             std::format("cannot send test trajectory the robot state is e_stopped {} in error "
@@ -834,64 +861,99 @@ std::future<Message> YaskawaController::send_test_trajectory() {
                         robot_state_->e_stopped.load(),
                         robot_state_->in_error.load()));
     }
-    return tcp_socket_->send_request(Message(MSG_TEST_TRAJECTORY_COMMAND));
+    auto msg = tcp_socket_->send_request(Message(MSG_TEST_TRAJECTORY_COMMAND)).get();
+    const auto err = msg.get_error(MSG_OK);
+    if (!err.empty()) {
+        throw std::runtime_error(std::format("failed to send MSG_TEST_TRAJECTORY_COMMAND: {}", err));
+    }
+    LOGGING(debug) << "MSG_TEST_TRAJECTORY_COMMAND: " << msg;
 }
 
-std::future<Message> YaskawaController::turn_servo_power_on() {
+void YaskawaController::turn_servo_power_on() {
     if (!robot_state_->IsReady()) {
         throw std::runtime_error(std::format("cannot turn power on the robot state is e_stopped {} in error {}",
                                              robot_state_->e_stopped.load(),
                                              robot_state_->in_error.load()));
     }
-    return tcp_socket_->send_request(Message(MSG_TURN_SERVO_POWER_ON));
+    auto msg = tcp_socket_->send_request(Message(MSG_TURN_SERVO_POWER_ON)).get();
+    const auto err = msg.get_error(MSG_OK);
+    if (!err.empty()) {
+        throw std::runtime_error(std::format("failed to turn on arm servo power: {}", err));
+    }
+    LOGGING(debug) << "MSG_TURN_SERVO_POWER_ON: " << msg;
 }
 
-std::future<Message> YaskawaController::send_heartbeat() {
-    return tcp_socket_->send_request(Message(MSG_HEARTBEAT));
+void YaskawaController::send_heartbeat() {
+    auto msg = tcp_socket_->send_request(Message(MSG_HEARTBEAT)).get();
+    const auto err = msg.get_error(MSG_OK);
+    if (!err.empty()) {
+        throw std::runtime_error(std::format("failed to send heartbeat: {}", err));
+    }
+    LOGGING(debug) << "MSG_HEARTBEAT: " << msg;
 }
 
-std::future<Message> YaskawaController::send_test_error_command() {
-    return tcp_socket_->send_request(Message(MSG_TEST_ERROR_COMMAND));
+void YaskawaController::send_test_error_command() {
+    auto msg = tcp_socket_->send_request(Message(MSG_TEST_ERROR_COMMAND)).get();
+    const auto err = msg.get_error(MSG_OK);
+    if (!err.empty()) {
+        throw std::runtime_error(std::format("failed to send MSG_TEST_ERROR_COMMAND: {}", err));
+    }
+    LOGGING(debug) << "MSG_TEST_ERROR_COMMAND: " << msg;
 }
 
-std::future<Message> YaskawaController::get_error_info() {
-    return tcp_socket_->send_request(Message(MSG_GET_ERROR_INFO));
+void YaskawaController::get_error_info() {
+    // currently unimplemented
+    auto msg = tcp_socket_->send_request(Message(MSG_GET_ERROR_INFO)).get();
+    const auto err = msg.get_error(MSG_OK);
+    if (!err.empty()) {
+        throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_GET_ERROR_INFO), err));
+    }
+    LOGGING(debug) << "MSG_GET_ERROR_INFO: " << msg;
 }
 
-std::future<Message> YaskawaController::get_robot_position_velocity_torque() {
-    std::promise<Message> promise;
-    auto future = promise.get_future();
+StatusMessage YaskawaController::get_robot_position_velocity_torque() {
     if (!udp_socket_) {
-        promise.set_exception(std::make_exception_ptr(std::runtime_error("UDP socket not connected")));
-        return future;
+        throw std::runtime_error("UDP socket not connected");
     }
 
+    std::promise<Message> promise;
+    auto future = promise.get_future();
     udp_socket_->get_status(std::move(promise));
-    return future;
+    return StatusMessage(future.get());
 }
 
-std::future<Message> YaskawaController::get_robot_status() {
+RobotStatusMessage YaskawaController::get_robot_status() {
+    if (!udp_socket_) {
+        throw std::runtime_error("UDP socket not connected");
+    }
+
     // TODO(RSDK-12470) account for group_id_ in request
     std::promise<Message> promise;
     auto future = promise.get_future();
-    if (!udp_socket_) {
-        promise.set_exception(std::make_exception_ptr(std::runtime_error("UDP socket not connected")));
-        return future;
-    }
-
     udp_socket_->get_robot_status(std::move(promise));
-    return future;
+    return RobotStatusMessage(future.get());
 }
 
-std::future<Message> YaskawaController::register_udp_port(uint16_t port) {
+void YaskawaController::register_udp_port(uint16_t port) {
     std::vector<uint8_t> payload(sizeof(udp_port_registration_payload_t));
     udp_port_registration_payload_t* port_payload = reinterpret_cast<udp_port_registration_payload_t*>(payload.data());
     port_payload->udp_port = port;
-    return tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload)));
+
+    auto msg = tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload))).get();
+    const auto err = msg.get_error(MSG_OK);
+    if (!err.empty()) {
+        throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_REGISTER_UDP_PORT), err));
+    }
+    LOGGING(info) << "UDP port registration response: " << msg;
 }
 
-std::future<Message> YaskawaController::reset_errors() {
-    return tcp_socket_->send_request(Message(MSG_RESET_ERRORS));
+void YaskawaController::reset_errors() {
+    auto msg = tcp_socket_->send_request(Message(MSG_RESET_ERRORS)).get();
+    const auto err = msg.get_error(MSG_OK);
+    if (!err.empty()) {
+        throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_RESET_ERRORS), err));
+    }
+    LOGGING(debug) << "MSG_RESET_ERRORS: " << msg;
 }
 
 GoalAcceptedMessage YaskawaController::send_goal_(uint32_t group_index,
@@ -928,19 +990,11 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     ScopeGuard cleanup{[this]() { move_in_progress_ = false; }};
 
     if (!robot_state_->IsReady()) {
-        auto msg = reset_errors().get();
-        if (msg.header.message_type == MSG_ERROR) {
-            error_payload_t err_msg;
-            std::memcpy(&err_msg, msg.payload.data(), sizeof(err_msg));
-            throw std::runtime_error(std::format("failed to reset arm, error code {}", static_cast<const int&>(err_msg.error_code)));
-        }
-        if (msg.header.message_type != MSG_OK) {
-            throw std::runtime_error(std::format("failed to reset arm, got unexpected message type {}", msg.header.message_type));
-        }
+        reset_errors();
     }
     // TODO check servo on and & errors
-    turn_servo_power_on().get();
-    setMotionMode(1).get();
+    turn_servo_power_on();
+    setMotionMode(1);
 
     auto promise = std::promise<goal_state_t>();
 
@@ -1005,8 +1059,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                 // capture robot status at k_logging_freq Hz
                 if (logger.has_value()) {
                     try {
-                        auto status_msg = StatusMessage(shared->get_robot_position_velocity_torque().get());
-                        logger->append_realtime_sample(status_msg);
+                        logger->append_realtime_sample(shared->get_robot_position_velocity_torque());
                     } catch (const std::exception& e) {
                         LOGGING(warning) << "Failed to log realtime sample: " << e.what();
                     }
@@ -1016,7 +1069,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                 // but int math should give us a result thats close enough.
                 // TODO : change that with async
                 if (iteration++ % goal_status_polling_trigger == 0) {
-                    const auto status_msg = GoalStatusMessage(shared->get_goal_status(goal_id).get());
+                    const auto status_msg = shared->get_goal_status(goal_id);
 
                     switch (status_msg.state) {
                         case GOAL_STATE_ACTIVE:
@@ -1042,12 +1095,20 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                         case GOAL_STATE_SUCCEEDED:
                             // if we still have data, stop the arm and throw an error.
                             if (offset < remaining.size()) {
-                                shared->stop().get();
+                                std::string stop_detail;
+                                try {
+                                    if (!shared->stop()) {
+                                        LOGGING(warning) << "stop returned false while handling early goal completion";
+                                    }
+                                } catch (const std::exception& e) {
+                                    stop_detail = std::format(", stop failed: {}", e.what());
+                                }
                                 throw std::runtime_error(std::format(
-                                    "goal failed - arm motion ended earlier than expected with {} trajectory points left to process",
-                                    remaining.size() - offset));
+                                    "goal failed - arm motion ended earlier than expected with {} trajectory points left to process{}",
+                                    remaining.size() - offset,
+                                    stop_detail));
                             }
-                            if (RobotStatusMessage(shared->get_robot_status().get()).in_motion) {
+                            if (shared->get_robot_status().in_motion) {
                                 break;
                             }
                             promise.set_value_at_thread_exit(status_msg.state);
@@ -1080,7 +1141,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                                                             std::optional<RealtimeTrajectoryLogger>& logger) {
     LOGGING(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
 
-    auto curr_joint_pos = StatusMessage(get_robot_position_velocity_torque().get()).position;
+    auto curr_joint_pos = get_robot_position_velocity_torque().position;
 
     auto curr_waypoint_rad = Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()));
     if (!curr_waypoint_rad.isApprox(waypoints.front(), get_waypoint_deduplication_tolerance_rad())) {
@@ -1228,17 +1289,35 @@ std::future<Message> YaskawaController::echo_trajectory() {
     // Echo trajectory command has no payload
     return tcp_socket_->send_request(Message(MSG_ECHO_TRAJECTORY));
 }
-std::future<Message> YaskawaController::stop() {
+bool YaskawaController::stop() {
     // TODO(RSDK-12470) account for group_index_ in request
-    return tcp_socket_->send_request(Message(MSG_STOP_MOTION));
+    auto msg = tcp_socket_->send_request(Message(MSG_STOP_MOTION)).get();
+    const auto err = msg.get_error(MSG_STOP_MOTION);
+    if (!err.empty()) {
+        throw std::runtime_error(std::format("failed to stop arm motion: {}", err));
+    }
+    LOGGING(debug) << "MSG_STOP_MOTION: " << msg;
+    // Validate payload size to prevent buffer overruns
+    if (msg.payload.size() != sizeof(boolean_payload_t)) {
+        throw std::runtime_error(std::format(
+            "incorrect MSG_STOP_MOTION payload size: expected {} bytes, got {} bytes", sizeof(boolean_payload_t), msg.payload.size()));
+    }
+
+    // Safe deserialization: verify alignment before reinterpret_cast
+    if (reinterpret_cast<uintptr_t>(msg.payload.data()) % alignof(boolean_payload_t) != 0) {
+        throw std::runtime_error("boolean payload data is not properly aligned");
+    }
+
+    const boolean_payload_t* is_stopped = reinterpret_cast<const boolean_payload_t*>(msg.payload.data());
+    return is_stopped->value;
 }
-std::future<Message> YaskawaController::getCartPosition() {
+CartesianPosition YaskawaController::getCartPosition() {
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
     id->group_id = (int32_t)group_index_;
-    return tcp_socket_->send_request(Message(MSG_GET_CART, std::move(payload)));
+    return CartesianPosition(tcp_socket_->send_request(Message(MSG_GET_CART, std::move(payload))).get());
 }
-std::future<Message> YaskawaController::cartPosToAngle(CartesianPosition& pos) {
+AnglePosition YaskawaController::cartPosToAngle(CartesianPosition& pos) {
     std::vector<uint8_t> payload(sizeof(cartesian_payload_t));
     cartesian_payload_t* cid = reinterpret_cast<cartesian_payload_t*>(payload.data());
     cid->group_id = (int32_t)group_index_;
@@ -1248,9 +1327,9 @@ std::future<Message> YaskawaController::cartPosToAngle(CartesianPosition& pos) {
     cid->cartesianCoord[3] = pos.rx;
     cid->cartesianCoord[4] = pos.ry;
     cid->cartesianCoord[5] = pos.rz;
-    return tcp_socket_->send_request(Message(MSG_FROM_CART_TO_JOINT, std::move(payload)));
+    return AnglePosition(tcp_socket_->send_request(Message(MSG_FROM_CART_TO_JOINT, std::move(payload))).get());
 }
-std::future<Message> YaskawaController::angleToCartPos(AnglePosition& pos) {
+CartesianPosition YaskawaController::angleToCartPos(AnglePosition& pos) {
     std::vector<uint8_t> payload(sizeof(position_angle_degree_payload_t));
     position_angle_degree_payload_t* pid = reinterpret_cast<position_angle_degree_payload_t*>(payload.data());
     pid->group_id = (int32_t)group_index_;
@@ -1260,18 +1339,18 @@ std::future<Message> YaskawaController::angleToCartPos(AnglePosition& pos) {
     pid->positionAngleDegree[3] = pos.pos[3];
     pid->positionAngleDegree[4] = pos.pos[4];
     pid->positionAngleDegree[5] = pos.pos[5];
-    return tcp_socket_->send_request(Message(MSG_FROM_JOINT_TO_CART, std::move(payload)));
+    return CartesianPosition(tcp_socket_->send_request(Message(MSG_FROM_JOINT_TO_CART, std::move(payload))).get());
 }
 
 bool YaskawaController::is_status_command(message_type_t type) {
     return type == MSG_ROBOT_POSITION_VELOCITY_TORQUE || type == MSG_ROBOT_STATUS;
 }
 
-std::future<Message> YaskawaController::checkGroupIndex() {
+bool YaskawaController::checkGroupIndex() {
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
     id->group_id = (int32_t)group_index_;
-    return tcp_socket_->send_request(Message(MSG_CHECK_GROUP, std::move(payload)));
+    return CheckGroupMessage(tcp_socket_->send_request(Message(MSG_CHECK_GROUP, std::move(payload))).get()).is_known_group;
 }
 
 // GoalStatusMessage implementation
@@ -1332,21 +1411,15 @@ std::future<GoalStatusMessage> GoalRequestHandle::get_status() {
         if (!shared) {
             throw std::runtime_error("YaskawaController no longer exists");
         }
-        auto response = shared->get_goal_status(goal_id_).get();
-        if (response.header.message_type == MSG_ERROR) {
-            throw std::runtime_error(std::format("received an error message while getting status for goal id {}", goal_id_));
-        }
-        return GoalStatusMessage(response);
+
+        return shared->get_goal_status(goal_id_);
     });
 }
 
 void GoalRequestHandle::cancel() {
     auto shared = controller_.lock();
     if (shared) {
-        auto response = shared->cancel_goal(goal_id_).get();
-        if (response.header.message_type == MSG_ERROR) {
-            throw std::runtime_error(std::format("received an error message while cancelling  goal id {}", goal_id_));
-        }
+        shared->cancel_goal(goal_id_);
     }
 }
 
