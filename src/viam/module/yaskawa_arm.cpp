@@ -122,6 +122,16 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
                         *waypoint_dedup_tolerance));
     }
 
+    auto path_tolerance = find_config_attribute<double>(cfg, "path_tolerance_rad");
+    if (path_tolerance && (*path_tolerance < 0.0 || *path_tolerance > 3.0)) {
+        throw std::invalid_argument(std::format("attribute `path_tolerance_rad` must be between 0.0 and 3.0, got {}", *path_tolerance));
+    }
+
+    auto colinearization = find_config_attribute<double>(cfg, "colinearization_ratio");
+    if (colinearization && (*colinearization < 0.0 || *colinearization > 2.0)) {
+        throw std::invalid_argument(std::format("attribute `colinearization_ratio` must be between 0.0 and 2.0, got {}", *colinearization));
+    }
+
     // Validate telemetry_output_path if provided
     auto telemetry_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
     if (telemetry_path && telemetry_path->empty()) {

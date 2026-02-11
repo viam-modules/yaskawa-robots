@@ -768,6 +768,8 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
         waypoint_dedup_tolerance_deg ? degrees_to_radians(*waypoint_dedup_tolerance_deg) : k_default_waypoint_deduplication_tolerance_rads;
 
     use_new_trajectory_planner_ = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
+    path_tolerance_rad_ = find_config_attribute<double>(config, "path_tolerance_rad").value_or(0.1);
+    colinearization_ratio_ = find_config_attribute<double>(config, "colinearization_ratio");
 
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
@@ -1145,13 +1147,11 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         try {
             using namespace viam::trajex;
 
-            constexpr double k_path_tolerance_rad = 0.1;
-            constexpr std::optional<double> k_colinearization_ratio = std::make_optional(0.05);
             std::chrono::duration<double> cumulative_time{0};
 
             totg::trajectory::options trajex_opts;
-            trajex_opts.max_velocity = xt::xarray<double>::from_shape({(unsigned long)max_velocity_vec.size()});
-            trajex_opts.max_acceleration = xt::xarray<double>::from_shape({(unsigned long)max_acceleration_vec.size()});
+            trajex_opts.max_velocity = xt::xarray<double>::from_shape({static_cast<size_t>(max_velocity_vec.size())});
+            trajex_opts.max_acceleration = xt::xarray<double>::from_shape({static_cast<size_t>(max_acceleration_vec.size())});
             std::ranges::copy(max_velocity_vec, trajex_opts.max_velocity.begin());
             std::ranges::copy(max_acceleration_vec, trajex_opts.max_acceleration.begin());
 
@@ -1164,10 +1164,10 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
                     const auto segment_xarray = eigen_waypoints_to_xarray(segment);
                     const totg::waypoint_accumulator trajex_waypoints(segment_xarray);
 
-                    auto path_opts = totg::path::options{}.set_max_blend_deviation(k_path_tolerance_rad);
+                    auto path_opts = totg::path::options{}.set_max_blend_deviation(path_tolerance_rad_);
 
-                    if (auto ratio = k_colinearization_ratio) {
-                        path_opts.set_max_linear_deviation(k_path_tolerance_rad * (*ratio));
+                    if (colinearization_ratio_) {
+                        path_opts.set_max_linear_deviation(path_tolerance_rad_ * (*colinearization_ratio_));
                     }
 
                     auto trajex_path = totg::path::create(trajex_waypoints, path_opts);
@@ -1183,21 +1183,21 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
                         const auto absolute_time = cumulative_time + std::chrono::duration<double>(sample.time.count());
                         auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
                         auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
-                        trajectory_point_t point{{sample.configuration(0),
-                                                  sample.configuration(1),
-                                                  sample.configuration(2),
-                                                  sample.configuration(3),
-                                                  sample.configuration(4),
-                                                  sample.configuration(5)},
-                                                 {sample.velocity(0),
-                                                  sample.velocity(1),
-                                                  sample.velocity(2),
-                                                  sample.velocity(3),
-                                                  sample.velocity(4),
-                                                  sample.velocity(5)},
-                                                 {0},
-                                                 {0},
-                                                 {static_cast<int32_t>(secs.count()), static_cast<int32_t>(nanos.count())}};
+                        const trajectory_point_t point{{sample.configuration(0),
+                                                        sample.configuration(1),
+                                                        sample.configuration(2),
+                                                        sample.configuration(3),
+                                                        sample.configuration(4),
+                                                        sample.configuration(5)},
+                                                       {sample.velocity(0),
+                                                        sample.velocity(1),
+                                                        sample.velocity(2),
+                                                        sample.velocity(3),
+                                                        sample.velocity(4),
+                                                        sample.velocity(5)},
+                                                       {0},
+                                                       {0},
+                                                       {static_cast<int32_t>(secs.count()), static_cast<int32_t>(nanos.count())}};
 
                         all_trajex_samples.push_back(point);
                     }
@@ -1205,6 +1205,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
                     total_waypoints += segment.size();
                     total_duration += trajex_trajectory.duration().count();
                     total_arc_length += trajex_trajectory.path().length();
+                    cumulative_time += std::chrono::duration<double>(trajex_trajectory.duration());
 
                     if (total_duration > 600) {
                         throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
@@ -1256,7 +1257,7 @@ std::future<Message> YaskawaController::make_goal_(std::list<Eigen::VectorXd> wa
         std::chrono::duration<double> cumulative_time{0};
 
         for (const auto& segment : segments) {
-            const Trajectory trajectory(Path(segment, 0.1), max_velocity_vec, max_acceleration_vec);
+            const Trajectory trajectory(Path(segment, path_tolerance_rad_), max_velocity_vec, max_acceleration_vec);
             if (!trajectory.isValid()) {
                 const std::string error_msg = "trajectory.isValid() was false";
                 if (telemetry_path_fn_) {
