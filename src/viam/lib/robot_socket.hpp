@@ -79,7 +79,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     }
 
    public:
-    explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)) {};
+    explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)){};
     static auto create(boost::asio::any_io_executor exec) {
         return std::make_shared<AsyncQueue<T>>(private_{}, std::move(exec));
     };
@@ -329,26 +329,16 @@ class TcpRobotSocket : public RobotSocketBase {
    private:
     using tcp = boost::asio::ip::tcp;
 
-    std::shared_ptr<tcp::socket> socket_;
-    std::shared_ptr<AsyncQueue<std::pair<Message, std::promise<Message>>>> request_queue_;
+    struct Session {
+        tcp::socket socket_;
+        std::shared_ptr<AsyncQueue<std::pair<Message, std::promise<Message>>>> queue_;
+        Session(boost::asio::io_context& io_context, boost::asio::any_io_executor exec)
+            : socket_(io_context), queue_(AsyncQueue<std::pair<Message, std::promise<Message>>>::create(std::move(exec))) {}
+    };
 
-    static boost::asio::awaitable<void> process_requests(std::shared_ptr<tcp::socket> socket,
-                                                         std::shared_ptr<AsyncQueue<std::pair<Message, std::promise<Message>>>> queue);
-};
+    std::shared_ptr<Session> session_;
 
-struct UdpSession {
-    using udp = boost::asio::ip::udp;
-
-    udp::socket socket;
-    mutable std::shared_mutex status_mutex;
-    std::variant<std::monostate, Message, std::promise<Message>> cached_status;
-    std::variant<std::monostate, Message, std::promise<Message>> cached_robot_status;
-    std::shared_ptr<State> robot_state;
-
-    UdpSession(boost::asio::io_context& io_context, std::shared_ptr<State> state) : socket(io_context), robot_state(std::move(state)) {}
-
-    void handle_status_message(const Message& message);
-    void handle_robot_status_message(const Message& message);
+    static boost::asio::awaitable<void> process_requests(std::shared_ptr<Session> session);
 };
 
 class UdpRobotSocket : public RobotSocketBase {
@@ -367,22 +357,20 @@ class UdpRobotSocket : public RobotSocketBase {
    private:
     using udp = boost::asio::ip::udp;
 
+    struct Session {
+        udp::socket socket_;
+        mutable std::shared_mutex status_mutex_;
+        std::variant<std::monostate, Message, std::promise<Message>> cached_status_;
+        std::variant<std::monostate, Message, std::promise<Message>> cached_robot_status_;
+        std::shared_ptr<State> robot_state_;
+        Session(boost::asio::io_context& io_context, std::shared_ptr<State> state) : socket_(io_context), robot_state_(std::move(state)) {}
+    };
+
     std::shared_ptr<State> robot_state_;
-    std::shared_ptr<UdpSession> session_;
+    std::shared_ptr<Session> session_;
 
-    static boost::asio::awaitable<void> receive_messages(std::shared_ptr<UdpSession> session);
+    static boost::asio::awaitable<void> receive_messages(std::shared_ptr<Session> session);
     static Message parse_message(const std::vector<uint8_t>& buffer);
-};
-
-struct BroadcastSession {
-    using udp = boost::asio::ip::udp;
-
-    udp::socket socket;
-    std::array<char, 1024> recv_buffer{};
-    std::unique_ptr<viam::yaskawa::ViamControllerLogParser> log_parser;
-
-    explicit BroadcastSession(boost::asio::io_context& io_context)
-        : socket(io_context), log_parser(std::make_unique<viam::yaskawa::ViamControllerLogParser>()) {}
 };
 
 class UdpBroadcastListener {
@@ -396,12 +384,20 @@ class UdpBroadcastListener {
    private:
     using udp = boost::asio::ip::udp;
 
+    struct Session {
+        udp::socket socket_;
+        std::array<char, 1024> recv_buffer_{};
+        std::unique_ptr<viam::yaskawa::ViamControllerLogParser> log_parser_;
+        explicit Session(boost::asio::io_context& io_context)
+            : socket_(io_context), log_parser_(std::make_unique<viam::yaskawa::ViamControllerLogParser>()) {}
+    };
+
     boost::asio::io_context& io_context_;
     uint16_t port_;
     bool started_{false};
-    std::shared_ptr<BroadcastSession> session_;
+    std::shared_ptr<Session> session_;
 
-    static boost::asio::awaitable<void> receive_broadcasts(std::shared_ptr<BroadcastSession> session);
+    static boost::asio::awaitable<void> receive_broadcasts(std::shared_ptr<Session> session);
 };
 
 class GoalRequestHandle;
