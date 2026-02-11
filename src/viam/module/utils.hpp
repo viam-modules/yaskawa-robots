@@ -13,7 +13,9 @@
 /// Logger implementation that writes to VIAM SDK logging infrastructure
 class ViamSdkLogger final : public viam::yaskawa::ILogger {
    public:
-    explicit ViamSdkLogger(viam::yaskawa::LogLevel min_level = viam::yaskawa::LogLevel::INFO) noexcept : min_level_(min_level) {}
+    explicit ViamSdkLogger(viam::yaskawa::LogLevel min_level = viam::yaskawa::LogLevel::INFO) {
+        set_min_level(min_level);
+    }
 
     ~ViamSdkLogger() final = default;
 
@@ -24,6 +26,23 @@ class ViamSdkLogger final : public viam::yaskawa::ILogger {
 
     void set_min_level(viam::yaskawa::LogLevel level) final {
         const std::lock_guard<std::mutex> lock{mutex_};
+        using namespace viam::sdk;
+        switch (level) {
+            case viam::yaskawa::LogLevel::DEBUG:
+                viam::sdk::LogManager::get().set_global_log_level(log_level::debug);
+                break;
+            case viam::yaskawa::LogLevel::INFO:
+                viam::sdk::LogManager::get().set_global_log_level(log_level::info);
+                break;
+            case viam::yaskawa::LogLevel::WARNING:
+                viam::sdk::LogManager::get().set_global_log_level(log_level::warn);
+                break;
+            case viam::yaskawa::LogLevel::ERROR:
+            case viam::yaskawa::LogLevel::CRITICAL:
+                viam::sdk::LogManager::get().set_global_log_level(log_level::error);
+                break;
+        }
+
         min_level_ = level;
     }
 
@@ -81,3 +100,6 @@ std::optional<T> find_config_attribute(const viam::sdk::ResourceConfig& cfg, con
 }
 
 Eigen::Vector3d transform_vector(const Eigen::Vector3d& vector, const Eigen::Matrix3d& rotation_matrix);
+
+// Generate ISO8601 timestamp string with microsecond precision
+std::string unix_time_iso8601();

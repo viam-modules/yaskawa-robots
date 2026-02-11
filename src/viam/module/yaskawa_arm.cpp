@@ -35,14 +35,15 @@
 #include <boost/range/algorithm.hpp>
 
 #include <viam/lib/robot_socket.hpp>
+#include <viam/lib/scope_guard.hpp>
 #include <viam/sdk/common/pose.hpp>
 #include <viam/sdk/common/proto_value.hpp>
 #include <viam/sdk/components/component.hpp>
+#include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
 #include <viam/sdk/module/module.hpp>
 #include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
-#include <viam/sdk/resource/resource.hpp>
 
 #include <third_party/trajectories/Trajectory.h>
 
@@ -61,7 +62,8 @@ extern "C" void free_orientation_vector_components(double* ds);
 
 namespace {
 
-constexpr double k_waypoint_equivalancy_epsilon_rad = 1e-4;
+constexpr double k_min_sampling_freq_hz = 1.0;
+constexpr double k_max_sampling_freq_hz = 100.0;
 
 pose cartesian_position_to_pose(CartesianPosition&& pos) {
     auto q = std::unique_ptr<void, decltype(&free_quaternion_memory)>(
@@ -77,26 +79,6 @@ pose cartesian_position_to_pose(CartesianPosition&& pos) {
     auto theta = radians_to_degrees(components[3]);
 
     return {position, orientation, theta};
-}
-
-std::string unix_time_iso8601() {
-    namespace chrono = std::chrono;
-    std::stringstream stream;
-
-    const auto now = chrono::system_clock::now();
-    const auto seconds_part = chrono::duration_cast<chrono::seconds>(now.time_since_epoch());
-    const auto tt = chrono::system_clock::to_time_t(chrono::system_clock::time_point{seconds_part});
-    const auto delta_us = chrono::duration_cast<chrono::microseconds>(now.time_since_epoch() - seconds_part);
-
-    struct tm buf;
-    auto* ret = gmtime_r(&tt, &buf);
-    if (ret == nullptr) {
-        throw std::runtime_error("failed to convert time to iso8601");
-    }
-    stream << std::put_time(&buf, "%FT%T");
-    stream << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
-
-    return stream.str();
 }
 
 std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
@@ -121,6 +103,30 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
                         k_max_threshold,
                         *threshold));
     }
+    auto sampling_freq = find_config_attribute<double>(cfg, "trajectory_sampling_freq_hz");
+    if (sampling_freq && (*sampling_freq < k_min_sampling_freq_hz || *sampling_freq > k_max_sampling_freq_hz)) {
+        throw std::invalid_argument(
+            boost::str(boost::format("attribute `trajectory_sampling_freq_hz` should be between %1% and %2%, it is: %3% Hz") %
+                       k_min_sampling_freq_hz % k_max_sampling_freq_hz % *sampling_freq));
+    }
+
+    auto waypoint_dedup_tolerance = find_config_attribute<double>(cfg, "waypoint_deduplication_tolerance_deg");
+    constexpr double k_min_waypoint_dedup_tolerance_deg = 0.0;
+    constexpr double k_max_waypoint_dedup_tolerance_deg = 10.0;
+    if (waypoint_dedup_tolerance && (*waypoint_dedup_tolerance < k_min_waypoint_dedup_tolerance_deg ||
+                                     *waypoint_dedup_tolerance > k_max_waypoint_dedup_tolerance_deg)) {
+        throw std::invalid_argument(
+            std::format("attribute `waypoint_deduplication_tolerance_deg` should be between {} and {}, it is: {} degrees",
+                        k_min_waypoint_dedup_tolerance_deg,
+                        k_max_waypoint_dedup_tolerance_deg,
+                        *waypoint_dedup_tolerance));
+    }
+
+    // Validate telemetry_output_path if provided
+    auto telemetry_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
+    if (telemetry_path && telemetry_path->empty()) {
+        throw std::invalid_argument("attribute `telemetry_output_path` cannot be empty");
+    }
 
     auto group_index = find_config_attribute<double>(cfg, "group_index");
     constexpr int k_min_group_index = 0;
@@ -136,23 +142,7 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     return {};
 }
 
-template <typename Callable>
-auto make_scope_guard(Callable&& cleanup) {
-    struct guard {
-       public:
-        explicit guard(Callable&& cleanup) : cleanup_(std::move(cleanup)) {}
-        void deactivate() {
-            cleanup_ = [] {};
-        }
-        ~guard() {
-            cleanup_();
-        }
-
-       private:
-        std::function<void()> cleanup_;
-    };
-    return guard{std::forward<Callable>(cleanup)};
-}
+using viam::make_scope_guard;
 
 }  // namespace
 
@@ -179,7 +169,11 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
             model,
             // NOLINTNEXTLINE(performance-unnecessary-value-param): Signature is
             // fixed by ModelRegistration.
-            [&, model](const auto& deps, const auto& config) { return std::make_shared<YaskawaArm>(model, deps, config, io_context); },
+            [&, model](const auto& deps, const auto& config) {
+                auto robot = std::make_shared<YaskawaArm>(model, deps, config, io_context);
+                robot->configure(deps, config);
+                return robot;
+            },
             [](auto const& config) { return validate_config_(config); });
     };
 
@@ -187,9 +181,12 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
     return {std::make_move_iterator(begin(registrations)), std::make_move_iterator(end(registrations))};
 }
 
-YaskawaArm::YaskawaArm(Model model, const Dependencies& deps, const ResourceConfig& cfg, boost::asio::io_context& io_context)
+YaskawaArm::YaskawaArm(Model model, const Dependencies&, const ResourceConfig& cfg, boost::asio::io_context& io_context)
     : Arm(cfg.name()), model_(std::move(model)), io_context_(io_context) {
     // Configure the global logger to use VIAM SDK logging
+}
+
+void YaskawaArm::configure(const Dependencies& deps, const ResourceConfig& cfg) {
     configure_logger(cfg);
 
     VIAM_SDK_LOG(info) << "Yaskawa Arm constructor called (model: " << model_.to_string() << ")";
@@ -199,7 +196,6 @@ YaskawaArm::YaskawaArm(Model model, const Dependencies& deps, const ResourceConf
 
 void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     VIAM_SDK_LOG(info) << "Yaskawa arm  starting up";
-    auto host = find_config_attribute<std::string>(config, "host").value();
 
     const auto module_executable_path = boost::dll::program_location();
     const auto module_executable_directory = module_executable_path.parent_path();
@@ -208,13 +204,41 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     VIAM_SDK_LOG(info) << "Yaskawa robots module executable found in `" << module_executable_path << "; resources will be found in `"
                        << resource_root_ << "`";
 
+    if (robot_) {
+        VIAM_SDK_LOG(info) << "already connected to a Yaskawa arm, resetting connection";
+        robot_->disconnect();
+    }
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
-    auto speed = find_config_attribute<double>(config, "speed_rad_per_sec").value();
-    auto acceleration = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
-    auto group_index = static_cast<std::uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));
+    // Get telemetry output path from config or fall back to VIAM_MODULE_DATA
+    telemetry_output_path_ = [&] {
+        auto path = find_config_attribute<std::string>(config, "telemetry_output_path");
+        if (path) {
+            return path.value();
+        }
 
-    robot_ = std::make_shared<YaskawaController>(io_context_, speed, acceleration, group_index, host);
+        auto* const viam_module_data = std::getenv("VIAM_MODULE_DATA");  // NOLINT: Yes, we know getenv isn't thread safe
+        if (!viam_module_data) {
+            throw std::runtime_error("required environment variable `VIAM_MODULE_DATA` unset");
+        }
+        VIAM_SDK_LOG(debug) << "VIAM_MODULE_DATA: " << viam_module_data;
+
+        return std::string{viam_module_data};
+    }();
+
+    VIAM_SDK_LOG(debug) << "telemetry output path set : " << telemetry_output_path_;
+
+    robot_ = std::make_shared<YaskawaController>(io_context_, config);
+
+    // Setup trajectory logging (always enabled)
+    robot_->set_trajectory_loggers(model_.model_name(), [weak = weak_from_this()]() -> std::optional<std::string> {
+        auto self = weak.lock();
+        if (!self) {
+            return std::nullopt;
+        }
+        std::string res = self->telemetry_output_path();
+        return std::make_optional(res);
+    });
 
     constexpr int k_max_connection_try = 5;
     int connection_try = 0;
@@ -235,14 +259,12 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
         }
     }
     if (!robot_->checkGroupIndex()) {
-        // added the disconnect so the yaskawa can successfully reconfigure if this error occurs.
-        // TODO investigate the need for disconnect.
-        robot_->disconnect();
         std::ostringstream buffer;
         buffer << std::format("group_index {} is not available on the arm controller", robot_->get_group_index());
         throw std::invalid_argument(buffer.str());
     }
 }
+
 void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     const std::unique_lock wlock{config_mutex_};
     VIAM_SDK_LOG(warn) << "Reconfigure called: configuring new state";
@@ -262,32 +284,36 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
                                               const viam::sdk::ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
 
-    if (!positions.empty()) {
-        std::list<Eigen::VectorXd> waypoints;
-
-        // Convert joint positions from degrees to radians and filter duplicate
-        // waypoints
-        for (const auto& position : positions) {
-            auto next_waypoint_deg = Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
-            auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg)).eval();
-
-            // Skip waypoints that are too close to the previous one to avoid
-            // redundant motion
-            if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), k_waypoint_equivalancy_epsilon_rad))) {
-                continue;
-            }
-            waypoints.emplace_back(std::move(next_waypoint_rad));
-        }
-
-        const auto unix_time = unix_time_iso8601();
-
-        // Execute the move command and block until completion
-        // This will throw if an error occurs during motion
-        robot_->move(std::move(waypoints), unix_time)->wait();
+    if (positions.empty()) {
+        throw std::invalid_argument("positions must not be empty");
     }
+
+    std::list<Eigen::VectorXd> waypoints;
+
+    // Convert joint positions from degrees to radians and filter duplicate
+    // waypoints
+    for (const auto& position : positions) {
+        auto next_waypoint_deg = Eigen::VectorXd::Map(position.data(), boost::numeric_cast<Eigen::Index>(position.size()));
+        auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg)).eval();
+
+        // Skip waypoints that are too close to the previous one to avoid
+        // redundant motion
+        if ((!waypoints.empty()) && (next_waypoint_rad.isApprox(waypoints.back(), robot_->get_waypoint_deduplication_tolerance_rad()))) {
+            continue;
+        }
+        waypoints.emplace_back(std::move(next_waypoint_rad));
+    }
+
+    const auto unix_time = unix_time_iso8601();
+
+    // Execute the move command and block until completion
+    // The controller handles move locking internally
+    robot_->move(std::move(waypoints), unix_time)->wait();
 }
 
 void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
+    const std::shared_lock rlock{config_mutex_};
+
     auto next_waypoint_deg = Eigen::VectorXd::Map(positions.data(), boost::numeric_cast<Eigen::Index>(positions.size())).eval();
     auto next_waypoint_rad = degrees_to_radians(std::move(next_waypoint_deg));
     std::list<Eigen::VectorXd> waypoints;
@@ -295,7 +321,8 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 
     const auto unix_time = unix_time_iso8601();
 
-    // move will throw if an error occurs
+    // Execute the move command and block until completion
+    // The controller handles move locking internally
     robot_->move(std::move(waypoints), unix_time)->wait();
 }
 

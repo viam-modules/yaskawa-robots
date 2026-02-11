@@ -40,7 +40,15 @@ std::vector<CartesianPosition> generateCirclePosition(double r, double lb, doubl
 }
 
 void example(asio::io_context& io_context) {
-    auto robot = std::make_shared<YaskawaController>(io_context, 1.1, 1.1, 0, "10.1.11.177");
+    const viam::sdk::ResourceConfig cfg(
+        "type",
+        "name",
+        "rdk",
+        {{"host", "10.1.11.177"}, {"speed_rad_per_sec", 1.1}, {"acceleration_rad_per_sec2", 1.1}, {"group_index", 0}},
+        "rdk:component:arm",
+        viam::sdk::Model("viam", "yaskawa-robots", "gp12"));
+
+    auto robot = std::make_shared<YaskawaController>(io_context, cfg);
     try {
         std::cout << "Connecting to robot..." << '\n';
         robot->connect().get();
