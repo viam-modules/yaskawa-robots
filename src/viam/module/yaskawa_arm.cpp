@@ -263,8 +263,6 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
         buffer << std::format("group_index {} is not available on the arm controller", robot_->get_group_index());
         throw std::invalid_argument(buffer.str());
     }
-
-    VIAM_SDK_LOG(info) << "configure done ";
 }
 
 void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {

@@ -382,7 +382,7 @@ awaitable<void> TcpRobotSocket::process_requests(std::shared_ptr<Session> sessio
                 break;
             }
             if (!result) {
-                LOGGING(debug) << "TCP process_requests: queue returned empty result";
+                LOGGING(error) << "TCP process_requests: queue returned empty result";
                 break;
             }
             auto request_pair = std::move(result.value());
