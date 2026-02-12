@@ -1,12 +1,12 @@
-FROM debian:trixie
+FROM ubuntu:noble
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update
+RUN apt update
 
-RUN apt-get -y dist-upgrade
+RUN apt -y dist-upgrade
 
-RUN apt-get -y --no-install-recommends install \
+RUN apt update && apt -y --no-install-recommends install \
     build-essential \
     ca-certificates \
     curl \
