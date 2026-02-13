@@ -214,6 +214,10 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     VIAM_SDK_LOG(info) << "Yaskawa robots module executable found in `" << module_executable_path << "; resources will be found in `"
                        << resource_root_ << "`";
 
+    if (robot_) {
+        VIAM_SDK_LOG(info) << "already connected to a Yaskawa arm, resetting connection";
+        robot_->disconnect();
+    }
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
     // Get telemetry output path from config or fall back to VIAM_MODULE_DATA
@@ -264,15 +268,13 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
             }
         }
     }
-    if (!CheckGroupMessage(robot_->checkGroupIndex().get()).is_known_group) {
-        // added the disconnect so the yaskawa can successfully reconfigure if this error occurs.
-        // TODO investigate the need for disconnect.
-        robot_->disconnect();
+    if (!robot_->checkGroupIndex()) {
         std::ostringstream buffer;
         buffer << std::format("group_index {} is not available on the arm controller", robot_->get_group_index());
         throw std::invalid_argument(buffer.str());
     }
 }
+
 void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
     const std::unique_lock wlock{config_mutex_};
     VIAM_SDK_LOG(warn) << "Reconfigure called: configuring new state";
@@ -282,7 +284,7 @@ void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg
 
 std::vector<double> YaskawaArm::get_joint_positions(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
-    auto joint_rads = StatusMessage(robot_->get_robot_position_velocity_torque().get());
+    auto joint_rads = robot_->get_robot_position_velocity_torque();
     auto joint_position_degree = joint_rads.position | boost::adaptors::transformed(radians_to_degrees<const double&>);
     return {std::begin(joint_position_degree), std::end(joint_position_degree)};
 }
@@ -360,7 +362,7 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 pose YaskawaArm::get_end_position(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
 
-    auto p = cartesian_position_to_pose(CartesianPosition(robot_->getCartPosition().get()));
+    auto p = cartesian_position_to_pose(robot_->getCartPosition());
 
     // The controller is what provides is with a cartesian position. However, it
     // is not aware of the base links position, i.e. that is translated up by some
@@ -382,7 +384,10 @@ pose YaskawaArm::get_end_position(const ProtoStruct&) {
 }
 
 void YaskawaArm::stop(const ProtoStruct&) {
-    robot_->stop().get();
+    if (!robot_->stop()) {
+        // we were not checking this before. Add a log to see how often it occurs
+        VIAM_SDK_LOG(warn) << "stop did not error but did not return as stopped";
+    }
 }
 
 ProtoStruct YaskawaArm::do_command(const ProtoStruct&) {
@@ -406,5 +411,5 @@ YaskawaArm::~YaskawaArm() {
 }
 
 bool YaskawaArm::is_moving() {
-    return RobotStatusMessage(robot_->get_robot_status().get()).in_motion;
+    return robot_->get_robot_status().in_motion;
 }

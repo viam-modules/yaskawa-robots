@@ -22,7 +22,6 @@
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -201,6 +200,7 @@ struct Message {
     Message(Message&& msg) noexcept;
     Message(const Message&);
     Message& operator=(const Message&);
+    std::string get_error(message_type_t expected_type) const;
 
     friend std::ostream& operator<<(std::ostream& os, const Message& msg);
 };
@@ -269,11 +269,26 @@ struct State {
 struct GoalStatusMessage {
     int32_t goal_id;
     goal_state_t state;
+    uint32_t current_queue_size;
     double progress;
     int64_t timestamp_ms;
 
     GoalStatusMessage() = default;
     GoalStatusMessage(const Message& msg);
+};
+
+struct GoalAcceptedMessage {
+    int32_t goal_id;
+    uint32_t num_trajectory_accepted;
+    int64_t timestamp_ms;
+
+    GoalAcceptedMessage() = default;
+    GoalAcceptedMessage(const Message& msg);
+};
+
+struct MakeGoalResult {
+    GoalAcceptedMessage accepted;
+    std::vector<trajectory_point_t> remaining_trajectory;
 };
 
 class RobotSocketBase {
@@ -315,18 +330,21 @@ class TcpRobotSocket : public RobotSocketBase {
    private:
     using tcp = boost::asio::ip::tcp;
 
-    tcp::socket socket_;
-    std::shared_ptr<AsyncQueue<std::pair<Message, std::promise<Message>>>> request_queue_;
-    std::atomic<bool> running_{false};
+    struct Session {
+        tcp::socket socket_;
+        std::shared_ptr<AsyncQueue<std::pair<Message, std::promise<Message>>>> queue_;
+        Session(boost::asio::io_context& io_context, boost::asio::any_io_executor exec)
+            : socket_(io_context), queue_(AsyncQueue<std::pair<Message, std::promise<Message>>>::create(std::move(exec))) {}
+    };
 
-    boost::asio::awaitable<void> process_requests();
-    std::future<void> async_send(Message message);
-    std::future<Message> async_receive();
+    std::shared_ptr<Session> session_;
+
+    static boost::asio::awaitable<void> process_requests(std::shared_ptr<Session> session);
 };
 
 class UdpRobotSocket : public RobotSocketBase {
    public:
-    UdpRobotSocket(boost::asio::io_context& io_context, State& state);
+    UdpRobotSocket(boost::asio::io_context& io_context, std::shared_ptr<State> state);
     ~UdpRobotSocket() override;
 
     std::future<void> connect() override;
@@ -340,18 +358,19 @@ class UdpRobotSocket : public RobotSocketBase {
    private:
     using udp = boost::asio::ip::udp;
 
-    State& robot_state_;
+    struct Session {
+        udp::socket socket_;
+        mutable std::shared_mutex status_mutex_;
+        std::variant<std::monostate, Message, std::promise<Message>> cached_status_;
+        std::variant<std::monostate, Message, std::promise<Message>> cached_robot_status_;
+        std::shared_ptr<State> robot_state_;
+        Session(boost::asio::io_context& io_context, std::shared_ptr<State> state) : socket_(io_context), robot_state_(std::move(state)) {}
+    };
 
-    udp::socket socket_;
-    std::atomic<bool> running_{false};
+    std::shared_ptr<State> robot_state_;
+    std::shared_ptr<Session> session_;
 
-    mutable std::shared_mutex status_mutex_;
-    std::variant<std::monostate, Message, std::promise<Message>> cached_status_;
-    std::variant<std::monostate, Message, std::promise<Message>> cached_robot_status_;
-
-    boost::asio::awaitable<void> receive_messages();
-    void handle_status_message(const Message& message);
-    void handle_robot_status_message(const Message& message);
+    static boost::asio::awaitable<void> receive_messages(std::shared_ptr<Session> session);
     static Message parse_message(const std::vector<uint8_t>& buffer);
 };
 
@@ -366,13 +385,20 @@ class UdpBroadcastListener {
    private:
     using udp = boost::asio::ip::udp;
 
+    struct Session {
+        udp::socket socket_;
+        std::array<char, 1024> recv_buffer_{};
+        std::unique_ptr<viam::yaskawa::ViamControllerLogParser> log_parser_;
+        explicit Session(boost::asio::io_context& io_context)
+            : socket_(io_context), log_parser_(std::make_unique<viam::yaskawa::ViamControllerLogParser>()) {}
+    };
+
     boost::asio::io_context& io_context_;
-    udp::socket socket_;
     uint16_t port_;
-    std::atomic<bool> running_{false};
-    std::array<char, 1024> recv_buffer_;
-    std::unique_ptr<viam::yaskawa::ViamControllerLogParser> log_parser_;
-    boost::asio::awaitable<void> receive_broadcasts();
+    bool started_{false};
+    std::shared_ptr<Session> session_;
+
+    static boost::asio::awaitable<void> receive_broadcasts(std::shared_ptr<Session> session);
 };
 
 class GoalRequestHandle;
@@ -387,24 +413,24 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     uint32_t get_group_index() const;
     double get_waypoint_deduplication_tolerance_rad() const;
 
-    std::future<Message> send_test_trajectory();
-    std::future<Message> turn_servo_power_on();
-    std::future<Message> send_heartbeat();
-    std::future<Message> send_test_error_command();
-    std::future<Message> get_error_info();
-    std::future<Message> get_robot_position_velocity_torque();
-    std::future<Message> get_robot_status();
-    std::future<Message> register_udp_port(uint16_t port);
-    std::future<Message> reset_errors();
-    std::future<Message> echo_trajectory();
-    std::future<Message> get_goal_status(int32_t id);
-    std::future<Message> cancel_goal(int32_t id);
-    std::future<Message> stop();
-    std::future<Message> setMotionMode(uint8_t mode);
-    std::future<Message> getCartPosition();
-    std::future<Message> cartPosToAngle(CartesianPosition& pos);
-    std::future<Message> angleToCartPos(AnglePosition& pos);
-    std::future<Message> checkGroupIndex();
+    void send_test_trajectory();
+    void turn_servo_power_on();
+    void send_heartbeat();
+    void send_test_error_command();
+    void get_error_info();
+    StatusMessage get_robot_position_velocity_torque();
+    RobotStatusMessage get_robot_status();
+    void register_udp_port(uint16_t port);
+    void reset_errors();
+    std::future<Message> echo_trajectory();  // currently unused and unimplemented on the controller
+    GoalStatusMessage get_goal_status(int32_t id);
+    void cancel_goal(int32_t id);
+    bool stop();
+    void setMotionMode(uint8_t mode);
+    CartesianPosition getCartPosition();
+    AnglePosition cartPosToAngle(CartesianPosition& pos);
+    CartesianPosition angleToCartPos(AnglePosition& pos);
+    bool checkGroupIndex();
 
     std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
 
@@ -413,7 +439,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
    private:
     boost::asio::io_context& io_context_;
     std::string host_;
-    State robot_state_;
+    std::shared_ptr<State> robot_state_;
 
     std::unique_ptr<TcpRobotSocket> tcp_socket_;
     std::unique_ptr<UdpRobotSocket> udp_socket_;
@@ -423,7 +449,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     uint32_t group_index_;
     double trajectory_sampling_freq_;
     double waypoint_dedup_tolerance_rad_;
-    std::thread heartbeat_;
 
     // Move locking: prevents concurrent moves
     std::atomic<bool> move_in_progress_{false};
@@ -436,13 +461,13 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;
-    std::future<Message> make_goal_(std::list<Eigen::VectorXd> waypoints,
-                                    const std::string& unix_time,
-                                    std::optional<RealtimeTrajectoryLogger>& logger);
-    std::future<Message> send_goal_(uint32_t group_index,
-                                    uint32_t axes_controlled,
-                                    const std::vector<trajectory_point_t>& trajectory,
-                                    const std::vector<tolerance_t>& tolerance);
+    std::optional<MakeGoalResult> make_goal_(std::list<Eigen::VectorXd> waypoints,
+                                             const std::string& unix_time,
+                                             std::optional<RealtimeTrajectoryLogger>& logger);
+    GoalAcceptedMessage send_goal_(uint32_t group_index,
+                                   uint32_t axes_controlled,
+                                   const std::vector<trajectory_point_t>& trajectory,
+                                   const std::vector<tolerance_t>& tolerance);
 };
 
 class GoalRequestHandle {
