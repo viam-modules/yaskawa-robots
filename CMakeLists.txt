@@ -121,8 +121,8 @@ enable_testing()
 
 FetchContent_Declare(
   trajex
-  GIT_REPOSITORY https://github.com/acmorrow/universal-robots.git
-  GIT_TAG RSDK-12835-service-refactor
+  GIT_REPOSITORY https://github.com/viam-modules/universal-robots.git
+  GIT_TAG ac30d586ce03e6874534668a139324bb26c158b2
   SOURCE_SUBDIR src/viam/trajex
 )
 

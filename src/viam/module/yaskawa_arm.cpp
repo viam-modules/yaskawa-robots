@@ -127,9 +127,10 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
         throw std::invalid_argument(std::format("attribute `path_tolerance_rad` must be between 0.0 and 3.0, got {}", *path_tolerance));
     }
 
-    auto colinearization = find_config_attribute<double>(cfg, "colinearization_ratio");
-    if (colinearization && (*colinearization < 0.0 || *colinearization > 2.0)) {
-        throw std::invalid_argument(std::format("attribute `colinearization_ratio` must be between 0.0 and 2.0, got {}", *colinearization));
+    auto collinearization = find_config_attribute<double>(cfg, "collinearization_ratio");
+    if (collinearization && (*collinearization < 0.0 || *collinearization > 2.0)) {
+        throw std::invalid_argument(
+            std::format("attribute `collinearization_ratio` must be between 0.0 and 2.0, got {}", *collinearization));
     }
 
     // Validate telemetry_output_path if provided

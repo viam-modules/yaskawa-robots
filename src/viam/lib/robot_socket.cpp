@@ -776,7 +776,7 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
 
     use_new_trajectory_planner_ = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
     path_tolerance_rad_ = find_config_attribute<double>(config, "path_tolerance_rad").value_or(0.1);
-    colinearization_ratio_ = find_config_attribute<double>(config, "colinearization_ratio");
+    collinearization_ratio_ = find_config_attribute<double>(config, "collinearization_ratio");
 
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
@@ -1213,7 +1213,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
     const auto max_velocity_vec = Eigen::VectorXd::Constant(6, speed_);
     const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, acceleration_);
 
-    const auto new_trajectory = [&]() -> std::optional<std::vector<trajectory_point_t>> {
+    auto new_trajectory = [&]() -> std::optional<std::vector<trajectory_point_t>> {
         if (!use_new_trajectory_planner_) {
             return std::nullopt;
         }
@@ -1243,8 +1243,8 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
 
                     auto path_opts = totg::path::options{}.set_max_blend_deviation(path_tolerance_rad_);
 
-                    if (colinearization_ratio_) {
-                        path_opts.set_max_linear_deviation(path_tolerance_rad_ * (*colinearization_ratio_));
+                    if (collinearization_ratio_) {
+                        path_opts.set_max_linear_deviation(path_tolerance_rad_ * (*collinearization_ratio_));
                     }
 
                     auto trajex_path = totg::path::create(trajex_waypoints, path_opts);
@@ -1252,6 +1252,14 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                     // Create a copy of trajex_opts for each segment since it's consumed by create()
                     totg::trajectory::options segment_opts = trajex_opts;
                     auto trajex_trajectory = totg::trajectory::create(std::move(trajex_path), std::move(segment_opts));
+
+                    total_waypoints += segment.size();
+                    total_duration += trajex_trajectory.duration().count();
+                    total_arc_length += trajex_trajectory.path().length();
+
+                    if (total_duration > 600) {
+                        throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
+                    }
 
                     auto sampler =
                         totg::uniform_sampler::quantized_for_trajectory(trajex_trajectory, types::hertz{trajectory_sampling_freq_});
@@ -1279,14 +1287,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                         all_trajex_samples.push_back(point);
                     }
 
-                    total_waypoints += segment.size();
-                    total_duration += trajex_trajectory.duration().count();
-                    total_arc_length += trajex_trajectory.path().length();
                     cumulative_time += std::chrono::duration<double>(trajex_trajectory.duration());
-
-                    if (total_duration > 600) {
-                        throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
-                    }
 
                     LOGGING(info) << "trajex/totg segment generated successfully, waypoints: " << segment.size()
                                   << ", duration: " << trajex_trajectory.duration().count() << "s, samples: " << all_trajex_samples.size()
@@ -1328,7 +1329,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
 
     std::vector<trajectory_point_t> samples;
     if (new_trajectory) {
-        samples = *new_trajectory;
+        samples = std::move(*new_trajectory);
     } else {
         LOGGING(info) << "trajectory generation uses old trajectory generator";
         std::chrono::duration<double> cumulative_time{0};
