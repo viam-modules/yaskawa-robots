@@ -778,8 +778,8 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     use_new_trajectory_planner_ = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
     path_tolerance_rad_ = find_config_attribute<double>(config, "path_tolerance_rad").value_or(0.1);
     collinearization_ratio_ = find_config_attribute<double>(config, "collinearization_ratio");
-    segmentation_threshold_rad_ = find_config_attribute<double>(config, "segmentation_threshold_rad")
-                                  .value_or(k_default_segmentation_threshold);
+    segmentation_threshold_rad_ =
+        find_config_attribute<double>(config, "segmentation_threshold_rad").value_or(k_default_segmentation_threshold);
 
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
