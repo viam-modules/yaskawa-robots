@@ -127,6 +127,12 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
         throw std::invalid_argument(std::format("attribute `path_tolerance_rad` must be between 0.0 and 3.0, got {}", *path_tolerance));
     }
 
+    auto segmentation_threshold = find_config_attribute<double>(cfg, "segmentation_threshold_rad");
+    if (segmentation_threshold && (*segmentation_threshold <= 0.0 || *segmentation_threshold > 0.1)) {
+        throw std::invalid_argument(
+            std::format("attribute `segmentation_threshold_rad` must be between (0.0, 0.1], got {}", *segmentation_threshold));
+    }
+
     auto collinearization = find_config_attribute<double>(cfg, "collinearization_ratio");
     if (collinearization && (*collinearization < 0.0 || *collinearization > 2.0)) {
         throw std::invalid_argument(

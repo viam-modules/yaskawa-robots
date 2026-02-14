@@ -83,6 +83,7 @@ xt::xarray<double> eigen_waypoints_to_xarray(const std::list<Eigen::VectorXd>& w
 }
 
 constexpr double k_default_waypoint_deduplication_tolerance_rads = 1e-3;
+constexpr double k_default_segmentation_threshold = 0.005;
 
 using viam::ScopeGuard;
 constexpr double k_default_min_timestep_sec = 1e-2;
@@ -777,6 +778,8 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     use_new_trajectory_planner_ = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
     path_tolerance_rad_ = find_config_attribute<double>(config, "path_tolerance_rad").value_or(0.1);
     collinearization_ratio_ = find_config_attribute<double>(config, "collinearization_ratio");
+    segmentation_threshold_rad_ = find_config_attribute<double>(config, "segmentation_threshold_rad")
+                                  .value_or(k_default_segmentation_threshold);
 
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
@@ -1199,7 +1202,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
         const auto segment_ab = *where - *prev(where);
         const auto segment_bc = *next(where) - *where;
         const auto dot = segment_ab.normalized().dot(segment_bc.normalized());
-        if (std::fabs(dot + 1.0) < 1e-3) {
+        if (std::fabs(dot + 1.0) < segmentation_threshold_rad_) {
             segments.emplace_back();
             segments.back().splice(segments.back().begin(), waypoints, waypoints.begin(), where);
             segments.back().push_back(*where);
