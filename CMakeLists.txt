@@ -119,30 +119,17 @@ enable_testing()
 # Declare targets
 #
 
-add_library(trajectories)
-
-set_target_properties(trajectories PROPERTIES SYSTEM TRUE)
-
-target_sources(trajectories
-  PRIVATE
-    src/third_party/trajectories/Trajectory.cpp
-    src/third_party/trajectories/Path.cpp
+FetchContent_Declare(
+  trajex
+  GIT_REPOSITORY https://github.com/viam-modules/universal-robots.git
+  GIT_TAG ac30d586ce03e6874534668a139324bb26c158b2
+  SOURCE_SUBDIR src/viam/trajex
 )
 
-target_include_directories(trajectories
-  INTERFACE
-    src
-)
+find_package(xtl CONFIG REQUIRED)
+find_package(xtensor CONFIG REQUIRED)
 
-target_link_libraries(trajectories
-  PUBLIC
-    Eigen3::Eigen
-)
-
-install(
-  TARGETS
-    trajectories
-)
+FetchContent_MakeAvailable(trajex)
 
 
 add_library(viam-yaskawa)
@@ -155,6 +142,11 @@ target_sources(viam-yaskawa
     src/viam/lib/trajectory_logger.cpp
 )
 
+target_include_directories(viam-yaskawa
+  PUBLIC
+    src
+)
+
 target_compile_options( viam-yaskawa PRIVATE -O0)
 
 # Tell boost::dll to use std::filesystem rather than boost::filesystem.
@@ -165,7 +157,8 @@ target_compile_definitions(viam-yaskawa
 
 target_link_libraries(viam-yaskawa
   PUBLIC
-    trajectories
+    viam::trajex::totg-legacy
+    viam::trajex::totg
     Boost::regex
     jsoncpp_lib
     viam-cpp-sdk::viamsdk
