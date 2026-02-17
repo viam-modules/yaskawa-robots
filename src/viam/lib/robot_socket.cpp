@@ -772,41 +772,34 @@ std::future<void> YaskawaController::connect() {
             // Heartbeat thread: sends periodic heartbeats and retries reconnection indefinitely
             // on failure. Exits when the controller is destroyed (weak_ptr expires) or
             // disconnect() is called (running_ set to false).
-            std::thread([self = weak_from_this()]() {
+            heartbeat_thread_ = std::thread([self = weak_from_this()]() {
+                constexpr auto k_heartbeat_interval = std::chrono::milliseconds(100);
                 constexpr auto k_reconnect_delay = std::chrono::seconds(1);
 
-                while (true) {
-                    auto shared = self.lock();
-                    if (!shared || !shared->running_) {
+                while (auto shared = self.lock()) {
+                    if (!shared->running_) {
                         return;
                     }
                     try {
                         shared->send_heartbeat();
                         shared.reset();
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        std::this_thread::sleep_for(k_heartbeat_interval);
                     } catch (const std::exception& e) {
                         LOGGING(warning) << "heartbeat failed: " << e.what();
                         if (!shared->running_) {
                             return;
                         }
-                        // Release shared_ptr during reconnection to avoid preventing
-                        // destruction if disconnect() is called concurrently
-                        shared.reset();
-
-                        std::this_thread::sleep_for(k_reconnect_delay);
-                        auto locked = self.lock();
-                        if (!locked || !locked->running_) {
-                            return;
-                        }
                         try {
-                            locked->reconnect_();
+                            shared->reconnect_();
                             LOGGING(info) << "reconnected successfully";
                         } catch (const std::exception& re) {
                             LOGGING(warning) << std::format("reconnect failed: {}", re.what());
+                            shared.reset();
+                            std::this_thread::sleep_for(k_reconnect_delay);
                         }
                     }
                 }
-            }).detach();
+            });
 
             // Start listening for broadcast messages from robot
             broadcast_listener_->start();
@@ -823,6 +816,9 @@ std::future<void> YaskawaController::connect() {
 void YaskawaController::disconnect() {
     LOGGING(info) << "Yaskawa Controller disconnecting";
     running_ = false;
+    if (heartbeat_thread_.joinable()) {
+        heartbeat_thread_.join();
+    }
     if (udp_socket_) {
         udp_socket_->disconnect();
     }
@@ -848,17 +844,18 @@ void YaskawaController::reconnect_() {
     }
 
     // Create fresh sockets since the old sessions/queues are closed.
-    // On partial failure, clean up whatever was created so we don't
-    // leave sockets in a half-open state for the next attempt.
+    // On partial failure, leave behind disconnected (but non-null) sockets
+    // so other threads get clean errors instead of null dereferences.
+    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
+    udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
+
     try {
-        tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
         auto tcp_future = tcp_socket_->connect();
         if (tcp_future.wait_for(k_connect_timeout) != std::future_status::ready) {
             throw std::runtime_error("TCP connect timed out");
         }
         tcp_future.get();
 
-        udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
         auto udp_future = udp_socket_->connect();
         if (udp_future.wait_for(k_connect_timeout) != std::future_status::ready) {
             throw std::runtime_error("UDP connect timed out");
@@ -870,14 +867,8 @@ void YaskawaController::reconnect_() {
 
         get_robot_status();
     } catch (...) {
-        if (udp_socket_) {
-            udp_socket_->disconnect();
-            udp_socket_.reset();
-        }
-        if (tcp_socket_) {
-            tcp_socket_->disconnect();
-            tcp_socket_.reset();
-        }
+        tcp_socket_->disconnect();
+        udp_socket_->disconnect();
         throw;
     }
     LOGGING(info) << "reconnect complete";

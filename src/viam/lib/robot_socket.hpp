@@ -455,6 +455,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     // Connection lifecycle: true between connect() and disconnect()
     std::atomic<bool> running_{false};
+    std::thread heartbeat_thread_;
 
     std::string robot_model_;
     std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn_;
