@@ -830,6 +830,10 @@ std::future<void> YaskawaController::connect() {
                         if (!shared->running_) {
                             return;
                         }
+                        // reconnect_() replaces the sockets in-place. Any in-progress
+                        // move will fail when it next tries to communicate with the
+                        // controller (goal status / chunk sends), which is the expected
+                        // behavior when the connection drops mid-move.
                         try {
                             shared->reconnect_();
                             LOGGING(info) << "reconnected successfully";
@@ -877,16 +881,15 @@ void YaskawaController::reconnect_() {
 
     if (udp_socket_) {
         udp_socket_->disconnect();
-        udp_socket_.reset();
     }
     if (tcp_socket_) {
         tcp_socket_->disconnect();
-        tcp_socket_.reset();
     }
 
-    // Create fresh sockets since the old sessions/queues are closed.
-    // On partial failure, leave behind disconnected (but non-null) sockets
-    // so other threads get clean errors instead of null dereferences.
+    // Replace sockets without going through null: disconnect() above sets connected_=false
+    // atomically, so concurrent callers will get "Not connected" errors rather than a null
+    // deref. On partial failure the disconnected (but non-null) sockets remain so other
+    // threads continue to get clean errors instead of null dereferences.
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
 
