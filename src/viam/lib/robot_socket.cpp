@@ -881,17 +881,13 @@ void YaskawaController::disconnect() {
 void YaskawaController::reconnect_() {
     LOGGING(info) << "tearing down existing connections for reconnect";
 
-    if (udp_socket_) {
-        udp_socket_->disconnect();
-    }
-    if (tcp_socket_) {
-        tcp_socket_->disconnect();
-    }
+    udp_socket_->disconnect();
+    tcp_socket_->disconnect();
+    // broadcast_listener_ is not restarted here: it is diagnostic-only and its UDP
+    // socket is not affected by TCP/control-plane disconnects.
 
     // Replace sockets without going through null: disconnect() above sets connected_=false
-    // atomically, so concurrent callers will get "Not connected" errors rather than a null
-    // deref. On partial failure the disconnected (but non-null) sockets remain so other
-    // threads continue to get clean errors instead of null dereferences.
+    // atomically, so concurrent callers get "Not connected" rather than a null deref.
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
     udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
 
