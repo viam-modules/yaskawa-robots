@@ -100,7 +100,7 @@ Eigen::VectorXd read_limit_vector(const viam::sdk::ResourceConfig& config, const
     const auto n_dof = static_cast<Eigen::Index>(arr.size());
     if (n_dof != target_dof) {
         throw std::runtime_error(std::format(
-            "the attribute {} number of dof : {} is not equal to the configured numbe rof dof : {}", attribute, n_dof, target_dof));
+            "the attribute {} number of dof : {} is not equal to the configured number of dof : {}", attribute, n_dof, target_dof));
     }
     Eigen::VectorXd result(n_dof);
 

@@ -297,7 +297,6 @@ add_executable(realtime_trajectory_logger_test)
 target_sources(realtime_trajectory_logger_test
   PRIVATE
     src/viam/lib/test/realtime_trajectory_logger_test.cpp
-    src/viam/module/utils.cpp
 )
 
 target_link_libraries(realtime_trajectory_logger_test
