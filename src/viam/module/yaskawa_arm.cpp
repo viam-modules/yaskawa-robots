@@ -122,6 +122,23 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
                         *waypoint_dedup_tolerance));
     }
 
+    auto path_tolerance = find_config_attribute<double>(cfg, "path_tolerance_rad");
+    if (path_tolerance && (*path_tolerance < 0.0 || *path_tolerance > 3.0)) {
+        throw std::invalid_argument(std::format("attribute `path_tolerance_rad` must be between 0.0 and 3.0, got {}", *path_tolerance));
+    }
+
+    auto segmentation_threshold = find_config_attribute<double>(cfg, "segmentation_threshold_rad");
+    if (segmentation_threshold && (*segmentation_threshold <= 0.0 || *segmentation_threshold > 0.1)) {
+        throw std::invalid_argument(
+            std::format("attribute `segmentation_threshold_rad` must be between (0.0, 0.1], got {}", *segmentation_threshold));
+    }
+
+    auto collinearization = find_config_attribute<double>(cfg, "collinearization_ratio");
+    if (collinearization && (*collinearization < 0.0 || *collinearization > 2.0)) {
+        throw std::invalid_argument(
+            std::format("attribute `collinearization_ratio` must be between 0.0 and 2.0, got {}", *collinearization));
+    }
+
     // Validate telemetry_output_path if provided
     auto telemetry_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
     if (telemetry_path && telemetry_path->empty()) {
