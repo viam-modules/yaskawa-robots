@@ -817,6 +817,8 @@ std::future<void> YaskawaController::connect() {
             heartbeat_thread_ = std::thread([self = weak_from_this()]() {
                 constexpr auto k_heartbeat_interval = std::chrono::milliseconds(100);
                 constexpr auto k_reconnect_delay = std::chrono::seconds(1);
+                constexpr uint32_t k_log_every_n_failures = 30;
+                uint32_t consecutive_failures = 0;
 
                 while (auto shared = self.lock()) {
                     if (!shared->running_) {
@@ -824,10 +826,14 @@ std::future<void> YaskawaController::connect() {
                     }
                     try {
                         shared->send_heartbeat();
+                        consecutive_failures = 0;
                         shared.reset();
                         std::this_thread::sleep_for(k_heartbeat_interval);
                     } catch (const std::exception& e) {
-                        LOGGING(warning) << "heartbeat failed: " << e.what();
+                        ++consecutive_failures;
+                        const bool should_log = consecutive_failures == 1 || consecutive_failures % k_log_every_n_failures == 0;
+                        const auto log_level = should_log ? viam::yaskawa::LogLevel::WARNING : viam::yaskawa::LogLevel::DEBUG;
+                        viam::yaskawa::get_global_logger()->log(log_level) << "heartbeat failed: " << e.what();
                         if (!shared->running_) {
                             return;
                         }
@@ -838,10 +844,11 @@ std::future<void> YaskawaController::connect() {
                         try {
                             shared->reconnect_();
                             LOGGING(info) << "reconnected successfully";
+                            consecutive_failures = 0;
                             shared.reset();
                             std::this_thread::sleep_for(k_heartbeat_interval);
                         } catch (const std::exception& re) {
-                            LOGGING(warning) << std::format("reconnect failed: {}", re.what());
+                            viam::yaskawa::get_global_logger()->log(log_level) << std::format("reconnect failed: {}", re.what());
                             shared.reset();
                             std::this_thread::sleep_for(k_reconnect_delay);
                         }
