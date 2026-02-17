@@ -88,6 +88,7 @@ constexpr double k_default_segmentation_threshold = 0.005;
 using viam::ScopeGuard;
 constexpr double k_default_min_timestep_sec = 1e-2;
 constexpr double k_default_trajectory_sampling_freq = 3;
+constexpr auto k_socket_timeout = std::chrono::seconds(5);
 
 constexpr const char* goal_state_to_string(goal_state_t state) {
     switch (state) {
@@ -876,7 +877,6 @@ void YaskawaController::disconnect() {
 }
 
 void YaskawaController::reconnect_() {
-    constexpr auto k_connect_timeout = std::chrono::seconds(5);
     LOGGING(info) << "tearing down existing connections for reconnect";
 
     if (udp_socket_) {
@@ -895,13 +895,13 @@ void YaskawaController::reconnect_() {
 
     try {
         auto tcp_future = tcp_socket_->connect();
-        if (tcp_future.wait_for(k_connect_timeout) != std::future_status::ready) {
+        if (tcp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
             throw std::runtime_error("TCP connect timed out");
         }
         tcp_future.get();
 
         auto udp_future = udp_socket_->connect();
-        if (udp_future.wait_for(k_connect_timeout) != std::future_status::ready) {
+        if (udp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
             throw std::runtime_error("UDP connect timed out");
         }
         udp_future.get();
@@ -997,9 +997,8 @@ void YaskawaController::send_heartbeat() {
     if (!tcp_socket_) {
         throw std::runtime_error("heartbeat failed: no TCP connection");
     }
-    constexpr auto k_heartbeat_timeout = std::chrono::seconds(5);
     auto future = tcp_socket_->send_request(Message(MSG_HEARTBEAT));
-    if (future.wait_for(k_heartbeat_timeout) != std::future_status::ready) {
+    if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
         throw std::runtime_error("heartbeat timed out");
     }
     auto msg = future.get();
