@@ -838,11 +838,13 @@ std::future<void> YaskawaController::connect() {
                         try {
                             shared->reconnect_();
                             LOGGING(info) << "reconnected successfully";
+                            shared.reset();
+                            std::this_thread::sleep_for(k_heartbeat_interval);
                         } catch (const std::exception& re) {
                             LOGGING(warning) << std::format("reconnect failed: {}", re.what());
+                            shared.reset();
+                            std::this_thread::sleep_for(k_reconnect_delay);
                         }
-                        shared.reset();
-                        std::this_thread::sleep_for(k_reconnect_delay);
                     }
                 }
             });
