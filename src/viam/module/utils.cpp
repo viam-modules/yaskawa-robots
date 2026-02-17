@@ -1,10 +1,13 @@
 #include "utils.hpp"
 
 #include <chrono>
+#include <format>
 #include <iomanip>
 #include <sstream>
+#include <vector>
 
 #include <Eigen/Dense>
+#include <viam/sdk/common/proto_value.hpp>
 
 namespace {
 /// Convert a string log level to the LogLevel enum
@@ -65,4 +68,42 @@ std::string unix_time_iso8601() {
     stream << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
 
     return stream.str();
+}
+
+size_t validate_joint_limit_attribute(const viam::sdk::ResourceConfig& cfg, const std::string& attribute) {
+    using viam::sdk::ProtoValue;
+
+    const auto& attributes = cfg.attributes();
+    auto it = attributes.find(attribute);
+    if (it == attributes.end()) {
+        throw std::invalid_argument(std::format("attribute `{}` is required", attribute));
+    }
+
+    const auto& value = it->second;
+
+    if (const auto* scalar = value.get<double>()) {
+        if (*scalar <= 0.0) {
+            throw std::invalid_argument(std::format("attribute `{}` must be strictly positive, got {}", attribute, *scalar));
+        }
+        return 1;
+    }
+
+    if (const auto* arr = value.get<std::vector<ProtoValue>>()) {
+        if (arr->empty()) {
+            throw std::invalid_argument(std::format("attribute `{}` array must not be empty", attribute));
+        }
+        for (size_t i = 0; i < arr->size(); ++i) {
+            const auto* elem = (*arr)[i].get<double>();
+            if (!elem) {
+                throw std::invalid_argument(std::format("attribute `{}` element {} is not a number", attribute, i));
+            }
+            if (*elem <= 0.0) {
+                throw std::invalid_argument(
+                    std::format("attribute `{}` element {} must be strictly positive, got {}", attribute, i, *elem));
+            }
+        }
+        return arr->size();
+    }
+
+    throw std::invalid_argument(std::format("attribute `{}` must be a number or array of numbers", attribute));
 }

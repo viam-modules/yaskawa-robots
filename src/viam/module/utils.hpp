@@ -103,3 +103,8 @@ Eigen::Vector3d transform_vector(const Eigen::Vector3d& vector, const Eigen::Mat
 
 // Generate ISO8601 timestamp string with microsecond precision
 std::string unix_time_iso8601();
+
+// Validates a config attribute is a strictly positive scalar or array of positive doubles.
+// Returns the dimension of the element
+// Throws if absent, wrong type, empty, zero, or negative.
+size_t validate_joint_limit_attribute(const viam::sdk::ResourceConfig& cfg, const std::string& attribute);

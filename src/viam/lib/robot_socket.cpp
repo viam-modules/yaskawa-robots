@@ -47,6 +47,7 @@
 
 #include <third_party/trajectories/Trajectory.h>
 #include <viam/module/utils.hpp>
+#include <viam/sdk/common/proto_value.hpp>
 
 #if __has_include(<xtensor/containers/xarray.hpp>)
 #include <xtensor/containers/xarray.hpp>
@@ -84,6 +85,46 @@ xt::xarray<double> eigen_waypoints_to_xarray(const std::list<Eigen::VectorXd>& w
 
 constexpr double k_default_waypoint_deduplication_tolerance_rads = 1e-3;
 constexpr double k_default_segmentation_threshold = 0.005;
+constexpr Eigen::Index k_default_dof = 6;
+
+// Reads a validated config attribute (scalar or array of doubles) into an Eigen::VectorXd.
+Eigen::VectorXd read_limit_vector(const viam::sdk::ResourceConfig& config, const std::string& attribute, Eigen::Index target_dof) {
+    const auto& value = config.attributes().at(attribute);
+    // if we have a scalar cast is to default dof (6) or whichever is the dimension of max acc or max vel
+    if (const auto* scalar = value.get<double>()) {
+        return Eigen::VectorXd::Constant(target_dof, *scalar);
+    }
+    const auto& arr = *value.get<std::vector<viam::sdk::ProtoValue>>();
+    // we already checked that dimensions of acceleration or velocity are correct
+    // but throw for good measure
+    const auto n_dof = static_cast<Eigen::Index>(arr.size());
+    if (n_dof != target_dof) {
+        throw std::runtime_error(std::format(
+            "the attribute {} number of dof : {} is not equal to the configured numbe rof dof : {}", attribute, n_dof, target_dof));
+    }
+    Eigen::VectorXd result(n_dof);
+
+    for (size_t i = 0; i < arr.size(); ++i) {
+        result[static_cast<Eigen::Index>(i)] = *arr[i].get<double>();
+    }
+    return result;
+}
+
+Eigen::Index number_of_dof_configured(const viam::sdk::ResourceConfig& config, const std::string& attr_a, const std::string& attr_b) {
+    auto dim_of = [&](const std::string& attr) -> Eigen::Index {
+        const auto& value = config.attributes().at(attr);
+        if (value.get<double>()) {
+            return 1;
+        }
+        return static_cast<Eigen::Index>(value.get<std::vector<viam::sdk::ProtoValue>>()->size());
+    };
+    auto dim_a = dim_of(attr_a);
+    auto dim_b = dim_of(attr_b);
+    if (dim_a == 1 && dim_b == 1) {
+        return k_default_dof;
+    }
+    return std::max(dim_a, dim_b);
+}
 
 using viam::ScopeGuard;
 constexpr double k_default_min_timestep_sec = 1e-2;
@@ -754,8 +795,9 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts(std::share
 YaskawaController::YaskawaController(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config)
     : io_context_(io_context), robot_state_(std::make_shared<State>()) {
     host_ = find_config_attribute<std::string>(config, "host").value();
-    speed_ = find_config_attribute<double>(config, "speed_rad_per_sec").value();
-    acceleration_ = find_config_attribute<double>(config, "acceleration_rad_per_sec2").value();
+    auto dof = number_of_dof_configured(config, "speed_rad_per_sec", "acceleration_rad_per_sec2");
+    velocity_limits_ = read_limit_vector(config, "speed_rad_per_sec", dof);
+    acceleration_limits_ = read_limit_vector(config, "acceleration_rad_per_sec2", dof);
 
     auto group_index = find_config_attribute<double>(config, "group_index");
     constexpr int k_min_group_index = 0;
@@ -1019,7 +1061,10 @@ GoalAcceptedMessage YaskawaController::send_goal_(uint32_t group_index,
     return GoalAcceptedMessage(tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload))).get());
 }
 
-std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time) {
+std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints,
+                                                           const std::string& unix_time,
+                                                           const Eigen::VectorXd& velocity_limits,
+                                                           const Eigen::VectorXd& acceleration_limits) {
     // If move_in_progress_ is already true, it fails and we throw.
     bool expected = false;
     if (!move_in_progress_.compare_exchange_strong(expected, true)) {
@@ -1051,7 +1096,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
         }
     }
 
-    auto goal_result = make_goal_(std::move(waypoints), unix_time, logger);
+    auto goal_result = make_goal_(std::move(waypoints), unix_time, velocity_limits, acceleration_limits, logger);
     // we only want to move if the future was valid
     if (!goal_result) {
         LOGGING(debug) << "already at desired position";
@@ -1179,6 +1224,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 
 std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints,
                                                             const std::string& unix_time,
+                                                            const Eigen::VectorXd& max_velocity_vec,
+                                                            const Eigen::VectorXd& max_acceleration_vec,
                                                             std::optional<RealtimeTrajectoryLogger>& logger) {
     LOGGING(info) << "move: start unix_time_ms " << unix_time << " waypoints size " << waypoints.size();
 
@@ -1211,10 +1258,6 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
 
     // Remainder becomes the last (or only) segment
     segments.push_back(std::move(waypoints));
-
-    // set velocity/acceleration constraints
-    const auto max_velocity_vec = Eigen::VectorXd::Constant(6, speed_);
-    const auto max_acceleration_vec = Eigen::VectorXd::Constant(6, acceleration_);
 
     auto new_trajectory = [&]() -> std::optional<std::vector<trajectory_point_t>> {
         if (!use_new_trajectory_planner_) {
@@ -1305,8 +1348,8 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                                                                 unix_time,
                                                                 robot_model_,
                                                                 group_index_,
-                                                                speed_,
-                                                                acceleration_,
+                                                                max_velocity_vec,
+                                                                max_acceleration_vec,
                                                                 original_waypoints,
                                                                 error_msg);
                         }
@@ -1344,8 +1387,14 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                 if (telemetry_path_fn_) {
                     auto telemetry_path = (*telemetry_path_fn_)();
                     if (telemetry_path) {
-                        FailedTrajectoryLogger::log_failure(
-                            *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg);
+                        FailedTrajectoryLogger::log_failure(*telemetry_path,
+                                                            unix_time,
+                                                            robot_model_,
+                                                            group_index_,
+                                                            max_velocity_vec,
+                                                            max_acceleration_vec,
+                                                            original_waypoints,
+                                                            error_msg);
                     }
                 }
                 throw std::runtime_error(error_msg);
@@ -1359,8 +1408,14 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                 if (telemetry_path_fn_) {
                     auto telemetry_path = (*telemetry_path_fn_)();
                     if (telemetry_path) {
-                        FailedTrajectoryLogger::log_failure(
-                            *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg);
+                        FailedTrajectoryLogger::log_failure(*telemetry_path,
+                                                            unix_time,
+                                                            robot_model_,
+                                                            group_index_,
+                                                            max_velocity_vec,
+                                                            max_acceleration_vec,
+                                                            original_waypoints,
+                                                            error_msg);
                     }
                 }
 
@@ -1375,8 +1430,14 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                 if (telemetry_path_fn_) {
                     auto telemetry_path = (*telemetry_path_fn_)();
                     if (telemetry_path) {
-                        FailedTrajectoryLogger::log_failure(
-                            *telemetry_path, unix_time, robot_model_, group_index_, speed_, acceleration_, original_waypoints, error_msg);
+                        FailedTrajectoryLogger::log_failure(*telemetry_path,
+                                                            unix_time,
+                                                            robot_model_,
+                                                            group_index_,
+                                                            max_velocity_vec,
+                                                            max_acceleration_vec,
+                                                            original_waypoints,
+                                                            error_msg);
                     }
                 }
 
@@ -1421,8 +1482,8 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
 
     // Populate logger with trajectory data
     if (logger.has_value()) {
-        logger->set_max_velocity(speed_);
-        logger->set_max_acceleration(acceleration_);
+        logger->set_max_velocity(max_velocity_vec);
+        logger->set_max_acceleration(max_acceleration_vec);
         logger->set_waypoints(original_waypoints);
         logger->set_planned_trajectory(samples);
     }
