@@ -12,6 +12,8 @@
 #include "../robot_socket.hpp"
 #include "../trajectory_logger.hpp"
 
+#include <viam/sdk/common/proto_value.hpp>
+
 extern "C" {
 #include "../protocol.h"
 }
@@ -61,8 +63,8 @@ struct TempDirFixture {
     }
 
     static void configure_logger(robot::RealtimeTrajectoryLogger& logger,
-                                 double velocity = 1.5,
-                                 double acceleration = 2.0,
+                                 const Eigen::VectorXd& velocity = Eigen::VectorXd::Constant(6, 1.5),
+                                 const Eigen::VectorXd& acceleration = Eigen::VectorXd::Constant(6, 2.0),
                                  size_t waypoint_count = 1,
                                  size_t trajectory_count = 1) {
         logger.set_max_velocity(velocity);
@@ -95,7 +97,7 @@ BOOST_AUTO_TEST_CASE(test_destructor_writes_file) {
 
     {
         robot::RealtimeTrajectoryLogger logger(temp_dir.string(), timestamp, "gp12", 0);
-        configure_logger(logger, 1.5, 2.0, 2);
+        configure_logger(logger, Eigen::VectorXd::Constant(6, 1.5), Eigen::VectorXd::Constant(6, 2.0), 2);
         BOOST_CHECK(!fs::exists(filepath));
     }
 
@@ -176,8 +178,8 @@ BOOST_AUTO_TEST_CASE(test_json_structure_validation) {
 
     {
         robot::RealtimeTrajectoryLogger logger(temp_dir.string(), timestamp, model, 1);
-        logger.set_max_velocity(2.5);
-        logger.set_max_acceleration(3.0);
+        logger.set_max_velocity(Eigen::VectorXd::Constant(6, 2.5));
+        logger.set_max_acceleration(Eigen::VectorXd::Constant(6, 3.0));
         logger.set_waypoints(make_waypoints(2));
         logger.set_planned_trajectory(make_trajectory(1));
 
@@ -191,8 +193,12 @@ BOOST_AUTO_TEST_CASE(test_json_structure_validation) {
     BOOST_CHECK_EQUAL(root["group_index"].asUInt(), 1);
 
     BOOST_CHECK(root["configuration"].isObject());
-    BOOST_CHECK_CLOSE(root["configuration"]["max_velocity_rad_per_sec"].asDouble(), 2.5, 1e-6);
-    BOOST_CHECK_CLOSE(root["configuration"]["max_acceleration_rad_per_sec2"].asDouble(), 3.0, 1e-6);
+    BOOST_CHECK(root["configuration"]["max_velocity_rad_per_sec"].isArray());
+    BOOST_CHECK_EQUAL(root["configuration"]["max_velocity_rad_per_sec"].size(), 6);
+    BOOST_CHECK_CLOSE(root["configuration"]["max_velocity_rad_per_sec"][0].asDouble(), 2.5, 1e-6);
+    BOOST_CHECK(root["configuration"]["max_acceleration_rad_per_sec2"].isArray());
+    BOOST_CHECK_EQUAL(root["configuration"]["max_acceleration_rad_per_sec2"].size(), 6);
+    BOOST_CHECK_CLOSE(root["configuration"]["max_acceleration_rad_per_sec2"][0].asDouble(), 3.0, 1e-6);
 
     BOOST_CHECK(root["waypoints_rad"].isArray());
     BOOST_CHECK_EQUAL(root["waypoints_rad"].size(), 2);
