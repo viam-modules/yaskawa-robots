@@ -122,7 +122,7 @@ enable_testing()
 FetchContent_Declare(
   trajex
   GIT_REPOSITORY https://github.com/viam-modules/universal-robots.git
-  GIT_TAG ac30d586ce03e6874534668a139324bb26c158b2
+  GIT_TAG origin/main
   SOURCE_SUBDIR src/viam/trajex
 )
 
@@ -157,8 +157,7 @@ target_compile_definitions(viam-yaskawa
 
 target_link_libraries(viam-yaskawa
   PUBLIC
-    viam::trajex::totg-legacy
-    viam::trajex::totg
+    viam::trajex::service
     Boost::regex
     jsoncpp_lib
     viam-cpp-sdk::viamsdk
