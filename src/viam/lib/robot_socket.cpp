@@ -1270,13 +1270,13 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
     planner_cfg.colinearization_ratio = collinearization_ratio_;
     planner_cfg.segment_trajex = true;
 
-    auto result =
+    auto planner =
         trajectory_planner<segment_accumulator>(planner_cfg)
-            .with_waypoint_provider([&](auto& planner) -> totg::waypoint_accumulator {
+            .with_waypoint_provider([&](auto& p) -> totg::waypoint_accumulator {
                 auto curr_joint_pos = get_robot_position_velocity_torque().position;
-                auto current_pos = planner.stash(eigen_waypoints_to_xarray(
+                auto current_pos = p.stash(eigen_waypoints_to_xarray(
                     {Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()))}));
-                auto goal_waypoints = planner.stash(eigen_waypoints_to_xarray(waypoints));
+                auto goal_waypoints = p.stash(eigen_waypoints_to_xarray(waypoints));
 
                 totg::waypoint_accumulator acc(*current_pos);
                 acc.add_waypoints(*goal_waypoints);
@@ -1286,137 +1286,131 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
             .with_segmenter(  // NOLINTNEXTLINE(performance-unnecessary-value-param)
                 [&](auto&, totg::waypoint_accumulator acc) {
                     return totg::segment_at_reversals(std::move(acc), segmentation_threshold_rad_);
-                })
-            .with_trajex(
-                [&](segment_accumulator& acc,
-                    const totg::waypoint_accumulator& seg,
-                    const totg::trajectory& traj,
-                    std::chrono::duration<double> elapsed) {
-                    acc.total_waypoints += seg.size();
-                    acc.total_duration += traj.duration().count();
-                    acc.total_arc_length += static_cast<double>(traj.path().length());
-                    acc.total_generation_time += elapsed.count();
-                    ++acc.segment_count;
+                });
 
-                    if (acc.total_duration > 600) {
-                        throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
-                    }
+    if (use_new_trajectory_planner_) {
+        planner.with_trajex(
+            [&](segment_accumulator& acc,
+                const totg::waypoint_accumulator& seg,
+                const totg::trajectory& traj,
+                std::chrono::microseconds elapsed) {
+                acc.total_waypoints += seg.size();
+                acc.total_duration += traj.duration().count();
+                acc.total_arc_length += static_cast<double>(traj.path().length());
+                acc.total_generation_time += std::chrono::duration<double>(elapsed).count();
+                ++acc.segment_count;
 
-                    auto sampler = totg::uniform_sampler::quantized_for_trajectory(traj, types::hertz{trajectory_sampling_freq_});
-
-                    for (const auto& sample : traj.samples(sampler) | std::views::drop(1)) {
-                        const auto absolute_time = acc.cumulative_time + std::chrono::duration<double>(sample.time.count());
-                        auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
-                        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
-                        acc.samples.push_back({{sample.configuration(0),
-                                                sample.configuration(1),
-                                                sample.configuration(2),
-                                                sample.configuration(3),
-                                                sample.configuration(4),
-                                                sample.configuration(5)},
-                                               {sample.velocity(0),
-                                                sample.velocity(1),
-                                                sample.velocity(2),
-                                                sample.velocity(3),
-                                                sample.velocity(4),
-                                                sample.velocity(5)},
-                                               {0},
-                                               {0},
-                                               {static_cast<int32_t>(secs.count()), static_cast<int32_t>(nanos.count())}});
-                    }
-
-                    acc.cumulative_time += std::chrono::duration<double>(traj.duration());
-
-                    LOGGING(info) << "trajex/totg segment generated, waypoints: " << seg.size() << ", duration: " << traj.duration().count()
-                                  << "s, samples: " << acc.samples.size() << ", arc length: " << traj.path().length();
-                },
-                [&](const segment_accumulator&, const totg::waypoint_accumulator&, const std::exception&) {
-                    log_failure("failed to generate a new trajectory with trajex");
-                })
-            .with_legacy(
-                [&](segment_accumulator& acc,
-                    const totg::waypoint_accumulator& seg,
-                    const Path&,
-                    const Trajectory& traj,
-                    std::chrono::duration<double> elapsed) {
-                    const double duration = traj.getDuration();
-
-                    if (!std::isfinite(duration)) {
-                        throw std::runtime_error("trajectory.getDuration() was not a finite number");
-                    }
-                    if (duration > 600) {
-                        throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
-                    }
-                    if (duration < k_default_min_timestep_sec) {
-                        LOGGING(debug) << "duration of move is too small, assuming arm is at goal";
-                        return;
-                    }
-
-                    traj.outputPhasePlaneTrajectory();
-
-                    if (acc.samples.empty()) {
-                        auto p = traj.getPosition(0.0);
-                        auto v = traj.getVelocity(0.0);
-                        acc.samples.push_back(
-                            {{p[0], p[1], p[2], p[3], p[4], p[5]}, {v[0], v[1], v[2], v[3], v[4], v[5]}, {0}, {0}, {0, 0}});
-                    }
-
-                    sampling_func(acc.samples, duration, trajectory_sampling_freq_, [&](const double t, const double) {
-                        auto p = traj.getPosition(t);
-                        auto v = traj.getVelocity(t);
-                        const auto absolute_time = acc.cumulative_time + std::chrono::duration<double>(t);
-                        auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
-                        auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
-                        return trajectory_point_t{{p[0], p[1], p[2], p[3], p[4], p[5]},
-                                                  {v[0], v[1], v[2], v[3], v[4], v[5]},
-                                                  {0},
-                                                  {0},
-                                                  {static_cast<int32_t>(secs.count()), static_cast<int32_t>(nanos.count())}};
-                    });
-
-                    acc.cumulative_time += std::chrono::duration<double>(duration);
-                    acc.total_waypoints += seg.size();
-                    acc.total_duration += duration;
-                    acc.total_generation_time += elapsed.count();
-                    ++acc.segment_count;
-                },
-                [&](const segment_accumulator&, const totg::waypoint_accumulator&, const std::exception&) {
-                    log_failure("failed to generate trajectory with legacy generator");
-                })
-            .execute([&](const auto& planner, auto trajex_out, auto legacy_out) -> std::optional<segment_accumulator> {
-                if (planner.processed_waypoint_count() < 2) {
-                    return std::nullopt;
+                if (acc.total_duration > 600) {
+                    throw std::runtime_error("total trajectory duration exceeds maximum allowed duration");
                 }
 
-                if (trajex_out.receiver && use_new_trajectory_planner_) {
-                    auto& acc = *trajex_out.receiver;
-                    LOGGING(info) << "trajex/totg trajectory generated, total waypoints: " << acc.total_waypoints
-                                  << ", total duration: " << acc.total_duration << "s, total samples: " << acc.samples.size()
-                                  << ", total arc length: " << acc.total_arc_length << ", generation_time: " << acc.total_generation_time
-                                  << "s";
-                    return std::move(trajex_out.receiver);
+                auto sampler = totg::uniform_sampler::quantized_for_trajectory(traj, types::hertz{trajectory_sampling_freq_});
+
+                for (const auto& sample : traj.samples(sampler) | std::views::drop(1)) {
+                    const auto absolute_time = acc.cumulative_time + std::chrono::duration<double>(sample.time.count());
+                    auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
+                    auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
+                    acc.samples.push_back({{sample.configuration(0),
+                                            sample.configuration(1),
+                                            sample.configuration(2),
+                                            sample.configuration(3),
+                                            sample.configuration(4),
+                                            sample.configuration(5)},
+                                           {sample.velocity(0),
+                                            sample.velocity(1),
+                                            sample.velocity(2),
+                                            sample.velocity(3),
+                                            sample.velocity(4),
+                                            sample.velocity(5)},
+                                           {0},
+                                           {0},
+                                           {static_cast<int32_t>(secs.count()), static_cast<int32_t>(nanos.count())}});
                 }
 
-                if (trajex_out.receiver) {
-                    auto& acc = *trajex_out.receiver;
-                    LOGGING(info) << "trajex/totg trajectory available but not preferred, "
-                                  << "total waypoints: " << acc.total_waypoints << ", total duration: " << acc.total_duration << "s"
-                                  << ", total samples: " << acc.samples.size();
-                }
+                acc.cumulative_time += std::chrono::duration<double>(traj.duration());
 
-                if (legacy_out.receiver) {
-                    LOGGING(info) << "trajectory generation uses legacy generator";
-                    return std::move(legacy_out.receiver);
-                }
-
-                if (legacy_out.error) {
-                    std::rethrow_exception(legacy_out.error);
-                }
-                if (trajex_out.error) {
-                    std::rethrow_exception(trajex_out.error);
-                }
-                throw std::runtime_error("both trajectory generators failed");
+                LOGGING(info) << "trajex/totg segment generated, waypoints: " << seg.size() << ", duration: " << traj.duration().count()
+                              << "s, samples: " << acc.samples.size() << ", arc length: " << traj.path().length();
+            },
+            [&](const segment_accumulator&, const totg::waypoint_accumulator&, const std::exception& e) {
+                log_failure("failed to generate a new trajectory with trajex: " + std::string(e.what()));
             });
+    }
+
+    planner.with_legacy(
+        [&](segment_accumulator& acc,
+            const totg::waypoint_accumulator& seg,
+            const Path&,
+            const Trajectory& traj,
+            std::chrono::microseconds elapsed) {
+            const double duration = traj.getDuration();
+
+            if (!std::isfinite(duration)) {
+                throw std::runtime_error("trajectory.getDuration() was not a finite number");
+            }
+            if (duration > 600) {
+                throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
+            }
+            if (duration < k_default_min_timestep_sec) {
+                LOGGING(debug) << "duration of move is too small, assuming arm is at goal";
+                return;
+            }
+
+            if (acc.samples.empty()) {
+                auto p = traj.getPosition(0.0);
+                auto v = traj.getVelocity(0.0);
+                acc.samples.push_back({{p[0], p[1], p[2], p[3], p[4], p[5]}, {v[0], v[1], v[2], v[3], v[4], v[5]}, {0}, {0}, {0, 0}});
+            }
+
+            sampling_func(acc.samples, duration, trajectory_sampling_freq_, [&](const double t, const double) {
+                auto p = traj.getPosition(t);
+                auto v = traj.getVelocity(t);
+                const auto absolute_time = acc.cumulative_time + std::chrono::duration<double>(t);
+                auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
+                auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
+                return trajectory_point_t{{p[0], p[1], p[2], p[3], p[4], p[5]},
+                                          {v[0], v[1], v[2], v[3], v[4], v[5]},
+                                          {0},
+                                          {0},
+                                          {static_cast<int32_t>(secs.count()), static_cast<int32_t>(nanos.count())}};
+            });
+
+            acc.cumulative_time += std::chrono::duration<double>(duration);
+            acc.total_waypoints += seg.size();
+            acc.total_duration += duration;
+            acc.total_generation_time += std::chrono::duration<double>(elapsed).count();
+            ++acc.segment_count;
+        },
+        [&](const segment_accumulator&, const totg::waypoint_accumulator&, const std::exception& e) {
+            log_failure("failed to generate trajectory with legacy generator: " + std::string(e.what()));
+        });
+
+    auto result = planner.execute([&](const auto& p, auto trajex_out, auto legacy_out) -> std::optional<segment_accumulator> {
+        if (trajex_out.receiver) {
+            auto& acc = *trajex_out.receiver;
+            LOGGING(info) << "trajex/totg trajectory generated, total waypoints: " << acc.total_waypoints
+                          << ", total duration: " << acc.total_duration << "s, total samples: " << acc.samples.size()
+                          << ", total arc length: " << acc.total_arc_length << ", generation_time: " << acc.total_generation_time << "s";
+            return std::move(trajex_out.receiver);
+        }
+
+        if (legacy_out.receiver) {
+            LOGGING(info) << "trajectory generation uses legacy generator";
+            return std::move(legacy_out.receiver);
+        }
+
+        if (legacy_out.error) {
+            std::rethrow_exception(legacy_out.error);
+        }
+        if (trajex_out.error) {
+            std::rethrow_exception(trajex_out.error);
+        }
+
+        if (p.processed_waypoint_count() < 2) {
+            return std::nullopt;
+        }
+        throw std::runtime_error("both trajectory generators failed");
+    });
 
     if (!result || result->samples.empty()) {
         return std::nullopt;
@@ -1424,6 +1418,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
 
     auto& samples = result->samples;
 
+    // Populate logger with trajectory data
     if (logger.has_value()) {
         logger->set_max_velocity(max_velocity_vec);
         logger->set_max_acceleration(max_acceleration_vec);
@@ -1433,10 +1428,13 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
 
     LOGGING(debug) << "total trajectory points: " << samples.size();
 
+    // Send the first chunk
     const auto first_end = std::min(k_chunk_size, samples.size());
     const std::vector<trajectory_point_t> first_chunk(samples.begin(), std::next(samples.begin(), static_cast<ptrdiff_t>(first_end)));
+    // tolerance can be threaded through here when needed
     auto accepted = send_goal_(group_index_, 6, first_chunk, {});
 
+    // Return accepted message + any remaining trajectory points
     const size_t offset = accepted.num_trajectory_accepted;
     std::vector<trajectory_point_t> remaining;
     if (offset < samples.size()) {
