@@ -63,7 +63,7 @@ extern "C" void free_orientation_vector_components(double* ds);
 namespace {
 
 constexpr double k_min_sampling_freq_hz = 1.0;
-constexpr double k_max_sampling_freq_hz = 100.0;
+constexpr double k_max_sampling_freq_hz = 250.0;
 
 pose cartesian_position_to_pose(CartesianPosition&& pos) {
     auto q = std::unique_ptr<void, decltype(&free_quaternion_memory)>(
