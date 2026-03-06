@@ -463,12 +463,18 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // Move locking: prevents concurrent moves
     std::atomic<bool> move_in_progress_{false};
 
+    // Connection lifecycle: true between connect() and disconnect()
+    std::atomic<bool> running_{false};
+    std::thread heartbeat_thread_;
+
     bool use_new_trajectory_planner_{false};
     double path_tolerance_rad_{0.1};
     std::optional<double> collinearization_ratio_;
     double segmentation_threshold_rad_;
     std::string robot_model_;
     std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn_;
+
+    void reconnect_();
 
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;

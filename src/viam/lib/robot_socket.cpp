@@ -141,6 +141,7 @@ struct segment_accumulator {
 using viam::ScopeGuard;
 constexpr double k_default_min_timestep_sec = 1e-2;
 constexpr double k_default_trajectory_sampling_freq = 3;
+constexpr auto k_socket_timeout = std::chrono::seconds(5);
 
 constexpr const char* goal_state_to_string(goal_state_t state) {
     switch (state) {
@@ -862,21 +863,52 @@ std::future<void> YaskawaController::connect() {
             // Wait for first status update to ensure connection is fully established
             get_robot_status();
 
-            // Heartbeat thread exits naturally via weak_ptr failure or socket error
-            std::thread([self = weak_from_this()]() {
-                try {
-                    while (true) {
-                        auto shared = self.lock();
-                        if (!shared) {
+            running_ = true;
+
+            // Heartbeat thread: sends periodic heartbeats and retries reconnection indefinitely
+            // on failure. Exits when the controller is destroyed (weak_ptr expires) or
+            // disconnect() is called (running_ set to false).
+            heartbeat_thread_ = std::thread([self = weak_from_this()]() {
+                constexpr auto k_heartbeat_interval = std::chrono::milliseconds(100);
+                constexpr auto k_reconnect_delay = std::chrono::seconds(1);
+                constexpr uint32_t k_log_every_n_failures = 30;
+                uint32_t consecutive_failures = 0;
+
+                while (auto shared = self.lock()) {
+                    if (!shared->running_) {
+                        return;
+                    }
+                    try {
+                        shared->send_heartbeat();
+                        consecutive_failures = 0;
+                        shared.reset();
+                        std::this_thread::sleep_for(k_heartbeat_interval);
+                    } catch (const std::exception& e) {
+                        ++consecutive_failures;
+                        const bool should_log = consecutive_failures == 1 || consecutive_failures % k_log_every_n_failures == 0;
+                        const auto log_level = should_log ? viam::yaskawa::LogLevel::WARNING : viam::yaskawa::LogLevel::DEBUG;
+                        viam::yaskawa::get_global_logger()->log(log_level) << "heartbeat failed: " << e.what();
+                        if (!shared->running_) {
                             return;
                         }
-                        shared->send_heartbeat();
-                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                        // reconnect_() replaces the sockets in-place. Any in-progress
+                        // move will fail when it next tries to communicate with the
+                        // controller (goal status / chunk sends), which is the expected
+                        // behavior when the connection drops mid-move.
+                        try {
+                            shared->reconnect_();
+                            LOGGING(info) << "reconnected successfully";
+                            consecutive_failures = 0;
+                            shared.reset();
+                            std::this_thread::sleep_for(k_heartbeat_interval);
+                        } catch (const std::exception& re) {
+                            viam::yaskawa::get_global_logger()->log(log_level) << std::format("reconnect failed: {}", re.what());
+                            shared.reset();
+                            std::this_thread::sleep_for(k_reconnect_delay);
+                        }
                     }
-                } catch (const std::exception& e) {
-                    LOGGING(info) << "heartbeat thread terminated with " << e.what();
                 }
-            }).detach();
+            });
 
             // Start listening for broadcast messages from robot
             broadcast_listener_->start();
@@ -892,6 +924,10 @@ std::future<void> YaskawaController::connect() {
 
 void YaskawaController::disconnect() {
     LOGGING(info) << "Yaskawa Controller disconnecting";
+    running_ = false;
+    if (heartbeat_thread_.joinable()) {
+        heartbeat_thread_.join();
+    }
     if (udp_socket_) {
         udp_socket_->disconnect();
     }
@@ -901,6 +937,44 @@ void YaskawaController::disconnect() {
     if (broadcast_listener_) {
         broadcast_listener_->stop();
     }
+}
+
+void YaskawaController::reconnect_() {
+    LOGGING(info) << "tearing down existing connections for reconnect";
+
+    udp_socket_->disconnect();
+    tcp_socket_->disconnect();
+    // broadcast_listener_ is not restarted here: it is diagnostic-only and its UDP
+    // socket is not affected by TCP/control-plane disconnects.
+
+    // Replace sockets without going through null: disconnect() above sets connected_=false
+    // atomically, so concurrent callers get "Not connected" rather than a null deref.
+    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
+    udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
+
+    try {
+        auto tcp_future = tcp_socket_->connect();
+        if (tcp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
+            throw std::runtime_error("TCP connect timed out");
+        }
+        tcp_future.get();
+
+        auto udp_future = udp_socket_->connect();
+        if (udp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
+            throw std::runtime_error("UDP connect timed out");
+        }
+        udp_future.get();
+
+        const uint16_t local_udp_port = udp_socket_->get_local_port();
+        register_udp_port(local_udp_port);
+
+        get_robot_status();
+    } catch (...) {
+        tcp_socket_->disconnect();
+        udp_socket_->disconnect();
+        throw;
+    }
+    LOGGING(info) << "reconnect complete";
 }
 
 uint32_t YaskawaController::get_group_index() const {
@@ -979,7 +1053,14 @@ void YaskawaController::turn_servo_power_on() {
 }
 
 void YaskawaController::send_heartbeat() {
-    auto msg = tcp_socket_->send_request(Message(MSG_HEARTBEAT)).get();
+    if (!tcp_socket_) {
+        throw std::runtime_error("heartbeat failed: no TCP connection");
+    }
+    auto future = tcp_socket_->send_request(Message(MSG_HEARTBEAT));
+    if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
+        throw std::runtime_error("heartbeat timed out");
+    }
+    auto msg = future.get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
         throw std::runtime_error(std::format("failed to send heartbeat: {}", err));
