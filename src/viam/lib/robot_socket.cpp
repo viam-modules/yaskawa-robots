@@ -535,8 +535,8 @@ protocol_header_t RobotSocketBase::parse_header(const std::vector<uint8_t>& buff
     }
     protocol_header_t header;
     std::memcpy(&header, buffer.data(), sizeof(protocol_header_t));
-    if (header.magic_number != PROTOCOL_MAGIC_NUMBER || header.version != PROTOCOL_VERSION) {
-        throw std::runtime_error("Invalid message: wrong magic number or version");
+    if (header.magic_number != PROTOCOL_MAGIC_NUMBER) {
+        throw std::runtime_error("Invalid message: wrong magic number");
     }
     return header;
 }
@@ -692,14 +692,11 @@ Message UdpRobotSocket::parse_message(const std::vector<uint8_t>& buffer) {
     Message message;
     std::memcpy(&message.header, buffer.data(), sizeof(protocol_header_t));
 
-    if (message.header.magic_number != PROTOCOL_MAGIC_NUMBER || message.header.version != PROTOCOL_VERSION) {
+    if (message.header.magic_number != PROTOCOL_MAGIC_NUMBER) {
         throw std::runtime_error(
-            std::format("invalid message: wrong magic number or version expected magic : {:X} "
-                        "version: {} got magic: {:X} version: {}",
+            std::format("invalid message: wrong magic number expected: {:X} got: {:X}",
                         PROTOCOL_MAGIC_NUMBER,
-                        PROTOCOL_VERSION,
-                        (int)message.header.magic_number,
-                        (int)message.header.version));
+                        (int)message.header.magic_number));
     }
 
     if (message.header.payload_length > 0) {
@@ -1030,9 +1027,10 @@ RobotStatusMessage YaskawaController::get_robot_status() {
 }
 
 void YaskawaController::register_udp_port(uint16_t port) {
-    std::vector<uint8_t> payload(sizeof(udp_port_registration_payload_t));
-    udp_port_registration_payload_t* port_payload = reinterpret_cast<udp_port_registration_payload_t*>(payload.data());
+    std::vector<uint8_t> payload(sizeof(udp_port_registration_v2_payload_t));
+    auto* port_payload = reinterpret_cast<udp_port_registration_v2_payload_t*>(payload.data());
     port_payload->udp_port = port;
+    port_payload->protocol_version = PROTOCOL_VERSION;
 
     auto msg = tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload))).get();
     const auto err = msg.get_error(MSG_OK);

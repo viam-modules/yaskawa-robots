@@ -131,6 +131,20 @@ find_package(xtensor CONFIG REQUIRED)
 
 FetchContent_MakeAvailable(trajex)
 
+FetchContent_Declare(
+  comms
+  GIT_REPOSITORY git@github.com:viam-labs/viam-yaskawa-libs.git
+  GIT_TAG ac981adae9eb19dc45ea964d8d4f3195d8976fdb
+  GIT_SHALLOW TRUE
+  SYSTEM
+)
+
+# We only need protocol.h — disable building the library, tests, and examples
+set(COMMS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(COMMS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(COMMS_PLATFORM_POSIX OFF CACHE BOOL "" FORCE)
+
+FetchContent_Populate(comms)
 
 add_library(viam-yaskawa)
 
@@ -145,6 +159,7 @@ target_sources(viam-yaskawa
 target_include_directories(viam-yaskawa
   PUBLIC
     src
+    ${comms_SOURCE_DIR}
 )
 
 target_compile_options( viam-yaskawa PRIVATE -O0)
