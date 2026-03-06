@@ -324,15 +324,15 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
         waypoints.emplace_back(std::move(next_waypoint_rad));
     }
 
-    auto velocity =
-        (options.max_vel_degs_per_sec && options.max_vel_degs_per_sec.get() > 0)
-            ? Eigen::VectorXd::Constant(robot_->get_velocity_limits().size(), degrees_to_radians(options.max_vel_degs_per_sec.get()))
-            : robot_->get_velocity_limits();
+    auto velocity = robot_->get_velocity_limits();
+    if (options.max_vel_degs_per_sec) {
+        apply_move_limit(velocity, *options.max_vel_degs_per_sec);
+    }
 
-    auto acceleration =
-        (options.max_acc_degs_per_sec2 && options.max_acc_degs_per_sec2.get() > 0)
-            ? Eigen::VectorXd::Constant(robot_->get_acceleration_limits().size(), degrees_to_radians(options.max_acc_degs_per_sec2.get()))
-            : robot_->get_acceleration_limits();
+    auto acceleration = robot_->get_acceleration_limits();
+    if (options.max_acc_degs_per_sec2) {
+        apply_move_limit(acceleration, *options.max_acc_degs_per_sec2);
+    }
 
     const auto unix_time = unix_time_iso8601();
 
