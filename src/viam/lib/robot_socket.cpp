@@ -1127,7 +1127,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
 
     // Derive poll interval from trajectory sampling frequency
     // we want to log data at 100 Hz and send chunks at trajectory_sampling_freq_ Hz
-    constexpr auto k_logging_freq = 100;
+    constexpr auto k_logging_freq = 250;
     // Single thread handles both chunk streaming and goal monitoring
     std::thread([promise = std::move(promise),
                  self = weak_from_this(),
