@@ -6,7 +6,10 @@
 #include <sstream>
 #include <vector>
 
+#include <boost/variant.hpp>
+
 #include <Eigen/Dense>
+#include <viam/lib/robot_socket.hpp>
 #include <viam/sdk/common/proto_value.hpp>
 
 namespace {
@@ -106,4 +109,34 @@ size_t validate_joint_limit_attribute(const viam::sdk::ResourceConfig& cfg, cons
     }
 
     throw std::invalid_argument(std::format("attribute `{}` must be a number or array of numbers", attribute));
+}
+
+void apply_move_limit(Eigen::VectorXd& limits, const boost::variant<double, std::vector<double>>& value) {
+    struct visitor {
+        Eigen::VectorXd& limits;
+
+        void operator()(double s) const {
+            if (s <= 0) {
+                throw std::invalid_argument(std::format("scalar move limit must be positive, got: {}", s));
+            }
+            limits.setConstant(degrees_to_radians(s));
+        }
+
+        void operator()(const std::vector<double>& v) const {
+            const auto dof = limits.size();
+            if (static_cast<Eigen::Index>(v.size()) != dof) {
+                throw std::invalid_argument(
+                    std::format("move limit vector must have exactly {} elements (one per joint), got {}", dof, v.size()));
+            }
+            for (size_t i = 0; i < v.size(); ++i) {
+                if (v[i] < 0) {
+                    throw std::invalid_argument(std::format("move limit element {} cannot be negative, got: {}", i, v[i]));
+                }
+            }
+            for (size_t i = 0; i < v.size(); ++i) {
+                limits[static_cast<Eigen::Index>(i)] = degrees_to_radians(v[i]);
+            }
+        }
+    };
+    boost::apply_visitor(visitor{limits}, value);
 }
