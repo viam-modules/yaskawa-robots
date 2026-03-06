@@ -6,9 +6,7 @@
 #include <string>
 #include <vector>
 
-extern "C" {
 #include "protocol.h"
-}
 
 namespace robot {
 

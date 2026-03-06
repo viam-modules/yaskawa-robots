@@ -14,9 +14,7 @@
 
 #include <viam/sdk/common/proto_value.hpp>
 
-extern "C" {
-#include "../protocol.h"
-}
+#include "protocol.h"
 
 namespace fs = std::filesystem;
 
