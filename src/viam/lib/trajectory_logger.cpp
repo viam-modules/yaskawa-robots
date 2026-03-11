@@ -117,8 +117,8 @@ void FailedTrajectoryLogger::log_failure(const std::string& telemetry_path,
                                          const std::string& timestamp,
                                          const std::string& robot_model,
                                          const uint32_t group_index,
-                                         const double max_velocity_rad_per_sec,
-                                         const double max_acceleration_rad_per_sec2,
+                                         const Eigen::VectorXd& max_velocity_rad_per_sec,
+                                         const Eigen::VectorXd& max_acceleration_rad_per_sec2,
                                          const std::list<Eigen::VectorXd>& waypoints_rad,
                                          const std::string& error_message) {
     try {
@@ -139,8 +139,8 @@ void FailedTrajectoryLogger::log_failure(const std::string& telemetry_path,
         root["error_message"] = error_message;
 
         Json::Value config(Json::objectValue);
-        config["max_velocity_rad_per_sec"] = max_velocity_rad_per_sec;
-        config["max_acceleration_rad_per_sec2"] = max_acceleration_rad_per_sec2;
+        config["max_velocity_rad_per_sec"] = eigen_vector_to_json(max_velocity_rad_per_sec);
+        config["max_acceleration_rad_per_sec2"] = eigen_vector_to_json(max_acceleration_rad_per_sec2);
         root["configuration"] = config;
 
         root["waypoints_rad"] = waypoints_to_json(waypoints_rad);
@@ -197,18 +197,18 @@ void RealtimeTrajectoryLogger::set_goal_accepted_timestamp(int64_t timestamp_ms)
     root_["goal_accepted_timestamps_ms"] = timestamp_ms;
 }
 
-void RealtimeTrajectoryLogger::set_max_velocity(double max_velocity_rad_per_sec) {
+void RealtimeTrajectoryLogger::set_max_velocity(const Eigen::VectorXd& max_velocity_rad_per_sec) {
     if (!root_.isMember("configuration")) {
         root_["configuration"] = Json::Value(Json::objectValue);
     }
-    root_["configuration"]["max_velocity_rad_per_sec"] = max_velocity_rad_per_sec;
+    root_["configuration"]["max_velocity_rad_per_sec"] = eigen_vector_to_json(max_velocity_rad_per_sec);
 }
 
-void RealtimeTrajectoryLogger::set_max_acceleration(double max_acceleration_rad_per_sec2) {
+void RealtimeTrajectoryLogger::set_max_acceleration(const Eigen::VectorXd& max_acceleration_rad_per_sec2) {
     if (!root_.isMember("configuration")) {
         root_["configuration"] = Json::Value(Json::objectValue);
     }
-    root_["configuration"]["max_acceleration_rad_per_sec2"] = max_acceleration_rad_per_sec2;
+    root_["configuration"]["max_acceleration_rad_per_sec2"] = eigen_vector_to_json(max_acceleration_rad_per_sec2);
 }
 
 void RealtimeTrajectoryLogger::set_waypoints(const std::list<Eigen::VectorXd>& waypoints_rad) {

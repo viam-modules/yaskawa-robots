@@ -4,6 +4,9 @@
 #include <optional>
 #include <sstream>
 #include <string_view>
+#include <vector>
+
+#include <boost/variant.hpp>
 
 #include <Eigen/Dense>
 #include <viam/lib/logger.hpp>
@@ -103,3 +106,13 @@ Eigen::Vector3d transform_vector(const Eigen::Vector3d& vector, const Eigen::Mat
 
 // Generate ISO8601 timestamp string with microsecond precision
 std::string unix_time_iso8601();
+
+// Validates a config attribute is a strictly positive scalar or array of positive doubles.
+// Returns the dimension of the element
+// Throws if absent, wrong type, empty, zero, or negative.
+size_t validate_joint_limit_attribute(const viam::sdk::ResourceConfig& cfg, const std::string& attribute);
+
+// Apply a per-move limit override from MoveOptions to an Eigen limits vector.
+// Scalar: fills all joints uniformly. Throws if value <= 0.
+// Vector: sets per-joint limits. Requires matching DOF, all non-negative.
+void apply_move_limit(Eigen::VectorXd& limits, const boost::variant<double, std::vector<double>>& value);

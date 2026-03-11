@@ -63,7 +63,7 @@ extern "C" void free_orientation_vector_components(double* ds);
 namespace {
 
 constexpr double k_min_sampling_freq_hz = 1.0;
-constexpr double k_max_sampling_freq_hz = 100.0;
+constexpr double k_max_sampling_freq_hz = 250.0;
 
 pose cartesian_position_to_pose(CartesianPosition&& pos) {
     auto q = std::unique_ptr<void, decltype(&free_quaternion_memory)>(
@@ -85,11 +85,14 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     if (!find_config_attribute<std::string>(cfg, "host")) {
         throw std::invalid_argument("attribute `host` is required");
     }
-    if (!find_config_attribute<double>(cfg, "speed_rad_per_sec")) {
-        throw std::invalid_argument("attribute `speed_rad_per_sec` is required");
-    }
-    if (!find_config_attribute<double>(cfg, "acceleration_rad_per_sec2")) {
-        throw std::invalid_argument("attribute `acceleration_rad_per_sec2` is required");
+    auto vel_dim = validate_joint_limit_attribute(cfg, "speed_rad_per_sec");
+    auto acc_dim = validate_joint_limit_attribute(cfg, "acceleration_rad_per_sec2");
+    if (vel_dim > 1 && acc_dim > 1 && vel_dim != acc_dim) {
+        throw std::invalid_argument(
+            std::format("`speed_rad_per_sec` ({} elements) and `acceleration_rad_per_sec2` ({} elements) "
+                        "must have the same dimension",
+                        vel_dim,
+                        acc_dim));
     }
 
     auto threshold = find_config_attribute<double>(cfg, "reject_move_request_threshold_rad");
@@ -297,7 +300,7 @@ std::vector<double> YaskawaArm::get_joint_positions(const ProtoStruct&) {
 }
 
 void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<double>>& positions,
-                                              const MoveOptions&,
+                                              const MoveOptions& options,
                                               const viam::sdk::ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
 
@@ -321,11 +324,19 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
         waypoints.emplace_back(std::move(next_waypoint_rad));
     }
 
+    auto velocity = robot_->get_velocity_limits();
+    if (options.max_vel_degs_per_sec) {
+        apply_move_limit(velocity, *options.max_vel_degs_per_sec);
+    }
+
+    auto acceleration = robot_->get_acceleration_limits();
+    if (options.max_acc_degs_per_sec2) {
+        apply_move_limit(acceleration, *options.max_acc_degs_per_sec2);
+    }
+
     const auto unix_time = unix_time_iso8601();
 
-    // Execute the move command and block until completion
-    // The controller handles move locking internally
-    robot_->move(std::move(waypoints), unix_time)->wait();
+    robot_->move(std::move(waypoints), unix_time, velocity, acceleration)->wait();
 }
 
 void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
@@ -338,9 +349,7 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 
     const auto unix_time = unix_time_iso8601();
 
-    // Execute the move command and block until completion
-    // The controller handles move locking internally
-    robot_->move(std::move(waypoints), unix_time)->wait();
+    robot_->move(std::move(waypoints), unix_time, robot_->get_velocity_limits(), robot_->get_acceleration_limits())->wait();
 }
 
 ::viam::sdk::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {

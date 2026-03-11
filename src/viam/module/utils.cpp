@@ -1,10 +1,16 @@
 #include "utils.hpp"
 
 #include <chrono>
+#include <format>
 #include <iomanip>
 #include <sstream>
+#include <vector>
+
+#include <boost/variant.hpp>
 
 #include <Eigen/Dense>
+#include <viam/lib/robot_socket.hpp>
+#include <viam/sdk/common/proto_value.hpp>
 
 namespace {
 /// Convert a string log level to the LogLevel enum
@@ -65,4 +71,72 @@ std::string unix_time_iso8601() {
     stream << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
 
     return stream.str();
+}
+
+size_t validate_joint_limit_attribute(const viam::sdk::ResourceConfig& cfg, const std::string& attribute) {
+    using viam::sdk::ProtoValue;
+
+    const auto& attributes = cfg.attributes();
+    auto it = attributes.find(attribute);
+    if (it == attributes.end()) {
+        throw std::invalid_argument(std::format("attribute `{}` is required", attribute));
+    }
+
+    const auto& value = it->second;
+
+    if (const auto* scalar = value.get<double>()) {
+        if (*scalar <= 0.0) {
+            throw std::invalid_argument(std::format("attribute `{}` must be strictly positive, got {}", attribute, *scalar));
+        }
+        return 1;
+    }
+
+    if (const auto* arr = value.get<std::vector<ProtoValue>>()) {
+        if (arr->empty()) {
+            throw std::invalid_argument(std::format("attribute `{}` array must not be empty", attribute));
+        }
+        for (size_t i = 0; i < arr->size(); ++i) {
+            const auto* elem = (*arr)[i].get<double>();
+            if (!elem) {
+                throw std::invalid_argument(std::format("attribute `{}` element {} is not a number", attribute, i));
+            }
+            if (*elem <= 0.0) {
+                throw std::invalid_argument(
+                    std::format("attribute `{}` element {} must be strictly positive, got {}", attribute, i, *elem));
+            }
+        }
+        return arr->size();
+    }
+
+    throw std::invalid_argument(std::format("attribute `{}` must be a number or array of numbers", attribute));
+}
+
+void apply_move_limit(Eigen::VectorXd& limits, const boost::variant<double, std::vector<double>>& value) {
+    struct visitor {
+        Eigen::VectorXd& limits;
+
+        void operator()(double s) const {
+            if (s <= 0) {
+                throw std::invalid_argument(std::format("scalar move limit must be positive, got: {}", s));
+            }
+            limits.setConstant(degrees_to_radians(s));
+        }
+
+        void operator()(const std::vector<double>& v) const {
+            const auto dof = limits.size();
+            if (static_cast<Eigen::Index>(v.size()) != dof) {
+                throw std::invalid_argument(
+                    std::format("move limit vector must have exactly {} elements (one per joint), got {}", dof, v.size()));
+            }
+            for (size_t i = 0; i < v.size(); ++i) {
+                if (v[i] < 0) {
+                    throw std::invalid_argument(std::format("move limit element {} cannot be negative, got: {}", i, v[i]));
+                }
+            }
+            for (size_t i = 0; i < v.size(); ++i) {
+                limits[static_cast<Eigen::Index>(i)] = degrees_to_radians(v[i]);
+            }
+        }
+    };
+    boost::apply_visitor(visitor{limits}, value);
 }

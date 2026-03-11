@@ -106,8 +106,6 @@ class YaskawaArm final : public Arm, public Reconfigurable, public std::enable_s
     template <template <typename> typename lock_type>
     void check_configured_(const lock_type<std::shared_mutex>&);
 
-    void move_(std::shared_lock<std::shared_mutex> config_rlock, std::list<Eigen::VectorXd> waypoints, const std::string& unix_time_ms);
-
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
 

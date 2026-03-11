@@ -432,7 +432,17 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     CartesianPosition angleToCartPos(AnglePosition& pos);
     bool checkGroupIndex();
 
-    std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints, const std::string& unix_time);
+    std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints,
+                                            const std::string& unix_time,
+                                            const Eigen::VectorXd& velocity_limits,
+                                            const Eigen::VectorXd& acceleration_limits);
+
+    const Eigen::VectorXd& get_velocity_limits() const {
+        return velocity_limits_;
+    }
+    const Eigen::VectorXd& get_acceleration_limits() const {
+        return acceleration_limits_;
+    }
 
     void set_trajectory_loggers(std::string robot_model, std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn);
 
@@ -444,8 +454,8 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::unique_ptr<TcpRobotSocket> tcp_socket_;
     std::unique_ptr<UdpRobotSocket> udp_socket_;
     std::unique_ptr<UdpBroadcastListener> broadcast_listener_;
-    double speed_;
-    double acceleration_;
+    Eigen::VectorXd velocity_limits_;
+    Eigen::VectorXd acceleration_limits_;
     uint32_t group_index_;
     double trajectory_sampling_freq_;
     double waypoint_dedup_tolerance_rad_;
@@ -470,6 +480,8 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     Message create_status_response_from_cache(message_type_t requested_type) const;
     std::optional<MakeGoalResult> make_goal_(std::list<Eigen::VectorXd> waypoints,
                                              const std::string& unix_time,
+                                             const Eigen::VectorXd& max_velocity_vec,
+                                             const Eigen::VectorXd& max_acceleration_vec,
                                              std::optional<RealtimeTrajectoryLogger>& logger);
     GoalAcceptedMessage send_goal_(uint32_t group_index,
                                    uint32_t axes_controlled,

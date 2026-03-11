@@ -79,7 +79,7 @@ include(FetchContent)
 FetchContent_Declare(
   viam-cpp-sdk
   GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-  GIT_TAG releases/v0.30.0 # Keep in sync with Dockerfile
+  GIT_TAG releases/v0.31.0 # Keep in sync with Dockerfile
   GIT_SHALLOW TRUE
   SYSTEM
   # Without this patch command, using this as a SYSTEM package results
@@ -92,7 +92,7 @@ FetchContent_MakeAvailable(viam-cpp-sdk)
 
 find_package(Eigen3 3.4 CONFIG REQUIRED)
 find_package(jsoncpp REQUIRED)
-find_package(viam-cpp-sdk 0.30 CONFIG REQUIRED viamsdk)
+find_package(viam-cpp-sdk 0.31 CONFIG REQUIRED viamsdk)
 
 # Everything needs threads, and prefer -pthread if available
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -122,7 +122,7 @@ enable_testing()
 FetchContent_Declare(
   trajex
   GIT_REPOSITORY https://github.com/viam-modules/universal-robots.git
-  GIT_TAG ac30d586ce03e6874534668a139324bb26c158b2
+  GIT_TAG v0.6.0-rc6
   SOURCE_SUBDIR src/viam/trajex
 )
 
@@ -157,8 +157,7 @@ target_compile_definitions(viam-yaskawa
 
 target_link_libraries(viam-yaskawa
   PUBLIC
-    viam::trajex::totg-legacy
-    viam::trajex::totg
+    viam::trajex::service
     Boost::regex
     jsoncpp_lib
     viam-cpp-sdk::viamsdk
@@ -306,6 +305,23 @@ target_link_libraries(realtime_trajectory_logger_test
 )
 
 add_test(NAME realtime_trajectory_logger_test COMMAND realtime_trajectory_logger_test)
+
+add_executable(move_limit_test)
+
+target_sources(move_limit_test
+  PRIVATE
+    src/viam/module/test/move_limit_test.cpp
+    src/viam/module/utils.cpp
+)
+
+target_link_libraries(move_limit_test
+  PRIVATE
+    viam-yaskawa
+    Boost::unit_test_framework
+    viam-cpp-sdk::viamsdk
+)
+
+add_test(NAME move_limit_test COMMAND move_limit_test)
 
 set(CPACK_PACKAGE_NAME "viam-yaskawa-robots")
 set(CPACK_PACKAGE_FILE_NAME "module")
