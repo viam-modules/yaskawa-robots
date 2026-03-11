@@ -474,6 +474,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::string robot_model_;
     std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn_;
 
+    void establish_connections_();
     void reconnect_();
 
     static bool is_status_command(message_type_t type);

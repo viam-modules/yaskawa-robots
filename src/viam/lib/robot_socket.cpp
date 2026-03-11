@@ -846,22 +846,36 @@ void YaskawaController::set_trajectory_loggers(std::string robot_model,
     telemetry_path_fn_ = std::move(telemetry_path_fn);
 }
 
+void YaskawaController::establish_connections_() {
+    try {
+        auto tcp_future = tcp_socket_->connect();
+        if (tcp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
+            throw std::runtime_error("TCP connect timed out");
+        }
+        tcp_future.get();
+
+        udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
+        auto udp_future = udp_socket_->connect();
+        if (udp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
+            throw std::runtime_error("UDP connect timed out");
+        }
+        udp_future.get();
+
+        register_udp_port(udp_socket_->get_local_port());
+        get_robot_status();
+    } catch (...) {
+        tcp_socket_->disconnect();
+        if (udp_socket_) {
+            udp_socket_->disconnect();
+        }
+        throw;
+    }
+}
+
 std::future<void> YaskawaController::connect() {
     return std::async(std::launch::async, [this]() {
         try {
-            // Establish TCP connection for commands
-            tcp_socket_->connect().get();
-
-            // Create and connect UDP socket for receiving status updates
-            udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
-            udp_socket_->connect().get();
-
-            // Register UDP port with robot so it knows where to send status messages
-            const uint16_t local_udp_port = udp_socket_->get_local_port();
-            register_udp_port(local_udp_port);
-
-            // Wait for first status update to ensure connection is fully established
-            get_robot_status();
+            establish_connections_();
 
             running_ = true;
 
@@ -947,33 +961,25 @@ void YaskawaController::reconnect_() {
     // broadcast_listener_ is not restarted here: it is diagnostic-only and its UDP
     // socket is not affected by TCP/control-plane disconnects.
 
-    // Replace sockets without going through null: disconnect() above sets connected_=false
-    // atomically, so concurrent callers get "Not connected" rather than a null deref.
-    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
-    udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
-
-    try {
-        auto tcp_future = tcp_socket_->connect();
-        if (tcp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
-            throw std::runtime_error("TCP connect timed out");
-        }
-        tcp_future.get();
-
-        auto udp_future = udp_socket_->connect();
-        if (udp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
-            throw std::runtime_error("UDP connect timed out");
-        }
-        udp_future.get();
-
-        const uint16_t local_udp_port = udp_socket_->get_local_port();
-        register_udp_port(local_udp_port);
-
-        get_robot_status();
-    } catch (...) {
-        tcp_socket_->disconnect();
-        udp_socket_->disconnect();
-        throw;
+    // Wait for any in-progress move to notice the disconnection and clear the flag.
+    // The move thread polls at 100Hz so this normally resolves within milliseconds.
+    // We proceed after the timeout regardless — the move will fail on its next
+    // communication attempt.
+    constexpr auto k_move_drain_timeout = std::chrono::milliseconds(500);
+    const auto deadline = std::chrono::steady_clock::now() + k_move_drain_timeout;
+    while (move_in_progress_ && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
+    if (move_in_progress_) {
+        LOGGING(warning) << "reconnect: move still in progress after drain, proceeding anyway";
+    }
+
+    // Replace TCP socket without going through null: disconnect() above sets connected_=false
+    // atomically, so concurrent callers get "Not connected" rather than a null deref.
+    // establish_connections_() will create a fresh UDP socket.
+    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
+
+    establish_connections_();
     LOGGING(info) << "reconnect complete";
 }
 
