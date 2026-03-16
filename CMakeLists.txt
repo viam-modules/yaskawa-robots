@@ -134,7 +134,7 @@ FetchContent_MakeAvailable(trajex)
 FetchContent_Declare(
   comms
   GIT_REPOSITORY git@github.com:viam-labs/viam-yaskawa-libs.git
-  GIT_TAG ac981adae9eb19dc45ea964d8d4f3195d8976fdb
+  GIT_TAG 5cdd4e87781b8f722daff23417a2388860bf9eb7
   GIT_SHALLOW TRUE
   SYSTEM
 )

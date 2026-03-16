@@ -409,9 +409,15 @@ std::string Message::get_error(message_type_t expected_type) const {
     }
 
     if (header.message_type == MSG_ERROR) {
-        error_payload_t err_msg;
-        std::memcpy(&err_msg, payload.data(), sizeof(err_msg));
-        return std::format("received error code {}", static_cast<const int&>(err_msg.error_code));
+        error_payload_t err_msg{};
+        std::memcpy(&err_msg, payload.data(), std::min(payload.size(), sizeof(err_msg)));
+        int32_t code = err_msg.error_code;
+        std::string msg = std::format("received error code {}", code);
+        if (err_msg.message[0] != '\0') {
+            err_msg.message[sizeof(err_msg.message) - 1] = '\0';
+            msg += std::format(": {}", err_msg.message);
+        }
+        return msg;
     }
 
     return std::format("unexpected message type expected {} got {}", static_cast<const int&>(expected_type), header.message_type);
@@ -693,10 +699,8 @@ Message UdpRobotSocket::parse_message(const std::vector<uint8_t>& buffer) {
     std::memcpy(&message.header, buffer.data(), sizeof(protocol_header_t));
 
     if (message.header.magic_number != PROTOCOL_MAGIC_NUMBER) {
-        throw std::runtime_error(
-            std::format("invalid message: wrong magic number expected: {:X} got: {:X}",
-                        PROTOCOL_MAGIC_NUMBER,
-                        (int)message.header.magic_number));
+        throw std::runtime_error(std::format(
+            "invalid message: wrong magic number expected: {:X} got: {:X}", PROTOCOL_MAGIC_NUMBER, (int)message.header.magic_number));
     }
 
     if (message.header.payload_length > 0) {
