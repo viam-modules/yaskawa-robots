@@ -45,10 +45,11 @@ run-clang-tidy:
         -p build \
         --config-file ./.clang-tidy \
         --header-filter=".*/viam/*/*.*" \
+        --extra-arg=-D_Bool=bool \
 	./src/viam/*/*.cpp
 
 run-clang-check:
-	clang-check-19 -p build ./src/viam/*/*.cpp 
+	clang-check-19 -p build --extra-arg=-D_Bool=bool ./src/viam/*/*.cpp
 
 clean:
 	rm -rf build
