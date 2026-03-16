@@ -29,9 +29,7 @@
 #include <third_party/trajectories/Path.h>
 #include <viam/sdk/config/resource.hpp>
 
-extern "C" {
 #include "protocol.h"
-}
 
 #include "logger.hpp"
 #include "trajectory_logger.hpp"

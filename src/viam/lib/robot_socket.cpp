@@ -409,9 +409,15 @@ std::string Message::get_error(message_type_t expected_type) const {
     }
 
     if (header.message_type == MSG_ERROR) {
-        error_payload_t err_msg;
-        std::memcpy(&err_msg, payload.data(), sizeof(err_msg));
-        return std::format("received error code {}", static_cast<const int&>(err_msg.error_code));
+        error_payload_t err_msg{};
+        std::memcpy(&err_msg, payload.data(), std::min(payload.size(), sizeof(err_msg)));
+        int32_t code = err_msg.error_code;
+        std::string msg = std::format("received error code {}", code);
+        if (err_msg.message[0] != '\0') {
+            err_msg.message[sizeof(err_msg.message) - 1] = '\0';
+            msg += std::format(": {}", err_msg.message);
+        }
+        return msg;
     }
 
     return std::format("unexpected message type expected {} got {}", static_cast<const int&>(expected_type), header.message_type);
@@ -535,8 +541,8 @@ protocol_header_t RobotSocketBase::parse_header(const std::vector<uint8_t>& buff
     }
     protocol_header_t header;
     std::memcpy(&header, buffer.data(), sizeof(protocol_header_t));
-    if (header.magic_number != PROTOCOL_MAGIC_NUMBER || header.version != PROTOCOL_VERSION) {
-        throw std::runtime_error("Invalid message: wrong magic number or version");
+    if (header.magic_number != PROTOCOL_MAGIC_NUMBER) {
+        throw std::runtime_error("Invalid message: wrong magic number");
     }
     return header;
 }
@@ -692,14 +698,9 @@ Message UdpRobotSocket::parse_message(const std::vector<uint8_t>& buffer) {
     Message message;
     std::memcpy(&message.header, buffer.data(), sizeof(protocol_header_t));
 
-    if (message.header.magic_number != PROTOCOL_MAGIC_NUMBER || message.header.version != PROTOCOL_VERSION) {
-        throw std::runtime_error(
-            std::format("invalid message: wrong magic number or version expected magic : {:X} "
-                        "version: {} got magic: {:X} version: {}",
-                        PROTOCOL_MAGIC_NUMBER,
-                        PROTOCOL_VERSION,
-                        (int)message.header.magic_number,
-                        (int)message.header.version));
+    if (message.header.magic_number != PROTOCOL_MAGIC_NUMBER) {
+        throw std::runtime_error(std::format(
+            "invalid message: wrong magic number expected: {:X} got: {:X}", PROTOCOL_MAGIC_NUMBER, (int)message.header.magic_number));
     }
 
     if (message.header.payload_length > 0) {
@@ -1030,9 +1031,10 @@ RobotStatusMessage YaskawaController::get_robot_status() {
 }
 
 void YaskawaController::register_udp_port(uint16_t port) {
-    std::vector<uint8_t> payload(sizeof(udp_port_registration_payload_t));
-    udp_port_registration_payload_t* port_payload = reinterpret_cast<udp_port_registration_payload_t*>(payload.data());
+    std::vector<uint8_t> payload(sizeof(udp_port_registration_v2_payload_t));
+    auto* port_payload = reinterpret_cast<udp_port_registration_v2_payload_t*>(payload.data());
     port_payload->udp_port = port;
+    port_payload->protocol_version = PROTOCOL_VERSION;
 
     auto msg = tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload))).get();
     const auto err = msg.get_error(MSG_OK);
