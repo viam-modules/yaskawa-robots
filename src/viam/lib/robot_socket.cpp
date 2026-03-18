@@ -26,6 +26,7 @@
 #include <cstring>
 #include <exception>
 #include <format>
+#include <fstream>
 #include <future>
 #include <iostream>
 #include <iterator>
@@ -55,7 +56,7 @@
 #include <xtensor/xarray.hpp>
 #endif
 
-#include <viam/trajex/service/trajectory_planner.hpp>
+#include <viam/trajex/totg/tools/planner.hpp>
 #include <viam/trajex/totg/totg.hpp>
 #include <viam/trajex/totg/trajectory.hpp>
 #include <viam/trajex/totg/uniform_sampler.hpp>
@@ -1245,35 +1246,30 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
 
     const std::list<Eigen::VectorXd> original_waypoints = waypoints;
 
-    auto log_failure = [&](const std::string& error_msg) {
+    auto log_failure = [&](const std::string& replay_json) {
         if (telemetry_path_fn_) {
             auto telemetry_path = (*telemetry_path_fn_)();
             if (telemetry_path) {
-                FailedTrajectoryLogger::log_failure(*telemetry_path,
-                                                    unix_time,
-                                                    robot_model_,
-                                                    group_index_,
-                                                    max_velocity_vec,
-                                                    max_acceleration_vec,
-                                                    original_waypoints,
-                                                    error_msg);
+                auto filename = std::format("{}/{}_failed_trajectory.trajex-totg-replay.json", *telemetry_path, unix_time);
+                std::ofstream json_file(filename);
+                json_file << replay_json;
             }
         }
     };
 
     using namespace viam::trajex;
 
-    trajectory_planner_base::config planner_cfg;
+    totg::planner_base::config planner_cfg;
     planner_cfg.velocity_limits = xt::xarray<double>::from_shape({static_cast<size_t>(max_velocity_vec.size())});
     planner_cfg.acceleration_limits = xt::xarray<double>::from_shape({static_cast<size_t>(max_acceleration_vec.size())});
     std::ranges::copy(max_velocity_vec, planner_cfg.velocity_limits.begin());
     std::ranges::copy(max_acceleration_vec, planner_cfg.acceleration_limits.begin());
     planner_cfg.path_blend_tolerance = path_tolerance_rad_;
     planner_cfg.colinearization_ratio = collinearization_ratio_;
-    planner_cfg.segment_trajex = true;
+    planner_cfg.segment_totg = true;
 
     auto planner =
-        trajectory_planner<segment_accumulator>(planner_cfg)
+        totg::planner<segment_accumulator>(planner_cfg)
             .with_waypoint_provider([&](auto& p) -> totg::waypoint_accumulator {
                 auto curr_joint_pos = get_robot_position_velocity_torque().position;
                 auto current_pos = p.stash(eigen_waypoints_to_xarray(
@@ -1291,10 +1287,11 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                 });
 
     if (use_new_trajectory_planner_) {
-        planner.with_trajex(
-            [&](segment_accumulator& acc,
+        planner.with_totg(
+            [&](const auto&,
+                segment_accumulator& acc,
                 const totg::waypoint_accumulator& seg,
-                const totg::trajectory& traj,
+                totg::trajectory&& traj,
                 std::chrono::microseconds elapsed) {
                 acc.total_waypoints += seg.size();
                 acc.total_duration += traj.duration().count();
@@ -1334,16 +1331,17 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                 LOGGING(info) << "trajex/totg segment generated, waypoints: " << seg.size() << ", duration: " << traj.duration().count()
                               << "s, samples: " << acc.samples.size() << ", arc length: " << traj.path().length();
             },
-            [&](const segment_accumulator&, const totg::waypoint_accumulator&, const std::exception& e) {
-                log_failure("failed to generate a new trajectory with trajex: " + std::string(e.what()));
+            [&](const auto& p, const segment_accumulator&, const totg::waypoint_accumulator& seg, const std::exception& e) {
+                log_failure(p.serialize_for_replay(seg, e.what()));
             });
     }
 
     planner.with_legacy(
-        [&](segment_accumulator& acc,
+        [&](const auto&,
+            segment_accumulator& acc,
             const totg::waypoint_accumulator& seg,
-            const Path&,
-            const Trajectory& traj,
+            Path&&,
+            Trajectory&& traj,
             std::chrono::microseconds elapsed) {
             const double duration = traj.getDuration();
 
@@ -1383,8 +1381,8 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
             acc.total_generation_time += std::chrono::duration<double>(elapsed).count();
             ++acc.segment_count;
         },
-        [&](const segment_accumulator&, const totg::waypoint_accumulator&, const std::exception& e) {
-            log_failure("failed to generate trajectory with legacy generator: " + std::string(e.what()));
+        [&](const auto& p, const segment_accumulator&, const totg::waypoint_accumulator& seg, const std::exception& e) {
+            log_failure(p.serialize_for_replay(seg, e.what()));
         });
 
     auto result = planner.execute([&](const auto& p, auto trajex_out, auto legacy_out) -> std::optional<segment_accumulator> {
