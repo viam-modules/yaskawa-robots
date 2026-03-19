@@ -121,9 +121,8 @@ enable_testing()
 
 FetchContent_Declare(
   trajex
-  GIT_REPOSITORY https://github.com/viam-modules/universal-robots.git
+  GIT_REPOSITORY https://github.com/viam-modules/trajex.git
   GIT_TAG v0.6.0-rc9
-  SOURCE_SUBDIR src/viam/trajex
 )
 
 find_package(xtl CONFIG REQUIRED)

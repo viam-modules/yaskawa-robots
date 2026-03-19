@@ -1266,7 +1266,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
     std::ranges::copy(max_acceleration_vec, planner_cfg.acceleration_limits.begin());
     planner_cfg.path_blend_tolerance = path_tolerance_rad_;
     planner_cfg.colinearization_ratio = collinearization_ratio_;
-    planner_cfg.segment_totg = true;
+    planner_cfg.segment_totg = false;
 
     auto planner =
         totg::planner<segment_accumulator>(planner_cfg)
