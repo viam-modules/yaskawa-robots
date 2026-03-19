@@ -44,7 +44,7 @@ run-clang-tidy:
 	clang-tidy-19 \
         -p build \
         --config-file ./.clang-tidy \
-        --header-filter=".*/viam/*/*.*" \
+        --header-filter=".*/src/viam/(lib|module)/.*" \
         --extra-arg=-D_Bool=bool \
 	./src/viam/*/*.cpp
 
