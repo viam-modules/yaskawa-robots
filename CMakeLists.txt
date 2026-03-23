@@ -7,6 +7,10 @@ project(
   LANGUAGES CXX
 )
 
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
+endif()
+
 # - `VIAM_YASKAWA_USE_WALL_WERROR`
 #
 # This causes the internal code to compile with `-Wall` and
