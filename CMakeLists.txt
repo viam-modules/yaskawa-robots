@@ -4,7 +4,7 @@ project(
   yaskawa-robots
   DESCRIPTION "Viam Module to support Yaskawa Robots arms"
   HOMEPAGE_URL https://github.com/viam-modules/yaskawa-robots
-  LANGUAGES CXX
+  LANGUAGES CXX C
 )
 
 # - `VIAM_YASKAWA_USE_WALL_WERROR`
@@ -133,17 +133,22 @@ FetchContent_MakeAvailable(trajex)
 FetchContent_Declare(
   comms
   GIT_REPOSITORY https://github.com/viam-labs/viam-yaskawa-libs.git
-  GIT_TAG 5cdd4e87781b8f722daff23417a2388860bf9eb7
+  GIT_TAG 7a998ac1438901548f233c260eadd75137159179
   GIT_SHALLOW TRUE
   SYSTEM
 )
 
-# We only need protocol.h — disable building the library, tests, and examples
+# Build the comms library (needed for integration tests) but skip its own tests/examples
 set(COMMS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(COMMS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(COMMS_PLATFORM_POSIX OFF CACHE BOOL "" FORCE)
+set(COMMS_PLATFORM_POSIX ON CACHE BOOL "" FORCE)
 
-FetchContent_Populate(comms)
+FetchContent_MakeAvailable(comms)
+
+# Suppress conversion warnings from third-party C code that we don't control.
+if(TARGET comms)
+  target_compile_options(comms PRIVATE -Wno-conversion)
+endif()
 
 add_library(viam-yaskawa)
 
@@ -337,6 +342,49 @@ target_link_libraries(move_limit_test
 )
 
 add_test(NAME move_limit_test COMMAND move_limit_test)
+
+# Common sources and include dirs for integration tests that use the fake server
+set(INTEGRATION_TEST_SOURCES
+  src/viam/lib/test/fake_server.cpp
+  ${comms_SOURCE_DIR}/tests/protocol/mock_robot.c
+)
+set(INTEGRATION_TEST_INCLUDE_DIRS
+  ${comms_SOURCE_DIR}
+  ${comms_SOURCE_DIR}/tests/protocol
+)
+
+
+add_executable(fault_injection_test)
+
+target_sources(fault_injection_test
+  PRIVATE
+    src/viam/lib/test/fault_injection_test.cpp
+    ${INTEGRATION_TEST_SOURCES}
+    ${comms_SOURCE_DIR}/tests/protocol/fault_inject.c
+)
+
+target_include_directories(fault_injection_test
+  PRIVATE
+    ${INTEGRATION_TEST_INCLUDE_DIRS}
+)
+
+target_link_libraries(fault_injection_test
+  PRIVATE
+    viam-yaskawa
+    comms
+    Boost::unit_test_framework
+    viam-cpp-sdk::viamsdk
+)
+
+
+# Suppress conversion warnings on third-party C sources compiled into this target
+set_source_files_properties(
+  ${INTEGRATION_TEST_SOURCES}
+  ${comms_SOURCE_DIR}/tests/protocol/fault_inject.c
+  PROPERTIES COMPILE_OPTIONS "-Wno-conversion"
+)
+
+add_test(NAME fault_injection_test COMMAND fault_injection_test)
 
 set(CPACK_PACKAGE_NAME "viam-yaskawa-robots")
 set(CPACK_PACKAGE_FILE_NAME "module")
