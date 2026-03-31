@@ -2,8 +2,8 @@
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wnull-dereference"
-#include <boost/test/unit_test.hpp>
 #include <boost/asio.hpp>
+#include <boost/test/unit_test.hpp>
 #pragma GCC diagnostic pop
 #include <chrono>
 #include <csignal>
@@ -14,7 +14,9 @@
 
 // Ignore SIGPIPE — writes to closed sockets return EPIPE instead of killing the process
 struct SigpipeIgnorer {
-    SigpipeIgnorer() { std::signal(SIGPIPE, SIG_IGN); }
+    SigpipeIgnorer() {
+        std::signal(SIGPIPE, SIG_IGN);
+    }
 };
 static SigpipeIgnorer s_ignore_sigpipe;
 
@@ -25,14 +27,14 @@ extern "C" {
 #include "protocol.h"
 }
 
-viam::sdk::ResourceConfig make_test_config() {
+viam::sdk::ResourceConfig make_test_config(uint16_t tcp_port) {
     viam::sdk::ProtoStruct attrs;
     attrs["host"] = viam::sdk::ProtoValue(std::string("127.0.0.1"));
+    attrs["tcp_port"] = viam::sdk::ProtoValue(static_cast<double>(tcp_port));
     attrs["speed_rad_per_sec"] = viam::sdk::ProtoValue(1.0);
     attrs["acceleration_rad_per_sec2"] = viam::sdk::ProtoValue(1.0);
-    return viam::sdk::ResourceConfig("arm", "test-arm", "",
-                                     std::move(attrs), "rdk:component:arm",
-                                     viam::sdk::Model("test", "test", "test"));
+    return viam::sdk::ResourceConfig(
+        "arm", "test-arm", "", std::move(attrs), "rdk:component:arm", viam::sdk::Model("test", "test", "test"));
 }
 
 struct FaultFixture {
@@ -42,13 +44,12 @@ struct FaultFixture {
     test::FakeServer server;
     std::shared_ptr<robot::YaskawaController> controller;
 
-    FaultFixture()
-        : ports({TCP_PORT, UDP_PORT}), server(ports) {
+    FaultFixture() : ports(test::FakeServer::allocate_ports()), server(ports) {
         io_thread = std::thread([this]() {
             auto guard = boost::asio::make_work_guard(io_ctx);
             io_ctx.run();
         });
-        controller = std::make_shared<robot::YaskawaController>(io_ctx, make_test_config());
+        controller = std::make_shared<robot::YaskawaController>(io_ctx, make_test_config(ports.tcp_port));
     }
 
     ~FaultFixture() {
@@ -71,7 +72,7 @@ struct FaultFixture {
     }
 
     void make_new_controller() {
-        controller = std::make_shared<robot::YaskawaController>(io_ctx, make_test_config());
+        controller = std::make_shared<robot::YaskawaController>(io_ctx, make_test_config(ports.tcp_port));
     }
 };
 
@@ -80,8 +81,7 @@ BOOST_AUTO_TEST_SUITE(fault_injection)
 // Test 1: Server disconnects during idle. The controller's heartbeat thread
 // detects the failure and auto-reconnects. Verify the server observes the
 // disconnect/reconnect cycle and that the controller remains operational.
-BOOST_FIXTURE_TEST_CASE(server_disconnect_during_idle, FaultFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(server_disconnect_during_idle, FaultFixture, *boost::unit_test::timeout(15)) {
     connect();
     uint32_t initial_connections = server.robot().connection_count;
 
@@ -108,8 +108,7 @@ BOOST_FIXTURE_TEST_CASE(server_disconnect_during_idle, FaultFixture,
 // Test 2: Server becomes unresponsive when it receives MSG_TEST_TRAJECTORY_COMMAND.
 // The fault blocks the server thread for ~5s before responding. Verify the
 // delay is observable (operation takes >3s instead of being near-instant).
-BOOST_FIXTURE_TEST_CASE(server_unresponsive_during_move, FaultFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(server_unresponsive_during_move, FaultFixture, *boost::unit_test::timeout(15)) {
     connect();
     controller->turn_servo_power_on();
 
@@ -127,8 +126,7 @@ BOOST_FIXTURE_TEST_CASE(server_unresponsive_during_move, FaultFixture,
 // Test 3: Server becomes unresponsive on MSG_TURN_SERVO_POWER_ON.
 // The fault blocks the server thread for ~5s before responding. Verify the
 // delay is observable.
-BOOST_FIXTURE_TEST_CASE(server_unresponsive, FaultFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(server_unresponsive, FaultFixture, *boost::unit_test::timeout(15)) {
     connect();
 
     server.inject_unresponsive_on(MSG_TURN_SERVO_POWER_ON);
@@ -146,8 +144,7 @@ BOOST_FIXTURE_TEST_CASE(server_unresponsive, FaultFixture,
 
 // Test 4: Server abruptly closes the connection. The heartbeat thread detects
 // the failure and auto-reconnects. Verify the server sees the cycle.
-BOOST_FIXTURE_TEST_CASE(server_abrupt_close, FaultFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(server_abrupt_close, FaultFixture, *boost::unit_test::timeout(15)) {
     connect();
     uint32_t initial_connections = server.robot().connection_count;
 
@@ -173,8 +170,7 @@ BOOST_FIXTURE_TEST_CASE(server_abrupt_close, FaultFixture,
 
 // Test 5: After a server fault fires and the controller auto-reconnects,
 // verify the server accepts the new connection and operations work normally.
-BOOST_FIXTURE_TEST_CASE(reconnect_after_server_fault, FaultFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(reconnect_after_server_fault, FaultFixture, *boost::unit_test::timeout(15)) {
     connect();
 
     // One-shot disconnect
@@ -196,8 +192,7 @@ BOOST_FIXTURE_TEST_CASE(reconnect_after_server_fault, FaultFixture,
 
 // Test 6: Client disconnects while a trajectory is active. Verify the server
 // detects the disconnect and accepts a new connection.
-BOOST_FIXTURE_TEST_CASE(client_disconnect_during_active_goal, FaultFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(client_disconnect_during_active_goal, FaultFixture, *boost::unit_test::timeout(15)) {
     connect();
     controller->turn_servo_power_on();
 

@@ -16,8 +16,7 @@ ServerPorts FakeServer::allocate_ports() {
     return {base, static_cast<uint16_t>(base + 1)};
 }
 
-command_response_context_t* FakeServer::fault_injecting_handle_command(
-    protocol_header_t* header, void* payload, void* user_data) {
+command_response_context_t* FakeServer::fault_injecting_handle_command(protocol_header_t* header, void* payload, void* user_data) {
     auto* data = static_cast<FaultCallbackData*>(user_data);
 
     fault_type_t fault = fault_inject_check(data->fault_ctx, header);
@@ -59,18 +58,15 @@ FakeServer::FakeServer(ServerPorts ports, uint32_t connection_timeout_ms) : port
     config.user_data = &cb_data_;
 
     // Wrap connection callbacks to extract robot from cb_data_
-    config.callbacks.on_connection = [](const char* client_ip, uint16_t client_port,
-                                        void* user_data) {
+    config.callbacks.on_connection = [](const char* client_ip, uint16_t client_port, void* user_data) {
         auto* data = static_cast<FaultCallbackData*>(user_data);
         mock_robot_on_connection(client_ip, client_port, data->robot);
     };
-    config.callbacks.on_disconnection = [](const char* client_ip, uint16_t client_port,
-                                           void* user_data) {
+    config.callbacks.on_disconnection = [](const char* client_ip, uint16_t client_port, void* user_data) {
         auto* data = static_cast<FaultCallbackData*>(user_data);
         mock_robot_on_disconnection(client_ip, client_port, data->robot);
     };
-    config.callbacks.get_error_info = [](int32_t* error_code, void* user_data)
-        -> command_response_context_t* {
+    config.callbacks.get_error_info = [](int32_t* error_code, void* user_data) -> command_response_context_t* {
         auto* data = static_cast<FaultCallbackData*>(user_data);
         return mock_robot_get_error_info_callback(error_code, data->robot);
     };
@@ -140,8 +136,7 @@ void FakeServer::start_udp_status_pump(uint32_t interval_ms) {
 
     pump_thread_ = std::thread([this, interval_ms]() {
         while (pumping_.load()) {
-            auto now =
-                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+            auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 
             status_payload_t status{};
             mock_robot_get_status(&robot_, &status, now);
