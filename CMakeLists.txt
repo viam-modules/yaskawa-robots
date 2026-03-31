@@ -172,6 +172,9 @@ target_compile_definitions(viam-yaskawa
 target_link_libraries(viam-yaskawa
   PUBLIC
     viam::trajex::service
+    viam::trajex::totg
+    viam::trajex::totg::legacy
+    viam::trajex::totg::tools
     Boost::regex
     Eigen3::Eigen
     jsoncpp_lib

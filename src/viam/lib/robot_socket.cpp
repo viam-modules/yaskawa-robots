@@ -404,6 +404,73 @@ std::ostream& operator<<(std::ostream& os, const Message& msg) {
     return os;
 }
 
+namespace {
+
+std::string_view viam_error_to_string(viam_error_code_t code) {
+    switch (code) {
+    case VIAM_ERROR_NOT_REMOTE:
+        return "the controller must be in REMOTE mode";
+    case VIAM_ERROR_MAJOR_ALARM:
+        return "a major alarm is active and cannot be reset remotely — check the teach pendant";
+    case VIAM_ERROR_ALARM_RESET_FAILED:
+        return "failed to reset alarm — check the teach pendant";
+    case VIAM_ERROR_SERVO_POWER:
+        return "servo power cannot be turned on";
+    case VIAM_ERROR_INVALID_PAYLOAD:
+        return "invalid request payload";
+    case VIAM_ERROR_GOAL_NOT_FOUND:
+        return "goal not found or already complete";
+    case VIAM_ERROR_NOT_IMPLEMENTED:
+        return "command not implemented";
+    case VIAM_ERROR_MOTION_ALARM:
+        return "the controller has an active alarm";
+    case VIAM_ERROR_MOTION_ERROR:
+        return "the controller has an active error";
+    case VIAM_ERROR_MOTION_ESTOP:
+        return "the controller is in E-Stop";
+    case VIAM_ERROR_MOTION_NOT_PLAY:
+        return "the teach pendant must not be in TEACH mode";
+    case VIAM_ERROR_MOTION_NOT_REMOTE:
+        return "the teach pendant must be in REMOTE mode";
+    case VIAM_ERROR_MOTION_SERVO_OFF:
+        return "servo power is off — call start_traj_mode or start_point_queue_mode first";
+    case VIAM_ERROR_MOTION_HOLD:
+        return "the controller is in HOLD";
+    case VIAM_ERROR_MOTION_NOT_STARTED:
+        return "call start_traj_mode or start_point_queue_mode first";
+    case VIAM_ERROR_MOTION_WAITING:
+        return "INFORM job is not on a WAIT command";
+    case VIAM_ERROR_MOTION_PFL_ACTIVE:
+        return "a PFL event has occurred — return the robot to a safe state";
+    case VIAM_ERROR_MOTION_INC_ERROR:
+        return "the controller is in an error state — call reset_error to clear it";
+    case VIAM_ERROR_MOTION_OTHER_RUNNING:
+        return "the controller is running another job";
+    case VIAM_ERROR_MOTION_OTHER_MODE:
+        return "another trajectory mode is already active — call stop_traj_mode first";
+    case VIAM_ERROR_MOTION_CYCLE_MODE:
+        return "AUTO cycle mode not set — set the cycle mode to AUTO";
+    case VIAM_ERROR_MOTION_MAJOR_ALARM:
+        return "a major alarm is active — check the teach pendant";
+    case VIAM_ERROR_MOTION_ECO_MODE:
+        return "could not disable eco mode";
+    case VIAM_ERROR_MOTION_SERVO_TIMEOUT:
+        return "timed out waiting for servo power on";
+    case VIAM_ERROR_TRAJ_AXIS_COUNT:
+        return "trajectory axis count doesn't match the controller — check that the trajectory has one value per joint";
+    case VIAM_ERROR_TRAJ_START_POS:
+        return "trajectory start position doesn't match current robot position — query joint positions and start the trajectory from there";
+    case VIAM_ERROR_TRAJ_SPEED:
+        return "trajectory velocity exceeds the speed limit for an axis";
+    case VIAM_ERROR_INTERNAL:
+    case VIAM_ERROR_UNSPECIFIED:
+    default:
+        return "an unexpected error occurred on the controller";
+    }
+}
+
+}  // namespace
+
 // get_error checks the message for an error and returns the appropriate error message based on the result.
 std::string Message::get_error(message_type_t expected_type) const {
     if (header.message_type == expected_type) {
@@ -413,13 +480,7 @@ std::string Message::get_error(message_type_t expected_type) const {
     if (header.message_type == MSG_ERROR) {
         error_payload_t err_msg{};
         std::memcpy(&err_msg, payload.data(), std::min(payload.size(), sizeof(err_msg)));
-        int32_t code = err_msg.error_code;
-        std::string msg = std::format("received error code {}", code);
-        if (err_msg.message[0] != '\0') {
-            err_msg.message[sizeof(err_msg.message) - 1] = '\0';
-            msg += std::format(": {}", err_msg.message);
-        }
-        return msg;
+        return std::string(viam_error_to_string(static_cast<viam_error_code_t>(err_msg.error_code)));
     }
 
     return std::format("unexpected message type expected {} got {}", static_cast<const int&>(expected_type), header.message_type);
