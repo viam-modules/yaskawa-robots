@@ -32,7 +32,7 @@ The following attributes are available for `viam:yaskawa-robots` arms:
 | `path_tolerance_rad` | float | Optional | Path tolerance for trajectory planning in radians. **Default 0.1 rad** (range: 0.0 - 3.0) |
 | `segmentation_threshold_rad` | float | Optional | Threshold for detecting direction reversals in waypoint paths. Lower values detect only sharp reversals; higher values are more sensitive. **Default 0.005 rad** (range: > 0, <= 0.1) |
 | `collinearization_ratio` | float | Optional | Waypoint collinearization parameter for trajectory smoothing. (range: 0.0 - 2.0) |
-| `enable_new_trajectory_planner` | bool | Optional | Enables the new trajectory planning algorithm. **Default false** |
+| `enable_new_trajectory_planner` | bool | Optional | Enables the new trajectory planning algorithm. **Default true** |
 | `telemetry_output_path` | string | Optional | Path for writing telemetry data files. **Default: VIAM_MODULE_DATA environment variable** |
 | `group_index` | int | Optional | Define which control group this arm represents. **Default 0** |
 
