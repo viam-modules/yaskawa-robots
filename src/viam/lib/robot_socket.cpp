@@ -346,9 +346,9 @@ RobotStatusMessage::RobotStatusMessage(const Message& msg) {
     data += sizeof(in_error);
 
     error_codes.reserve(MAX_ALARM_COUNT + 1);
-    boost::span<const int> alarm{reinterpret_cast<const int*>(data), MAX_ALARM_COUNT + 1};
+    boost::span<const int32_t> alarm{reinterpret_cast<const int32_t*>(data), MAX_ALARM_COUNT + 1};
     boost::copy(alarm | boost::adaptors::sliced(0, MAX_ALARM_COUNT + 1), std::back_inserter(error_codes));
-    data += sizeof(int) * (MAX_ALARM_COUNT + 1);
+    data += sizeof(int32_t) * (MAX_ALARM_COUNT + 1);
     std::memcpy(&size, data, sizeof(size));
 }
 
@@ -606,6 +606,10 @@ protocol_header_t RobotSocketBase::parse_header(const std::vector<uint8_t>& buff
     std::memcpy(&header, buffer.data(), sizeof(protocol_header_t));
     if (header.magic_number != PROTOCOL_MAGIC_NUMBER) {
         throw std::runtime_error("Invalid message: wrong magic number");
+    }
+    if (header.version != PROTOCOL_VERSION) {
+        throw std::runtime_error(std::format("protocol version mismatch: client={} controller={} — update controller firmware",
+                                             PROTOCOL_VERSION, header.version));
     }
     return header;
 }
