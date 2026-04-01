@@ -200,7 +200,7 @@ jobs:
           module-path: module.tar.gz
           platform: ${{ matrix.platform }}
           version: ${{ github.ref_name }}
-          key-id: ${{ secrets.viam_key_id }}
-          key-value: ${{ secrets.viam_key_value }}
+          key-id: ${{ secrets.VIAM_DEV_API_KEY_ID }}
+          key-value: ${{ secrets.VIAM_DEV_API_KEY }}
           do-update: ${{ github.event_name == 'release' && !github.event.release.prerelease }}
           do-upload: ${{ github.event_name == 'release' }}
