@@ -608,8 +608,8 @@ protocol_header_t RobotSocketBase::parse_header(const std::vector<uint8_t>& buff
         throw std::runtime_error("Invalid message: wrong magic number");
     }
     if (header.version != PROTOCOL_VERSION) {
-        throw std::runtime_error(std::format("protocol version mismatch: client={} controller={} — update controller firmware",
-                                             PROTOCOL_VERSION, header.version));
+        throw std::runtime_error(std::format(
+            "protocol version mismatch: client={} controller={} — update controller firmware", PROTOCOL_VERSION, header.version));
     }
     return header;
 }
