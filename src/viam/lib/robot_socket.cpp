@@ -430,8 +430,6 @@ std::string_view viam_error_to_string(viam_error_code_t code) {
         return "the controller is in E-Stop";
     case VIAM_ERROR_MOTION_NOT_PLAY:
         return "the teach pendant must not be in TEACH mode";
-    case VIAM_ERROR_MOTION_NOT_REMOTE:
-        return "the teach pendant must be in REMOTE mode";
     case VIAM_ERROR_MOTION_SERVO_OFF:
         return "servo power is off — call start_traj_mode or start_point_queue_mode first";
     case VIAM_ERROR_MOTION_HOLD:
@@ -462,8 +460,9 @@ std::string_view viam_error_to_string(viam_error_code_t code) {
         return "trajectory start position doesn't match current robot position — query joint positions and start the trajectory from there";
     case VIAM_ERROR_TRAJ_SPEED:
         return "trajectory velocity exceeds the speed limit for an axis";
+    case VIAM_ERROR_OK:
+        return "no error";
     case VIAM_ERROR_INTERNAL:
-    case VIAM_ERROR_UNSPECIFIED:
     default:
         return "an unexpected error occurred on the controller";
     }
@@ -1365,9 +1364,10 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                         case GOAL_STATE_PENDING:
                             break;
                         case GOAL_STATE_CANCELLED:
+                            throw std::runtime_error("goal was cancelled");
                         case GOAL_STATE_ABORTED:
                             throw std::runtime_error(
-                                std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
+                                std::format("goal aborted: {}", viam_error_to_string(status_msg.abort_code)));
                     }
                 }
             }
@@ -1676,6 +1676,7 @@ GoalStatusMessage::GoalStatusMessage(const Message& msg) {
     current_queue_size = payload->current_queue_size;
     progress = payload->progress;
     timestamp_ms = payload->timestamp_ms;
+    abort_code = static_cast<viam_error_code_t>(payload->abort_code);
 }
 
 // GoalAcceptedMessage implementation
