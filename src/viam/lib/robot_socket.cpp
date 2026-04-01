@@ -1239,6 +1239,9 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     ScopeGuard cleanup{[this]() { move_in_progress_ = false; }};
 
     if (!robot_state_->IsReady()) {
+        // TODO(future PR): we already have enough state to know whether reset_errors() can help
+        // (it can't if mode != ROBOT_MODE_REMOTE), but we call it unconditionally anyway.
+        // Revisit when reworking the state machine.
         reset_errors();
     }
     // TODO check servo on and & errors
@@ -1735,14 +1738,19 @@ bool GoalRequestHandle::is_done() const {
     return completion_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
 }
 
-State::State() : e_stopped(false), in_motion(false), drive_powered(false), in_error(true) {}
+State::State() : e_stopped(false), in_motion(false), drive_powered(false), in_error(true), mode(ROBOT_MODE_UNKNOWN) {}
 void State::UpdateState(const RobotStatusMessage& msg) {
     e_stopped.store(msg.e_stopped);
     in_error.store(msg.in_error);
     drive_powered.store(msg.drives_powered);
     in_motion.store(msg.in_motion);
+    mode.store(msg.mode);
 }
 bool State::IsReady() const {
-    return !e_stopped.load() && !in_error.load();
+    // TODO(future PR): revisit the state machine — IsReady() returning false due to mode !=
+    // ROBOT_MODE_REMOTE is not recoverable by reset_errors(), but callers don't distinguish
+    // between error-not-ready and mode-not-ready. The state machine should surface separate
+    // reasons so callers can fail fast instead of attempting a pointless reset.
+    return !e_stopped.load() && !in_error.load() && mode.load() == ROBOT_MODE_REMOTE;
 }
 }  // namespace robot

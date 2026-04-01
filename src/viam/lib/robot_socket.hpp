@@ -235,7 +235,7 @@ struct StatusMessage {
 
 struct RobotStatusMessage {
     int64_t ts;            // 8 bytes - timestamp
-    int mode;              // 4 bytes - robot mode
+    robot_mode_t mode;     // 4 bytes - robot mode
     bool e_stopped;        // 1 byte - estop status
     bool drives_powered;   // 1 byte - drive power status
     bool motion_possible;  // 1 byte - motion enabled
@@ -259,6 +259,7 @@ struct State {
     std::atomic<bool> in_motion;
     std::atomic<bool> drive_powered;
     std::atomic<bool> in_error;
+    std::atomic<robot_mode_t> mode;
     explicit State();
     void UpdateState(const RobotStatusMessage& msg);
     bool IsReady() const;
