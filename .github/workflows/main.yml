@@ -122,6 +122,7 @@ jobs:
             pkg-config \
             pipx \
             sudo \
+            cmake \
             wget
 
       # Debian/Ubuntu setup: Install Conan via pip (not using conan-io/setup-conan for container compatibility)
