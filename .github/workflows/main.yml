@@ -148,10 +148,14 @@ jobs:
 
       # Build using setup.sh and build.sh scripts
       - name: Setup C++ SDK
-        run: ./bin/setup.sh
+        run: |
+          export PATH="$HOME/.local/bin:${PATH}"
+          ./bin/setup.sh
 
       - name: Build module
-        run: ./bin/build.sh
+        run: |
+          export PATH="$HOME/.local/bin:${PATH}"
+          ./bin/build.sh
 
       # Attach module.tar.gz to workflow run
       - name: Attach build artifact
