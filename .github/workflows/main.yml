@@ -127,9 +127,10 @@ jobs:
       # Debian/Ubuntu setup: Install Conan via pip (not using conan-io/setup-conan for container compatibility)
       - name: Install Conan (Debian)
         if: matrix.setup_type == 'debian'
-        run: |
-          export PATH="/root/.local/bin:${PATH}"
+        run: |  
           pipx install conan
+          pipx ensurepath
+          export PATH="$HOME/.local/bin:${PATH}"
           conan profile detect
 
       # macOS setup: Install Conan via Homebrew
