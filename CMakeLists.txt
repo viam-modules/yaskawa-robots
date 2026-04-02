@@ -30,6 +30,11 @@ endif()
 # Enforce the C++ standard, and disable extensions
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+
 if (MSVC)
   # https://discourse.cmake.org/t/set-cmake-cxx-standard-should-set-zc-cplusplus-for-msvc/1876
   string(APPEND CMAKE_CXX_FLAGS " /Zc:__cplusplus")
