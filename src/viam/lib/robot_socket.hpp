@@ -271,7 +271,7 @@ struct GoalStatusMessage {
     uint32_t current_queue_size;
     double progress;
     int64_t timestamp_ms;
-    viam_error_code_t abort_code;
+    std::string abort_message;
 
     GoalStatusMessage() = default;
     GoalStatusMessage(const Message& msg);
