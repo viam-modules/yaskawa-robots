@@ -176,6 +176,8 @@ target_compile_options( viam-yaskawa PRIVATE -O0)
 target_compile_definitions(viam-yaskawa
   PRIVATE
     BOOST_DLL_USE_STD_FS
+  PUBLIC
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:_Bool=bool>
 )
 
 target_link_libraries(viam-yaskawa
