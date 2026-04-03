@@ -404,8 +404,6 @@ std::ostream& operator<<(std::ostream& os, const Message& msg) {
     return os;
 }
 
-}  // namespace
-
 // get_error checks the message for an error and returns the appropriate error message based on the result.
 std::string Message::get_error(message_type_t expected_type) const {
     if (header.message_type == expected_type) {
