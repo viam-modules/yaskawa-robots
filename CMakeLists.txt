@@ -7,6 +7,10 @@ project(
   LANGUAGES CXX C
 )
 
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
+endif()
+
 # - `VIAM_YASKAWA_USE_WALL_WERROR`
 #
 # This causes the internal code to compile with `-Wall` and
@@ -26,6 +30,11 @@ endif()
 # Enforce the C++ standard, and disable extensions
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+
 if (MSVC)
   # https://discourse.cmake.org/t/set-cmake-cxx-standard-should-set-zc-cplusplus-for-msvc/1876
   string(APPEND CMAKE_CXX_FLAGS " /Zc:__cplusplus")
@@ -172,6 +181,8 @@ target_compile_options( viam-yaskawa PRIVATE -O0)
 target_compile_definitions(viam-yaskawa
   PRIVATE
     BOOST_DLL_USE_STD_FS
+  PUBLIC
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:_Bool=bool>
 )
 
 target_link_libraries(viam-yaskawa

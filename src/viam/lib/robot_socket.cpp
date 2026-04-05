@@ -832,7 +832,7 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     waypoint_dedup_tolerance_rad_ =
         waypoint_dedup_tolerance_deg ? degrees_to_radians(*waypoint_dedup_tolerance_deg) : k_default_waypoint_deduplication_tolerance_rads;
 
-    use_new_trajectory_planner_ = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
+    use_new_trajectory_planner_ = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(true);
     path_tolerance_rad_ = find_config_attribute<double>(config, "path_tolerance_rad").value_or(0.1);
     collinearization_ratio_ = find_config_attribute<double>(config, "collinearization_ratio");
     segmentation_threshold_rad_ =
