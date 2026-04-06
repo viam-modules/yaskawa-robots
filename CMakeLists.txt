@@ -156,7 +156,10 @@ FetchContent_MakeAvailable(comms)
 
 # Suppress conversion warnings from third-party C code that we don't control.
 if(TARGET comms)
-  target_compile_options(comms PRIVATE -Wno-conversion)
+  target_compile_options(comms PRIVATE
+    -Wno-conversion
+    $<$<BOOL:${APPLE}>:-Wno-deprecated-declarations>
+  )
 endif()
 
 add_library(viam-yaskawa)
@@ -269,7 +272,7 @@ install(
 )
 
 
-add_executable(yaskawa-example)
+add_executable(yaskawa-example EXCLUDE_FROM_ALL)
 
 target_sources(yaskawa-example
   PRIVATE
@@ -307,7 +310,7 @@ install(
   DESTINATION ${CMAKE_INSTALL_DATADIR}/yaskawa-robots
 )
 
-add_executable(broadcast_log_parser_test)
+add_executable(broadcast_log_parser_test EXCLUDE_FROM_ALL)
 
 target_sources(broadcast_log_parser_test
   PRIVATE
@@ -322,7 +325,7 @@ target_link_libraries(broadcast_log_parser_test
 
 add_test(NAME broadcast_log_parser_test COMMAND broadcast_log_parser_test)
 
-add_executable(realtime_trajectory_logger_test)
+add_executable(realtime_trajectory_logger_test EXCLUDE_FROM_ALL)
 
 target_sources(realtime_trajectory_logger_test
   PRIVATE
@@ -337,7 +340,7 @@ target_link_libraries(realtime_trajectory_logger_test
 
 add_test(NAME realtime_trajectory_logger_test COMMAND realtime_trajectory_logger_test)
 
-add_executable(move_limit_test)
+add_executable(move_limit_test EXCLUDE_FROM_ALL)
 
 target_sources(move_limit_test
   PRIVATE
@@ -365,7 +368,7 @@ set(INTEGRATION_TEST_INCLUDE_DIRS
 )
 
 
-add_executable(fault_injection_test)
+add_executable(fault_injection_test EXCLUDE_FROM_ALL)
 
 target_sources(fault_injection_test
   PRIVATE
@@ -388,7 +391,7 @@ target_link_libraries(fault_injection_test
 )
 
 
-# Suppress conversion warnings on third-party C sources compiled into this target
+# Suppress warnings on third-party C sources compiled into this target.
 set_source_files_properties(
   ${INTEGRATION_TEST_SOURCES}
   ${comms_SOURCE_DIR}/tests/protocol/fault_inject.c
