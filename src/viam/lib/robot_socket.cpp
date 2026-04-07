@@ -1088,7 +1088,7 @@ void YaskawaController::get_error_info() {
     auto msg = tcp_socket_->send_request(Message(MSG_GET_ERROR_INFO)).get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
-        throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_GET_ERROR_INFO), err));
+        throw std::runtime_error(std::format("MSG_GET_ERROR_INFO failed: {}", err));
     }
     LOGGING(debug) << "MSG_GET_ERROR_INFO: " << msg;
 }
@@ -1125,7 +1125,7 @@ void YaskawaController::register_udp_port(uint16_t port) {
     auto msg = tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload))).get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
-        throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_REGISTER_UDP_PORT), err));
+        throw std::runtime_error(std::format("MSG_REGISTER_UDP_PORT failed: {}", err));
     }
     LOGGING(info) << "UDP port registration response: " << msg;
 }
@@ -1134,7 +1134,7 @@ void YaskawaController::reset_errors() {
     auto msg = tcp_socket_->send_request(Message(MSG_RESET_ERRORS)).get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
-        throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_RESET_ERRORS), err));
+        throw std::runtime_error(std::format("MSG_RESET_ERRORS failed: {}", err));
     }
     LOGGING(debug) << "MSG_RESET_ERRORS: " << msg;
 }
