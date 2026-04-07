@@ -306,6 +306,11 @@ install(
 )
 
 install(
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/README.md
+  DESTINATION .
+)
+
+install(
   DIRECTORY src/kinematics
   DESTINATION ${CMAKE_INSTALL_DATADIR}/yaskawa-robots
 )
