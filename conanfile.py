@@ -21,7 +21,7 @@ class yaskawa_robots(ConanFile):
     }
 
     def export_sources(self):
-        for pat in ["CMakeLists.txt", "LICENSE", "src/*", "meta.json*", "*.sh"]:
+        for pat in ["CMakeLists.txt", "LICENSE", "src/*", "meta.json*", "*.sh", "README.md"]:
             copy(self, pat, self.recipe_folder, self.export_sources_folder)
 
     def set_version(self):
