@@ -28,13 +28,14 @@ configure:
 	cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -G Ninja
 
 build: configure
-	ninja -C build
+	ninja -C build yaskawa-robots
 
 
 install: build
 	ninja -C build install
 
-test: build
+test: configure
+	cmake --build build --target broadcast_log_parser_test realtime_trajectory_logger_test move_limit_test fault_injection_test viam-trajex-totg-test viam-trajex-totg-tools-test viam-trajex-types-test viam-trajex-service-test
 	cmake --build build --target test
 
 module.tar.gz: format-check install

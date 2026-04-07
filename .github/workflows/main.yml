@@ -189,7 +189,7 @@ jobs:
           name: ${{ matrix.artifact_name }}
 
       - name: Extract meta.json from module archive
-        run: tar -xzf module.tar.gz meta.json
+        run: tar -xzf module.tar.gz meta.json README.md
 
       - name: Upload module to Viam
         uses: viamrobotics/upload-module@v1
