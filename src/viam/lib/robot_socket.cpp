@@ -1411,7 +1411,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                                             sample.velocity(5)},
                                            {0},
                                            {0},
-                                           {static_cast<int32_t>(secs.count()), static_cast<int32_t>(nanos.count())}});
+                                           {static_cast<uint32_t>(secs.count()), static_cast<uint32_t>(nanos.count())}});
                 }
 
                 acc.cumulative_time += std::chrono::duration<double>(traj.duration());
@@ -1460,7 +1460,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                                           {v[0], v[1], v[2], v[3], v[4], v[5]},
                                           {0},
                                           {0},
-                                          {static_cast<int32_t>(secs.count()), static_cast<int32_t>(nanos.count())}};
+                                          {static_cast<uint32_t>(secs.count()), static_cast<uint32_t>(nanos.count())}};
             });
 
             acc.cumulative_time += std::chrono::duration<double>(duration);
