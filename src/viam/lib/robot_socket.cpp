@@ -830,13 +830,15 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     waypoint_dedup_tolerance_rad_ =
         waypoint_dedup_tolerance_deg ? degrees_to_radians(*waypoint_dedup_tolerance_deg) : k_default_waypoint_deduplication_tolerance_rads;
 
-    use_new_trajectory_planner_ = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(false);
+    use_new_trajectory_planner_ = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(true);
     path_tolerance_rad_ = find_config_attribute<double>(config, "path_tolerance_rad").value_or(0.1);
     collinearization_ratio_ = find_config_attribute<double>(config, "collinearization_ratio");
     segmentation_threshold_rad_ =
         find_config_attribute<double>(config, "segmentation_threshold_rad").value_or(k_default_segmentation_threshold);
 
-    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
+    auto tcp_port = find_config_attribute<double>(config, "tcp_port");
+    tcp_port_ = tcp_port ? static_cast<uint16_t>(*tcp_port) : static_cast<uint16_t>(TCP_PORT);
+    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_, tcp_port_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
 }
 
@@ -977,7 +979,7 @@ void YaskawaController::reconnect_() {
     // Replace TCP socket without going through null: disconnect() above sets connected_=false
     // atomically, so concurrent callers get "Not connected" rather than a null deref.
     // establish_connections_() will create a fresh UDP socket.
-    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_);
+    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_, tcp_port_);
 
     establish_connections_();
     LOGGING(info) << "reconnect complete";

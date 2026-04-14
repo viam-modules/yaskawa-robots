@@ -1,9 +1,9 @@
 {
   "$schema": "https://dl.viam.dev/module.schema.json",
-  "module_id": "viam:yaskawa-robots",
+  "module_id": "viam:yaskawa",
   "visibility": "public",
   "url": "https://github.com/viam-modules/yaskawa-robots",
-  "description": "C++ module for Yaskawa Robots arms",
+  "description": "C++ module for Yaskawa Robots",
   "models": [
     {
       "api": "rdk:component:arm",

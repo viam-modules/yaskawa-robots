@@ -449,6 +449,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
    private:
     boost::asio::io_context& io_context_;
     std::string host_;
+    uint16_t tcp_port_;
     std::shared_ptr<State> robot_state_;
 
     std::unique_ptr<TcpRobotSocket> tcp_socket_;

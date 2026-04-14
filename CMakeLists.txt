@@ -4,8 +4,12 @@ project(
   yaskawa-robots
   DESCRIPTION "Viam Module to support Yaskawa Robots arms"
   HOMEPAGE_URL https://github.com/viam-modules/yaskawa-robots
-  LANGUAGES CXX
+  LANGUAGES CXX C
 )
+
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
+endif()
 
 # - `VIAM_YASKAWA_USE_WALL_WERROR`
 #
@@ -26,6 +30,11 @@ endif()
 # Enforce the C++ standard, and disable extensions
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+
+
 if (MSVC)
   # https://discourse.cmake.org/t/set-cmake-cxx-standard-should-set-zc-cplusplus-for-msvc/1876
   string(APPEND CMAKE_CXX_FLAGS " /Zc:__cplusplus")
@@ -138,12 +147,20 @@ FetchContent_Declare(
   SYSTEM
 )
 
-# We only need protocol.h — disable building the library, tests, and examples
+# Build the comms library (needed for integration tests) but skip its own tests/examples
 set(COMMS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(COMMS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(COMMS_PLATFORM_POSIX OFF CACHE BOOL "" FORCE)
+set(COMMS_PLATFORM_POSIX ON CACHE BOOL "" FORCE)
 
-FetchContent_Populate(comms)
+FetchContent_MakeAvailable(comms)
+
+# Suppress conversion warnings from third-party C code that we don't control.
+if(TARGET comms)
+  target_compile_options(comms PRIVATE
+    -Wno-conversion
+    $<$<BOOL:${APPLE}>:-Wno-deprecated-declarations>
+  )
+endif()
 
 add_library(viam-yaskawa)
 
@@ -167,6 +184,8 @@ target_compile_options( viam-yaskawa PRIVATE -O0)
 target_compile_definitions(viam-yaskawa
   PRIVATE
     BOOST_DLL_USE_STD_FS
+  PUBLIC
+    $<$<CXX_COMPILER_ID:Clang,AppleClang>:_Bool=bool>
 )
 
 target_link_libraries(viam-yaskawa
@@ -253,7 +272,7 @@ install(
 )
 
 
-add_executable(yaskawa-example)
+add_executable(yaskawa-example EXCLUDE_FROM_ALL)
 
 target_sources(yaskawa-example
   PRIVATE
@@ -287,11 +306,16 @@ install(
 )
 
 install(
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/README.md
+  DESTINATION .
+)
+
+install(
   DIRECTORY src/kinematics
   DESTINATION ${CMAKE_INSTALL_DATADIR}/yaskawa-robots
 )
 
-add_executable(broadcast_log_parser_test)
+add_executable(broadcast_log_parser_test EXCLUDE_FROM_ALL)
 
 target_sources(broadcast_log_parser_test
   PRIVATE
@@ -306,7 +330,7 @@ target_link_libraries(broadcast_log_parser_test
 
 add_test(NAME broadcast_log_parser_test COMMAND broadcast_log_parser_test)
 
-add_executable(realtime_trajectory_logger_test)
+add_executable(realtime_trajectory_logger_test EXCLUDE_FROM_ALL)
 
 target_sources(realtime_trajectory_logger_test
   PRIVATE
@@ -321,7 +345,7 @@ target_link_libraries(realtime_trajectory_logger_test
 
 add_test(NAME realtime_trajectory_logger_test COMMAND realtime_trajectory_logger_test)
 
-add_executable(move_limit_test)
+add_executable(move_limit_test EXCLUDE_FROM_ALL)
 
 target_sources(move_limit_test
   PRIVATE
@@ -337,6 +361,49 @@ target_link_libraries(move_limit_test
 )
 
 add_test(NAME move_limit_test COMMAND move_limit_test)
+
+# Common sources and include dirs for integration tests that use the fake server
+set(INTEGRATION_TEST_SOURCES
+  src/viam/lib/test/fake_server.cpp
+  ${comms_SOURCE_DIR}/tests/protocol/mock_robot.c
+)
+set(INTEGRATION_TEST_INCLUDE_DIRS
+  ${comms_SOURCE_DIR}
+  ${comms_SOURCE_DIR}/tests/protocol
+)
+
+
+add_executable(fault_injection_test EXCLUDE_FROM_ALL)
+
+target_sources(fault_injection_test
+  PRIVATE
+    src/viam/lib/test/fault_injection_test.cpp
+    ${INTEGRATION_TEST_SOURCES}
+    ${comms_SOURCE_DIR}/tests/protocol/fault_inject.c
+)
+
+target_include_directories(fault_injection_test
+  PRIVATE
+    ${INTEGRATION_TEST_INCLUDE_DIRS}
+)
+
+target_link_libraries(fault_injection_test
+  PRIVATE
+    viam-yaskawa
+    comms
+    Boost::unit_test_framework
+    viam-cpp-sdk::viamsdk
+)
+
+
+# Suppress warnings on third-party C sources compiled into this target.
+set_source_files_properties(
+  ${INTEGRATION_TEST_SOURCES}
+  ${comms_SOURCE_DIR}/tests/protocol/fault_inject.c
+  PROPERTIES COMPILE_OPTIONS "-Wno-conversion"
+)
+
+add_test(NAME fault_injection_test COMMAND fault_injection_test)
 
 set(CPACK_PACKAGE_NAME "viam-yaskawa-robots")
 set(CPACK_PACKAGE_FILE_NAME "module")
