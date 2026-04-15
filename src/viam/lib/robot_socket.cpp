@@ -144,23 +144,6 @@ constexpr double k_default_min_timestep_sec = 1e-2;
 constexpr double k_default_trajectory_sampling_freq = 3;
 constexpr auto k_socket_timeout = std::chrono::seconds(5);
 
-constexpr const char* goal_state_to_string(goal_state_t state) {
-    switch (state) {
-        case GOAL_STATE_SUCCEEDED:
-            return "goal succeeded";
-        case GOAL_STATE_PENDING:
-            return "goal pending";
-        case GOAL_STATE_ABORTED:
-            return "goal aborted (server side)";
-        case GOAL_STATE_CANCELLED:
-            return "goal cancelled (client side)";
-        case GOAL_STATE_ACTIVE:
-            return "goal state active";
-        default:
-            return "unknown goal state";
-    }
-}
-
 template <typename Func>
 void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
     if (duration_sec <= 0.0 || sampling_frequency_hz <= 0.0) {
@@ -346,9 +329,9 @@ RobotStatusMessage::RobotStatusMessage(const Message& msg) {
     data += sizeof(in_error);
 
     error_codes.reserve(MAX_ALARM_COUNT + 1);
-    boost::span<const int> alarm{reinterpret_cast<const int*>(data), MAX_ALARM_COUNT + 1};
+    boost::span<const int32_t> alarm{reinterpret_cast<const int32_t*>(data), MAX_ALARM_COUNT + 1};
     boost::copy(alarm | boost::adaptors::sliced(0, MAX_ALARM_COUNT + 1), std::back_inserter(error_codes));
-    data += sizeof(int) * (MAX_ALARM_COUNT + 1);
+    data += sizeof(int32_t) * (MAX_ALARM_COUNT + 1);
     std::memcpy(&size, data, sizeof(size));
 }
 
@@ -413,13 +396,7 @@ std::string Message::get_error(message_type_t expected_type) const {
     if (header.message_type == MSG_ERROR) {
         error_payload_t err_msg{};
         std::memcpy(&err_msg, payload.data(), std::min(payload.size(), sizeof(err_msg)));
-        int32_t code = err_msg.error_code;
-        std::string msg = std::format("received error code {}", code);
-        if (err_msg.message[0] != '\0') {
-            err_msg.message[sizeof(err_msg.message) - 1] = '\0';
-            msg += std::format(": {}", err_msg.message);
-        }
-        return msg;
+        return std::string(err_msg.message);
     }
 
     return std::format("unexpected message type expected {} got {}", static_cast<const int&>(expected_type), header.message_type);
@@ -545,6 +522,10 @@ protocol_header_t RobotSocketBase::parse_header(const std::vector<uint8_t>& buff
     std::memcpy(&header, buffer.data(), sizeof(protocol_header_t));
     if (header.magic_number != PROTOCOL_MAGIC_NUMBER) {
         throw std::runtime_error("Invalid message: wrong magic number");
+    }
+    if (header.version != PROTOCOL_VERSION) {
+        throw std::runtime_error(std::format(
+            "protocol version mismatch: client={} controller={} — update controller firmware", PROTOCOL_VERSION, header.version));
     }
     return header;
 }
@@ -866,7 +847,7 @@ void YaskawaController::establish_connections_() {
         udp_future.get();
 
         register_udp_port(udp_socket_->get_local_port());
-        get_robot_status();
+        robot_state_->UpdateState(get_robot_status());
     } catch (...) {
         tcp_socket_->disconnect();
         if (udp_socket_) {
@@ -1092,7 +1073,7 @@ void YaskawaController::get_error_info() {
     auto msg = tcp_socket_->send_request(Message(MSG_GET_ERROR_INFO)).get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
-        throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_GET_ERROR_INFO), err));
+        throw std::runtime_error(std::format("MSG_GET_ERROR_INFO failed: {}", err));
     }
     LOGGING(debug) << "MSG_GET_ERROR_INFO: " << msg;
 }
@@ -1129,7 +1110,7 @@ void YaskawaController::register_udp_port(uint16_t port) {
     auto msg = tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload))).get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
-        throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_REGISTER_UDP_PORT), err));
+        throw std::runtime_error(std::format("MSG_REGISTER_UDP_PORT failed: {}", err));
     }
     LOGGING(info) << "UDP port registration response: " << msg;
 }
@@ -1138,7 +1119,7 @@ void YaskawaController::reset_errors() {
     auto msg = tcp_socket_->send_request(Message(MSG_RESET_ERRORS)).get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
-        throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_RESET_ERRORS), err));
+        throw std::runtime_error(std::format("MSG_RESET_ERRORS failed: {}", err));
     }
     LOGGING(debug) << "MSG_RESET_ERRORS: " << msg;
 }
@@ -1180,6 +1161,9 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     ScopeGuard cleanup{[this]() { move_in_progress_ = false; }};
 
     if (!robot_state_->IsReady()) {
+        // TODO(future PR): we already have enough state to know whether reset_errors() can help
+        // (it can't if mode != ROBOT_MODE_REMOTE), but we call it unconditionally anyway.
+        // Revisit when reworking the state machine.
         reset_errors();
     }
     // TODO check servo on and & errors
@@ -1306,9 +1290,9 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                         case GOAL_STATE_PENDING:
                             break;
                         case GOAL_STATE_CANCELLED:
+                            throw std::runtime_error("goal was cancelled");
                         case GOAL_STATE_ABORTED:
-                            throw std::runtime_error(
-                                std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
+                            throw std::runtime_error(std::format("goal aborted: {}", status_msg.abort_message));
                     }
                 }
             }
@@ -1412,7 +1396,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                                             sample.velocity(5)},
                                            {0},
                                            {0},
-                                           {static_cast<int32_t>(secs.count()), static_cast<int32_t>(nanos.count())}});
+                                           {static_cast<uint32_t>(secs.count()), static_cast<uint32_t>(nanos.count())}});
                 }
 
                 acc.cumulative_time += std::chrono::duration<double>(traj.duration());
@@ -1461,7 +1445,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                                           {v[0], v[1], v[2], v[3], v[4], v[5]},
                                           {0},
                                           {0},
-                                          {static_cast<int32_t>(secs.count()), static_cast<int32_t>(nanos.count())}};
+                                          {static_cast<uint32_t>(secs.count()), static_cast<uint32_t>(nanos.count())}};
             });
 
             acc.cumulative_time += std::chrono::duration<double>(duration);
@@ -1617,6 +1601,7 @@ GoalStatusMessage::GoalStatusMessage(const Message& msg) {
     current_queue_size = payload->current_queue_size;
     progress = payload->progress;
     timestamp_ms = payload->timestamp_ms;
+    abort_message = std::string(payload->abort_message);
 }
 
 // GoalAcceptedMessage implementation
@@ -1675,14 +1660,19 @@ bool GoalRequestHandle::is_done() const {
     return completion_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
 }
 
-State::State() : e_stopped(false), in_motion(false), drive_powered(false), in_error(true) {}
+State::State() : e_stopped(false), in_motion(false), drive_powered(false), in_error(true), mode(ROBOT_MODE_UNKNOWN) {}
 void State::UpdateState(const RobotStatusMessage& msg) {
     e_stopped.store(msg.e_stopped);
     in_error.store(msg.in_error);
     drive_powered.store(msg.drives_powered);
     in_motion.store(msg.in_motion);
+    mode.store(msg.mode);
 }
 bool State::IsReady() const {
-    return !e_stopped.load() && !in_error.load();
+    // TODO(future PR): revisit the state machine — IsReady() returning false due to mode !=
+    // ROBOT_MODE_REMOTE is not recoverable by reset_errors(), but callers don't distinguish
+    // between error-not-ready and mode-not-ready. The state machine should surface separate
+    // reasons so callers can fail fast instead of attempting a pointless reset.
+    return !e_stopped.load() && !in_error.load() && mode.load() == ROBOT_MODE_REMOTE;
 }
 }  // namespace robot

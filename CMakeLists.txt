@@ -142,7 +142,7 @@ FetchContent_MakeAvailable(trajex)
 FetchContent_Declare(
   comms
   GIT_REPOSITORY https://github.com/viam-labs/viam-yaskawa-libs.git
-  GIT_TAG 7a998ac1438901548f233c260eadd75137159179
+    GIT_TAG v0.2.0
   GIT_SHALLOW TRUE
   SYSTEM
 )
@@ -190,7 +190,7 @@ target_compile_definitions(viam-yaskawa
 
 target_link_libraries(viam-yaskawa
   PUBLIC
-    viam::trajex::service
+    viam::trajex::totg::tools
     Boost::regex
     Eigen3::Eigen
     jsoncpp_lib
