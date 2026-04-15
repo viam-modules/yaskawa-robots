@@ -144,7 +144,6 @@ constexpr double k_default_min_timestep_sec = 1e-2;
 constexpr double k_default_trajectory_sampling_freq = 3;
 constexpr auto k_socket_timeout = std::chrono::seconds(5);
 
-
 template <typename Func>
 void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
     if (duration_sec <= 0.0 || sampling_frequency_hz <= 0.0) {
