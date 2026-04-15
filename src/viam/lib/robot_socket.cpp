@@ -847,7 +847,7 @@ void YaskawaController::establish_connections_() {
         udp_future.get();
 
         register_udp_port(udp_socket_->get_local_port());
-        get_robot_status();
+        robot_state_->UpdateState(get_robot_status());
     } catch (...) {
         tcp_socket_->disconnect();
         if (udp_socket_) {
