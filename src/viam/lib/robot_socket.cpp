@@ -144,22 +144,6 @@ constexpr double k_default_min_timestep_sec = 1e-2;
 constexpr double k_default_trajectory_sampling_freq = 3;
 constexpr auto k_socket_timeout = std::chrono::seconds(5);
 
-constexpr const char* goal_state_to_string(goal_state_t state) {
-    switch (state) {
-        case GOAL_STATE_SUCCEEDED:
-            return "goal succeeded";
-        case GOAL_STATE_PENDING:
-            return "goal pending";
-        case GOAL_STATE_ABORTED:
-            return "goal aborted (server side)";
-        case GOAL_STATE_CANCELLED:
-            return "goal cancelled (client side)";
-        case GOAL_STATE_ACTIVE:
-            return "goal state active";
-        default:
-            return "unknown goal state";
-    }
-}
 
 template <typename Func>
 void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
