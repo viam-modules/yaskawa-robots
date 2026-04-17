@@ -101,6 +101,8 @@ class YaskawaArm final : public Arm, public Reconfigurable, public std::enable_s
     }
 
    private:
+    class state_;
+
     void configure_(const Dependencies& deps, const ResourceConfig& config);
 
     template <template <typename> typename lock_type>

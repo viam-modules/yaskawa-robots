@@ -251,6 +251,11 @@ target_sources(yaskawa-robots
   src/viam/module/main.cpp
   src/viam/module/utils.cpp
   src/viam/module/yaskawa_arm.cpp
+  src/viam/module/yaskawa_arm_state.cpp
+  src/viam/module/yaskawa_arm_state_events.cpp
+  src/viam/module/yaskawa_arm_state_disconnected.cpp
+  src/viam/module/yaskawa_arm_state_independent.cpp
+  src/viam/module/yaskawa_arm_state_ready.cpp
 )
 
 # Tell boost::dll to use std::filesystem rather than boost::filesystem.
