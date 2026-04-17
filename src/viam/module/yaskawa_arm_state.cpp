@@ -176,19 +176,24 @@ std::future<void> YaskawaArm::state_::enqueue_move_request(size_t current_move_e
     if (!move_epoch_.compare_exchange_strong(current_move_epoch, current_move_epoch + 1, std::memory_order_acq_rel)) {
         throw std::runtime_error("move operation was superseded by a newer operation");
     }
-    const std::lock_guard lock{mutex_};
-    if (!std::holds_alternative<state_ready_>(current_state_)) {
-        throw std::runtime_error(std::format("cannot move: arm is in state `{}`", describe_state_(current_state_)));
+    std::future<void> future;
+    {
+        const std::lock_guard lock{mutex_};
+        if (!std::holds_alternative<state_ready_>(current_state_)) {
+            throw std::runtime_error(std::format("cannot move: arm is in state `{}`", describe_state_(current_state_)));
+        }
+        if (move_request_) {
+            throw std::runtime_error("an actuation is already in progress");
+        }
+        auto& req = move_request_.emplace();
+        req.waypoints = std::move(waypoints);
+        req.unix_time = std::move(unix_time);
+        req.velocity = std::move(velocity);
+        req.acceleration = std::move(acceleration);
+        future = req.completion.get_future();
     }
-    if (move_request_) {
-        throw std::runtime_error("an actuation is already in progress");
-    }
-    auto& req = move_request_.emplace();
-    req.waypoints = std::move(waypoints);
-    req.unix_time = std::move(unix_time);
-    req.velocity = std::move(velocity);
-    req.acceleration = std::move(acceleration);
-    return req.completion.get_future();
+    worker_wakeup_cv_.notify_one();
+    return future;
 }
 
 std::vector<double> YaskawaArm::state_::read_joint_positions() const {

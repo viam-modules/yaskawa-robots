@@ -43,7 +43,30 @@ std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_read
     return std::nullopt;
 }
 
-std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_ready_::handle_move_request(state_&) {
+std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_ready_::handle_move_request(state_& state) {
+    if (!state.move_request_) {
+        return std::nullopt;
+    }
+
+    auto& req = *state.move_request_;
+
+    if (!req.handle) {
+        req.handle = controller_->move(req.waypoints, req.unix_time, req.velocity, req.acceleration);
+        return std::nullopt;
+    }
+
+    if (!req.handle->is_done()) {
+        return std::nullopt;
+    }
+
+    try {
+        req.handle->wait_for(std::chrono::milliseconds(0));
+        req.complete_success();
+    } catch (const std::exception& ex) {
+        req.complete_error(ex.what());
+    }
+    state.move_request_.reset();
+
     return std::nullopt;
 }
 
