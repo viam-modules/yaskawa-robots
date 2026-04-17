@@ -25,7 +25,7 @@ std::string YaskawaArm::state_::state_ready_::describe() const {
 // NOLINTEND(readability-convert-member-functions-to-static)
 
 // ---------------------------------------------------------------
-// state_ready_ cycle (stubs — implemented in Step 5)
+// state_ready_ cycle
 // ---------------------------------------------------------------
 
 std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_ready_::upgrade_downgrade(state_&) {
@@ -72,7 +72,7 @@ std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_read
     }
 
     try {
-        req.handle->wait_for(std::chrono::milliseconds(0));
+        std::ignore = req.handle->wait_for(std::chrono::milliseconds(0));
         req.complete_success();
     } catch (const std::exception& ex) {
         req.complete_error(ex.what());

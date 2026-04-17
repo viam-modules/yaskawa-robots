@@ -26,7 +26,7 @@ std::string YaskawaArm::state_::state_independent_::describe() const {
 }
 
 // ---------------------------------------------------------------
-// state_independent_ cycle (stubs — implemented in Step 4)
+// state_independent_ cycle
 // ---------------------------------------------------------------
 
 std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_independent_::upgrade_downgrade(state_&) {
