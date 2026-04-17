@@ -110,7 +110,7 @@ class YaskawaArm::state_ {
     class state_event_handler_base_ {
        public:
         template <typename Event>
-        std::optional<state_variant_> handle_event(Event event);
+        std::optional<state_variant_> handle_event(Event&& event);
 
        private:
         friend T;
@@ -297,7 +297,7 @@ class YaskawaArm::state_ {
 // ---------------------------------------------------------------
 template <typename T>
 template <typename Event>
-std::optional<YaskawaArm::state_::state_variant_> YaskawaArm::state_::state_event_handler_base_<T>::handle_event(Event /*event*/) {
+std::optional<YaskawaArm::state_::state_variant_> YaskawaArm::state_::state_event_handler_base_<T>::handle_event(Event&& /*event*/) {
     VIAM_SDK_LOG(warn) << "state `" << T::name() << "` received unexpected event `" << Event::name() << "`";
     return std::nullopt;
 }
