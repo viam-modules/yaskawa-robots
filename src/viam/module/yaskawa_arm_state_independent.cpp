@@ -34,11 +34,21 @@ std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_inde
 
     // Compute blocking mask from wire-observable fields.
     blocking_mask mask = 0;
-    if (status.e_stopped)                 mask = mask | blocking_reason::k_estop;
-    if (status.mode != ROBOT_MODE_REMOTE) mask = mask | blocking_reason::k_not_remote;
-    if (status.in_error)                  mask = mask | blocking_reason::k_in_error;
-    if (!status.drives_powered)           mask = mask | blocking_reason::k_servo_off;
-    if (!status.motion_possible)          mask = mask | blocking_reason::k_motion_blocked;
+    if (status.e_stopped) {
+        mask = mask | blocking_reason::k_estop;
+    }
+    if (status.mode != ROBOT_MODE_REMOTE) {
+        mask = mask | blocking_reason::k_not_remote;
+    }
+    if (status.in_error) {
+        mask = mask | blocking_reason::k_in_error;
+    }
+    if (!status.drives_powered) {
+        mask = mask | blocking_reason::k_servo_off;
+    }
+    if (!status.motion_possible) {
+        mask = mask | blocking_reason::k_motion_blocked;
+    }
 
     // Preserve a previously diagnosed major alarm while in_error persists on the wire.
     // k_major_alarm replaces k_in_error once reset_errors() has been exhausted.
@@ -68,7 +78,7 @@ std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_inde
             ++recovery_attempts_;
         } else {
             return event_blocking_detected_{(mask & ~static_cast<blocking_mask>(blocking_reason::k_in_error)) |
-                                             blocking_reason::k_major_alarm};
+                                            blocking_reason::k_major_alarm};
         }
     } else {
         // Not in error — drive servo on and enable motion.

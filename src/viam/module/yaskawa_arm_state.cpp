@@ -108,8 +108,9 @@ std::string YaskawaArm::state_::describe_blocking_mask_(blocking_mask mask) {
     std::string result;
     auto append = [&](blocking_reason r, std::string_view label) {
         if (has_reason(mask, r)) {
-            if (!result.empty())
+            if (!result.empty()) {
                 result += ", ";
+            }
             result += label;
         }
     };
@@ -128,26 +129,30 @@ std::string YaskawaArm::state_::describe_blocking_mask_(blocking_mask mask) {
 
 void YaskawaArm::state_::recv_arm_data_() {
     auto ev = std::visit([this](auto& s) { return s.recv_arm_data(*this); }, current_state_);
-    if (ev)
+    if (ev) {
         emit_event_(std::move(*ev));
+    }
 }
 
 void YaskawaArm::state_::upgrade_downgrade_() {
     auto ev = std::visit([this](auto& s) { return s.upgrade_downgrade(*this); }, current_state_);
-    if (ev)
+    if (ev) {
         emit_event_(std::move(*ev));
+    }
 }
 
 void YaskawaArm::state_::handle_move_request_() {
     auto ev = std::visit([this](auto& s) { return s.handle_move_request(*this); }, current_state_);
-    if (ev)
+    if (ev) {
         emit_event_(std::move(*ev));
+    }
 }
 
 void YaskawaArm::state_::send_heartbeat_() {
     auto ev = std::visit([this](auto& s) { return s.send_heartbeat(*this); }, current_state_);
-    if (ev)
+    if (ev) {
         emit_event_(std::move(*ev));
+    }
 }
 
 // ---------------------------------------------------------------
@@ -196,6 +201,7 @@ std::future<void> YaskawaArm::state_::enqueue_move_request(size_t current_move_e
     return future;
 }
 
+// NOLINTBEGIN(readability-convert-member-functions-to-static)
 std::vector<double> YaskawaArm::state_::read_joint_positions() const {
     throw std::runtime_error("not implemented");
 }
@@ -223,6 +229,7 @@ const Eigen::VectorXd& YaskawaArm::state_::get_acceleration_limits() const {
 double YaskawaArm::state_::get_waypoint_deduplication_tolerance_rad() const {
     throw std::runtime_error("not implemented");
 }
+// NOLINTEND(readability-convert-member-functions-to-static)
 
 // ---------------------------------------------------------------
 // state_connected_
@@ -231,6 +238,7 @@ double YaskawaArm::state_::get_waypoint_deduplication_tolerance_rad() const {
 YaskawaArm::state_::state_connected_::state_connected_(std::shared_ptr<YaskawaController> controller)
     : controller_(std::move(controller)) {}
 
+// NOLINTBEGIN(readability-convert-member-functions-to-static)
 std::chrono::milliseconds YaskawaArm::state_::state_connected_::get_timeout() const {
     return std::chrono::milliseconds{100};
 }
@@ -242,6 +250,7 @@ std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_conn
 std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_connected_::send_heartbeat(state_&) {
     return std::nullopt;
 }
+// NOLINTEND(readability-convert-member-functions-to-static)
 
 // ---------------------------------------------------------------
 // move_request

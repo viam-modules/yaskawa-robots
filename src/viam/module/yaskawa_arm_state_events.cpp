@@ -1,5 +1,7 @@
 #include "yaskawa_arm_state.hpp"
 
+// NOLINTBEGIN(readability-convert-member-functions-to-static)
+
 // ---------------------------------------------------------------
 // event_connection_established_
 // ---------------------------------------------------------------
@@ -69,3 +71,4 @@ std::string_view YaskawaArm::state_::event_ready_detected_::name() {
 std::string_view YaskawaArm::state_::event_ready_detected_::describe() const {
     return name();
 }
+// NOLINTEND(readability-convert-member-functions-to-static)

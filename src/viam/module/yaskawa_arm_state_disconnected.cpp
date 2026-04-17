@@ -6,6 +6,8 @@
 
 using namespace viam::sdk;
 
+// NOLINTBEGIN(readability-convert-member-functions-to-static)
+
 // ---------------------------------------------------------------
 // state_disconnected_ constructors
 // ---------------------------------------------------------------
@@ -109,3 +111,4 @@ std::shared_ptr<YaskawaController> YaskawaArm::state_::state_disconnected_::conn
     }
     return controller;
 }
+// NOLINTEND(readability-convert-member-functions-to-static)

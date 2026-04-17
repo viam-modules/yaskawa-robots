@@ -18,9 +18,11 @@ std::string_view YaskawaArm::state_::state_ready_::name() {
     return "ready";
 }
 
+// NOLINTBEGIN(readability-convert-member-functions-to-static)
 std::string YaskawaArm::state_::state_ready_::describe() const {
     return std::string(name());
 }
+// NOLINTEND(readability-convert-member-functions-to-static)
 
 // ---------------------------------------------------------------
 // state_ready_ cycle (stubs — implemented in Step 5)
@@ -30,11 +32,21 @@ std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_read
     const auto status = controller_->get_robot_status();
 
     blocking_mask mask = 0;
-    if (status.e_stopped)                 mask = mask | blocking_reason::k_estop;
-    if (status.mode != ROBOT_MODE_REMOTE) mask = mask | blocking_reason::k_not_remote;
-    if (status.in_error)                  mask = mask | blocking_reason::k_in_error;
-    if (!status.drives_powered)           mask = mask | blocking_reason::k_servo_off;
-    if (!status.motion_possible)          mask = mask | blocking_reason::k_motion_blocked;
+    if (status.e_stopped) {
+        mask = mask | blocking_reason::k_estop;
+    }
+    if (status.mode != ROBOT_MODE_REMOTE) {
+        mask = mask | blocking_reason::k_not_remote;
+    }
+    if (status.in_error) {
+        mask = mask | blocking_reason::k_in_error;
+    }
+    if (!status.drives_powered) {
+        mask = mask | blocking_reason::k_servo_off;
+    }
+    if (!status.motion_possible) {
+        mask = mask | blocking_reason::k_motion_blocked;
+    }
 
     if (mask != 0) {
         return event_blocking_detected_{mask};
