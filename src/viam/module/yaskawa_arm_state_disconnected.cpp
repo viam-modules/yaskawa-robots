@@ -62,6 +62,9 @@ std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_disc
 
 std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_disconnected_::handle_move_request(state_& state) const {
     if (state.move_request_) {
+        if (state.move_request_->handle && !state.move_request_->handle->is_done()) {
+            state.move_request_->handle->cancel();
+        }
         state.move_request_->complete_error("arm is disconnected");
         state.move_request_.reset();
     }
@@ -75,8 +78,9 @@ std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_disc
 std::optional<YaskawaArm::state_::state_variant_> YaskawaArm::state_::state_disconnected_::handle_event(
     event_connection_established_ event) {
     VIAM_SDK_LOG(info) << "connection established, entering independent state";
+    // Start with all wire-observable blocking bits set; k_major_alarm is diagnosed lazily.
     const blocking_mask all_bits = blocking_reason::k_in_error | blocking_reason::k_servo_off | blocking_reason::k_motion_blocked |
-                                   blocking_reason::k_major_alarm | blocking_reason::k_estop | blocking_reason::k_not_remote;
+                                   blocking_reason::k_estop | blocking_reason::k_not_remote;
     return state_independent_{std::move(event.controller), all_bits};
 }
 
