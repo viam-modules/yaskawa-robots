@@ -54,11 +54,16 @@ void YaskawaArm::state_::run_() {
         if (shutdown_requested_) {
             break;
         }
-        // Cycle functions will be added in subsequent steps:
-        // recv_arm_data_();
-        // upgrade_downgrade_();
-        // handle_move_request_();
-        // send_heartbeat_();
+        try {
+            recv_arm_data_();
+            upgrade_downgrade_();
+            handle_move_request_();
+            send_heartbeat_();
+        } catch (const std::exception& ex) {
+            VIAM_SDK_LOG(warn) << resource_name_ << ": exception in worker thread: " << ex.what();
+        } catch (...) {
+            VIAM_SDK_LOG(warn) << resource_name_ << ": unknown exception in worker thread";
+        }
     }
 }
 

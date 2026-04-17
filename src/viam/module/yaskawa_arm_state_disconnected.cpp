@@ -1,5 +1,7 @@
 #include "yaskawa_arm_state.hpp"
 
+#include <utility>
+
 #include <viam/sdk/log/logging.hpp>
 
 using namespace viam::sdk;
@@ -38,7 +40,19 @@ std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_disc
     return std::nullopt;
 }
 
-std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_disconnected_::upgrade_downgrade(state_&) {
+std::optional<YaskawaArm::state_::event_variant_> YaskawaArm::state_::state_disconnected_::upgrade_downgrade(state_& state) {
+    if (pending_connection_) {
+        switch (pending_connection_->wait_for(std::chrono::seconds(0))) {
+            case std::future_status::ready:
+                return event_connection_established_{std::exchange(pending_connection_, std::nullopt)->get()};
+            case std::future_status::timeout:
+                break;
+            case std::future_status::deferred:
+                std::abort();
+        }
+    } else {
+        pending_connection_.emplace(std::async(std::launch::async, [this, &state] { return connect_(state); }));
+    }
     return std::nullopt;
 }
 
@@ -71,9 +85,23 @@ std::optional<YaskawaArm::state_::state_variant_> YaskawaArm::state_::state_disc
 }
 
 // ---------------------------------------------------------------
-// state_disconnected_ connect_ (stub — implemented in Step 3)
+// state_disconnected_ connect_
 // ---------------------------------------------------------------
 
-std::shared_ptr<YaskawaController> YaskawaArm::state_::state_disconnected_::connect_(state_&) {
-    throw std::runtime_error("not implemented");
+std::shared_ptr<YaskawaController> YaskawaArm::state_::state_disconnected_::connect_(state_& state) {
+    constexpr int k_log_at_n_attempts = 100;
+    if (++reconnect_attempts_ % k_log_at_n_attempts == 0) {
+        if (triggering_event_) {
+            VIAM_SDK_LOG(warn) << "disconnected: connection was lost due to " << triggering_event_->describe()
+                               << "; attempting automatic recovery";
+        }
+        VIAM_SDK_LOG(info) << "reconnect attempt " << reconnect_attempts_;
+    }
+
+    auto controller = std::make_shared<YaskawaController>(state.io_context_, state.config_);
+    controller->connect().get();
+    if (!controller->checkGroupIndex()) {
+        throw std::runtime_error("group index check failed after connecting");
+    }
+    return controller;
 }
