@@ -1,3 +1,5 @@
 logs
 build
 module.tar.gz
+src/viam/example/hardware_validation.cpp
+src/viam/example/dual_arm_test.cpp

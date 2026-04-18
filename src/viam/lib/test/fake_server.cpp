@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <stdexcept>
+#include <vector>
 
 extern "C" {
 #include "logging.h"
@@ -31,10 +32,27 @@ command_response_context_t* FakeServer::fault_injecting_handle_command(protocol_
     return mock_robot_handle_command(header, payload, data->robot);
 }
 
-FakeServer::FakeServer(ServerPorts ports, uint32_t connection_timeout_ms) : ports_(ports) {
+FakeServer::FakeServer(ServerPorts ports, uint32_t connection_timeout_ms)
+    : ports_(ports), groups_(std::begin(k_single_robot), std::end(k_single_robot)) {
     log_to_stdout();
     mock_robot_init(&robot_);
+    init_server(connection_timeout_ms);
+}
 
+FakeServer::FakeServer(ServerPorts ports, std::span<const GroupConfig> groups, uint32_t connection_timeout_ms)
+    : ports_(ports), groups_(groups.begin(), groups.end()) {
+    log_to_stdout();
+    std::vector<uint8_t> types(groups.size());
+    std::vector<uint8_t> axes(groups.size());
+    for (size_t i = 0; i < groups.size(); ++i) {
+        types[i] = groups[i].group_type;
+        axes[i] = groups[i].num_axes;
+    }
+    mock_robot_init_multi(&robot_, static_cast<uint8_t>(groups.size()), types.data(), axes.data());
+    init_server(connection_timeout_ms);
+}
+
+void FakeServer::init_server(uint32_t connection_timeout_ms) {
     robot_server_config_t config{};
     config.tcp_port = ports_.tcp_port;
     config.udp_port = ports_.udp_port;
@@ -44,15 +62,6 @@ FakeServer::FakeServer(ServerPorts ports, uint32_t connection_timeout_ms) : port
     config.callbacks.handle_command = fault_injecting_handle_command;
     config.callbacks.get_error_info = mock_robot_get_error_info_callback;
 
-    // The on_connection/on_disconnection callbacks expect a mock_robot_t*,
-    // but handle_command now goes through our fault wrapper which expects
-    // FaultCallbackData*. Since the server only has one user_data pointer,
-    // we set it to &cb_data_ and pass &robot_ directly in the wrapper.
-    // The on_connection/on_disconnection callbacks receive the same pointer,
-    // so we need them to also go through wrappers or accept cb_data_.
-    // However, mock_robot_on_connection just casts user_data to mock_robot_t*.
-    // To keep things simple, we use cb_data_ as user_data and wrap the
-    // connection callbacks too.
     cb_data_.fault_ctx = &fault_ctx_;
     cb_data_.robot = &robot_;
     config.user_data = &cb_data_;
@@ -105,6 +114,14 @@ ServerPorts FakeServer::ports() const {
     return ports_;
 }
 
+uint8_t FakeServer::num_groups() const {
+    return static_cast<uint8_t>(groups_.size());
+}
+
+const GroupConfig& FakeServer::group_config(uint8_t index) const {
+    return groups_.at(index);
+}
+
 void FakeServer::inject_disconnect_after(uint32_t n) {
     fault_inject_disconnect_after(&fault_ctx_, n);
 }
@@ -138,13 +155,15 @@ void FakeServer::start_udp_status_pump(uint32_t interval_ms) {
         while (pumping_.load()) {
             auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 
-            status_payload_t status{};
-            mock_robot_get_status(&robot_, &status, now);
-            robot_protocol_send_position_velocity_torque(server_ctx_, &status);
+            for (uint8_t g = 0; g < robot_.num_groups; ++g) {
+                status_payload_t status{};
+                mock_robot_get_status(&robot_, &status, now, g);
+                robot_protocol_send_position_velocity_torque(server_ctx_, &status);
 
-            robot_status_payload_t robot_status{};
-            mock_robot_get_robot_status(&robot_, &robot_status, now);
-            robot_protocol_send_robot_status(server_ctx_, &robot_status);
+                robot_status_payload_t robot_status{};
+                mock_robot_get_robot_status(&robot_, &robot_status, now, g);
+                robot_protocol_send_robot_status(server_ctx_, &robot_status);
+            }
 
             mock_robot_update_goal_progress(&robot_);
 

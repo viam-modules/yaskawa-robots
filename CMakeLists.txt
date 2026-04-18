@@ -142,7 +142,7 @@ FetchContent_MakeAvailable(trajex)
 FetchContent_Declare(
   comms
   GIT_REPOSITORY https://github.com/viam-labs/viam-yaskawa-libs.git
-    GIT_TAG v0.2.0
+  GIT_TAG 7a998ac1438901548f233c260eadd75137159179
   GIT_SHALLOW TRUE
   SYSTEM
 )
@@ -190,7 +190,7 @@ target_compile_definitions(viam-yaskawa
 
 target_link_libraries(viam-yaskawa
   PUBLIC
-    viam::trajex::totg::tools
+    viam::trajex::service
     Boost::regex
     Eigen3::Eigen
     jsoncpp_lib
@@ -404,6 +404,31 @@ set_source_files_properties(
 )
 
 add_test(NAME fault_injection_test COMMAND fault_injection_test)
+
+# Integration tests for YaskawaController against FakeServer (multi-group, dual-arm, goal lifecycle)
+add_executable(controller_integration_test)
+
+target_sources(controller_integration_test
+  PRIVATE
+    src/viam/lib/test/controller_integration_test.cpp
+    ${INTEGRATION_TEST_SOURCES}
+    ${comms_SOURCE_DIR}/tests/protocol/fault_inject.c
+)
+
+target_include_directories(controller_integration_test
+  PRIVATE
+    ${INTEGRATION_TEST_INCLUDE_DIRS}
+)
+
+target_link_libraries(controller_integration_test
+  PRIVATE
+    viam-yaskawa
+    comms
+    Boost::unit_test_framework
+    viam-cpp-sdk::viamsdk
+)
+
+add_test(NAME controller_integration_test COMMAND controller_integration_test)
 
 set(CPACK_PACKAGE_NAME "viam-yaskawa-robots")
 set(CPACK_PACKAGE_FILE_NAME "module")
