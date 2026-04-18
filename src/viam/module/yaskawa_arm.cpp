@@ -336,7 +336,7 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
 
     const auto unix_time = unix_time_iso8601();
 
-    robot_->move(std::move(waypoints), unix_time, velocity, acceleration)->wait();
+    robot_->move(std::move(waypoints), robot_->get_group_index(), unix_time, velocity, acceleration)->wait();
 }
 
 void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
@@ -349,7 +349,7 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 
     const auto unix_time = unix_time_iso8601();
 
-    robot_->move(std::move(waypoints), unix_time, robot_->get_velocity_limits(), robot_->get_acceleration_limits())->wait();
+    robot_->move(std::move(waypoints), robot_->get_group_index(), unix_time, robot_->get_velocity_limits(), robot_->get_acceleration_limits())->wait();
 }
 
 ::viam::sdk::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {

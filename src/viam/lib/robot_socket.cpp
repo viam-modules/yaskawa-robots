@@ -30,6 +30,7 @@
 #include <future>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -117,16 +118,40 @@ Eigen::Index number_of_dof_configured(const viam::sdk::ResourceConfig& config, c
     auto dim_of = [&](const std::string& attr) -> Eigen::Index {
         const auto& value = config.attributes().at(attr);
         if (value.get<double>()) {
-            return 1;
+            return -1;
         }
         return static_cast<Eigen::Index>(value.get<std::vector<viam::sdk::ProtoValue>>()->size());
     };
     auto dim_a = dim_of(attr_a);
     auto dim_b = dim_of(attr_b);
-    if (dim_a == 1 && dim_b == 1) {
+    if (dim_a == -1 && dim_b == -1) {
         return k_default_dof;
     }
+    if (dim_a == -1) {
+        return dim_b;
+    }
+    if (dim_b == -1) {
+        return dim_a;
+    }
     return std::max(dim_a, dim_b);
+}
+
+// Build a trajectory_point_t from dynamic-sized position/velocity containers.
+// Copies up to NUMBER_OF_DOF elements; remaining slots are zero-initialized.
+// Works with Eigen::VectorXd (operator[]) and xt::xarray<double> (operator()).
+template <typename Container>
+trajectory_point_t make_trajectory_point(const Container& positions, const Container& velocities, duration_t time_from_start) {
+    trajectory_point_t pt{};
+    const auto n = std::min(static_cast<size_t>(NUMBER_OF_DOF), static_cast<size_t>(positions.size()));
+    for (size_t i = 0; i < n; ++i) {
+        pt.positions[i] = positions(i);
+    }
+    const auto nv = std::min(static_cast<size_t>(NUMBER_OF_DOF), static_cast<size_t>(velocities.size()));
+    for (size_t i = 0; i < nv; ++i) {
+        pt.velocities[i] = velocities(i);
+    }
+    pt.time_from_start = time_from_start;
+    return pt;
 }
 
 struct segment_accumulator {
@@ -143,6 +168,23 @@ using viam::ScopeGuard;
 constexpr double k_default_min_timestep_sec = 1e-2;
 constexpr double k_default_trajectory_sampling_freq = 3;
 constexpr auto k_socket_timeout = std::chrono::seconds(5);
+
+constexpr const char* goal_state_to_string(goal_state_t state) {
+    switch (state) {
+        case GOAL_STATE_SUCCEEDED:
+            return "goal succeeded";
+        case GOAL_STATE_PENDING:
+            return "goal pending";
+        case GOAL_STATE_ABORTED:
+            return "goal aborted (server side)";
+        case GOAL_STATE_CANCELLED:
+            return "goal cancelled (client side)";
+        case GOAL_STATE_ACTIVE:
+            return "goal state active";
+        default:
+            return "unknown goal state";
+    }
+}
 
 template <typename Func>
 void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
@@ -279,22 +321,33 @@ StatusMessage::StatusMessage(const Message& msg) {
         throw std::runtime_error("incorrect status size");
     }
 
-    std::memcpy(&timestamp, msg.payload.data(), sizeof(timestamp));
-    std::memcpy(&num_axes, msg.payload.data() + sizeof(timestamp), sizeof(num_axes));
-    boost::span<const double> arrays{reinterpret_cast<const double*>(msg.payload.data() + sizeof(timestamp) + sizeof(num_axes)),
-                                     static_cast<size_t>(4) * MAX_AXES};
-    position.reserve(MAX_AXES);
-    boost::copy(arrays | boost::adaptors::sliced(0, MAX_AXES), std::back_inserter(position));
+    // v6 layout: [group_index:1][group_type:1][timestamp:8][num_axes:1][4×MAX_AXES doubles]
+    const uint8_t* data = msg.payload.data();
+    std::memcpy(&group_index, data, sizeof(group_index));
+    data += sizeof(group_index);
 
-    velocity.reserve(MAX_AXES);
-    boost::copy(arrays | boost::adaptors::sliced(MAX_AXES, static_cast<size_t>(2) * MAX_AXES), std::back_inserter(velocity));
+    std::memcpy(&group_type, data, sizeof(group_type));
+    data += sizeof(group_type);
 
-    torque.reserve(MAX_AXES);
-    boost::copy(arrays | boost::adaptors::sliced(static_cast<size_t>(2) * MAX_AXES, static_cast<size_t>(3) * MAX_AXES),
-                std::back_inserter(torque));
-    position_corrected.reserve(MAX_AXES);
-    boost::copy(arrays | boost::adaptors::sliced(static_cast<size_t>(3) * MAX_AXES, static_cast<size_t>(4) * MAX_AXES),
-                std::back_inserter(position_corrected));
+    std::memcpy(&timestamp, data, sizeof(timestamp));
+    data += sizeof(timestamp);
+
+    std::memcpy(&num_axes, data, sizeof(num_axes));
+    data += sizeof(num_axes);
+
+    if (num_axes > MAX_AXES) {
+        throw std::runtime_error(std::format("status num_axes {} exceeds MAX_AXES {}", static_cast<int>(num_axes), MAX_AXES));
+    }
+
+    std::array<double, static_cast<size_t>(4) * MAX_AXES> arrays{};
+    std::memcpy(arrays.data(), data, sizeof(arrays));
+    const auto axes = static_cast<size_t>(num_axes);
+
+    position.assign(arrays.begin(), arrays.begin() + axes);
+    velocity.assign(arrays.begin() + MAX_AXES, arrays.begin() + MAX_AXES + axes);
+    torque.assign(arrays.begin() + static_cast<size_t>(2) * MAX_AXES, arrays.begin() + static_cast<size_t>(2) * MAX_AXES + axes);
+    position_corrected.assign(arrays.begin() + static_cast<size_t>(3) * MAX_AXES,
+                              arrays.begin() + static_cast<size_t>(3) * MAX_AXES + axes);
 }
 
 RobotStatusMessage::RobotStatusMessage(const Message& msg) {
@@ -309,6 +362,9 @@ RobotStatusMessage::RobotStatusMessage(const Message& msg) {
     const uint8_t* data = msg.payload.data();
     std::memcpy(&ts, data, sizeof(ts));
     data += sizeof(ts);
+
+    std::memcpy(&group_index, data, sizeof(group_index));
+    data += sizeof(group_index);
 
     std::memcpy(&mode, data, sizeof(mode));
     data += sizeof(mode);
@@ -329,9 +385,9 @@ RobotStatusMessage::RobotStatusMessage(const Message& msg) {
     data += sizeof(in_error);
 
     error_codes.reserve(MAX_ALARM_COUNT + 1);
-    boost::span<const int32_t> alarm{reinterpret_cast<const int32_t*>(data), MAX_ALARM_COUNT + 1};
+    boost::span<const int> alarm{reinterpret_cast<const int*>(data), MAX_ALARM_COUNT + 1};
     boost::copy(alarm | boost::adaptors::sliced(0, MAX_ALARM_COUNT + 1), std::back_inserter(error_codes));
-    data += sizeof(int32_t) * (MAX_ALARM_COUNT + 1);
+    data += sizeof(int) * (MAX_ALARM_COUNT + 1);
     std::memcpy(&size, data, sizeof(size));
 }
 
@@ -354,6 +410,36 @@ CheckGroupMessage::CheckGroupMessage(const Message& msg) {
 
     const boolean_payload_t* group_check = reinterpret_cast<const boolean_payload_t*>(msg.payload.data());
     is_known_group = group_check->value;
+}
+
+CapabilitiesMessage::CapabilitiesMessage(const Message& msg) {
+    if (msg.header.message_type != MSG_CAPABILITIES) {
+        throw std::runtime_error(
+            std::format("wrong message type: expected {} had {}", static_cast<int>(MSG_CAPABILITIES), msg.header.message_type));
+    }
+    if (msg.payload.size() < sizeof(uint8_t) * 2) {
+        throw std::runtime_error("capabilities payload too small");
+    }
+
+    const uint8_t* data = msg.payload.data();
+    protocol_version = *data++;
+    num_groups = *data++;
+
+    if (num_groups > MAX_GROUPS) {
+        throw std::runtime_error(std::format("capabilities num_groups {} exceeds MAX_GROUPS {}", num_groups, MAX_GROUPS));
+    }
+
+    groups.resize(num_groups);
+    for (uint8_t i = 0; i < num_groups; ++i) {
+        const auto* cap = reinterpret_cast<const group_capability_t*>(data + (i * sizeof(group_capability_t)));
+        groups[i].group_id = cap->group_id;
+        groups[i].group_type = cap->group_type;
+        groups[i].group_sub_index = cap->group_sub_index;
+        groups[i].num_axes = cap->num_axes;
+        groups[i].axis_types.assign(cap->axis_types, cap->axis_types + cap->num_axes);
+        groups[i].base_axis_motion.assign(cap->base_axis_motion, cap->base_axis_motion + cap->num_axes);
+        groups[i].interpolation_period_us = cap->interpolation_period_us;
+    }
 }
 
 Message::Message(message_type_t type, std::vector<uint8_t>&& data) : payload(std::move(data)) {
@@ -396,7 +482,15 @@ std::string Message::get_error(message_type_t expected_type) const {
     if (header.message_type == MSG_ERROR) {
         error_payload_t err_msg{};
         std::memcpy(&err_msg, payload.data(), std::min(payload.size(), sizeof(err_msg)));
-        return std::string(err_msg.message);
+        // Parse both error_code and message string from error_payload_t for better diagnostics.
+        // The original code only returned err_msg.message which could be empty on some errors.
+        int32_t code = err_msg.error_code;
+        std::string msg = std::format("received error code {}", code);
+        if (err_msg.message[0] != '\0') {
+            err_msg.message[sizeof(err_msg.message) - 1] = '\0';
+            msg += std::format(": {}", err_msg.message);
+        }
+        return msg;
     }
 
     return std::format("unexpected message type expected {} got {}", static_cast<const int&>(expected_type), header.message_type);
@@ -511,6 +605,8 @@ awaitable<void> TcpRobotSocket::process_requests(std::shared_ptr<Session> sessio
         }
     } catch (const std::exception& ex) {
         LOGGING(error) << "TCP process_requests: unexpected error: " << ex.what();
+    } catch (...) {
+        LOGGING(error) << "TCP process_requests: unknown exception";
     }
 }
 
@@ -573,56 +669,78 @@ void UdpRobotSocket::disconnect() {
     if (connected_) {
         connected_ = false;
         robot_state_->in_error.store(true);
+        // Fulfill any pending SafePromise slots before closing the socket,
+        // so waiters get an error rather than hanging or crashing during destruction.
+        if (session_) {
+            const std::lock_guard lock(session_->status_mutex_);
+            auto err = std::make_exception_ptr(std::runtime_error("UDP socket disconnected"));
+            for (auto& slot : session_->group_status_) {
+                if (auto* sp = std::get_if<SafePromise>(&slot)) {
+                    sp->set_exception(err);
+                    slot = std::monostate{};
+                }
+            }
+            for (auto& slot : session_->group_robot_status_) {
+                if (auto* sp = std::get_if<SafePromise>(&slot)) {
+                    sp->set_exception(err);
+                    slot = std::monostate{};
+                }
+            }
+        }
         if (session_ && session_->socket_.is_open()) {
             session_->socket_.close();
         }
     }
 }
 
-void UdpRobotSocket::get_status(std::promise<Message> promise) {
+std::future<Message> UdpRobotSocket::request_from_cache_(std::array<CacheSlot, MAX_GROUPS>& cache, uint8_t group_index) {
     if (!connected_) {
         throw std::runtime_error("socket is disconnected");
     }
-    const std::unique_lock lock(session_->status_mutex_);
-
-    session_->cached_status_ = std::visit(
-        [promise = std::move(promise)](auto& current) mutable -> std::variant<std::monostate, Message, std::promise<Message>> {
-            using Type = std::decay_t<decltype(current)>;
-            if constexpr (std::is_same_v<Type, std::monostate>) {
-                return std::move(promise);
-            } else if constexpr (std::is_same_v<Type, Message>) {
-                promise.set_value(current);
-                return current;
-            } else {
-                // Concurrent status requests not supported
-                promise.set_exception(std::make_exception_ptr(std::runtime_error("Concurrent status requests are not supported")));
-                return std::move(current);
-            }
+    if (group_index >= MAX_GROUPS) {
+        throw std::runtime_error("group_index out of range");
+    }
+    const std::lock_guard lock(session_->status_mutex_);
+    auto& slot = cache[group_index];
+    return std::visit(
+        cacheVisitor{
+            [&](std::monostate&) -> std::future<Message> {
+                SafePromise sp;
+                auto future = sp.get_future();
+                slot = std::move(sp);
+                return future;
+            },
+            [&](Message& msg) -> std::future<Message> {
+                std::promise<Message> p;
+                p.set_value(msg);
+                slot = std::monostate{};
+                return p.get_future();
+            },
+            // Only one caller per group may wait at a time. Concurrent callers on the same group_index get this exception.
+            [&](SafePromise&) -> std::future<Message> { throw std::runtime_error("another caller is already waiting on this cache slot"); },
         },
-        session_->cached_status_);
+        slot);
 }
 
-void UdpRobotSocket::get_robot_status(std::promise<Message> promise) {
-    if (!connected_) {
-        throw std::runtime_error("socket is disconnected");
-    }
-    const std::unique_lock lock(session_->status_mutex_);
+void UdpRobotSocket::save_to_cache_(std::array<CacheSlot, MAX_GROUPS>& cache, uint8_t group_index, const Message& msg) {
+    auto& slot = cache[group_index];
+    std::visit(cacheVisitor{
+                   [&](std::monostate&) { slot = msg; },
+                   [&](Message&) { slot = msg; },
+                   [&](SafePromise& sp) {
+                       sp.set_value(msg);
+                       slot = std::monostate{};
+                   },
+               },
+               slot);
+}
 
-    session_->cached_robot_status_ = std::visit(
-        [promise = std::move(promise)](auto& current) mutable -> std::variant<std::monostate, Message, std::promise<Message>> {
-            using Type = std::decay_t<decltype(current)>;
-            if constexpr (std::is_same_v<Type, std::monostate>) {
-                return std::move(promise);
-            } else if constexpr (std::is_same_v<Type, Message>) {
-                promise.set_value(current);
-                return current;
-            } else {
-                // Concurrent robot status requests not supported
-                promise.set_exception(std::make_exception_ptr(std::runtime_error("Concurrent robot status requests are not supported")));
-                return std::move(current);
-            }
-        },
-        session_->cached_robot_status_);
+std::future<Message> UdpRobotSocket::get_group_status(uint8_t group_index) {
+    return request_from_cache_(session_->group_status_, group_index);
+}
+
+std::future<Message> UdpRobotSocket::get_group_robot_status(uint8_t group_index) {
+    return request_from_cache_(session_->group_robot_status_, group_index);
 }
 
 uint16_t UdpRobotSocket::get_local_port() const {
@@ -642,22 +760,30 @@ awaitable<void> UdpRobotSocket::receive_messages(std::shared_ptr<Session> sessio
 
             buffer.resize(bytes_received);
             const Message message = parse_message(buffer);
-            auto update_cache = [](auto& cache, const Message& msg) {
-                if (auto* promise = std::get_if<std::promise<Message>>(&cache)) {
-                    promise->set_value(msg);
-                }
-                cache = msg;
-            };
 
             if (message.header.message_type == MSG_ROBOT_POSITION_VELOCITY_TORQUE) {
-                const std::unique_lock lock(session->status_mutex_);
-                update_cache(session->cached_status_, message);
-            } else if (message.header.message_type == MSG_ROBOT_STATUS) {
-                {
-                    const std::unique_lock lock(session->status_mutex_);
-                    update_cache(session->cached_robot_status_, message);
+                uint8_t group_index = 0;
+                if (!message.payload.empty()) {
+                    group_index = message.payload[0];
                 }
-                session->robot_state_->UpdateState(RobotStatusMessage(message));
+                if (group_index < MAX_GROUPS) {
+                    const std::lock_guard lock(session->status_mutex_);
+                    save_to_cache_(session->group_status_, group_index, message);
+                }
+            } else if (message.header.message_type == MSG_ROBOT_STATUS) {
+                uint8_t group_index = 0;
+                if (message.payload.size() > sizeof(int64_t)) {
+                    group_index = message.payload[sizeof(int64_t)];
+                }
+                if (group_index < MAX_GROUPS) {
+                    const std::lock_guard lock(session->status_mutex_);
+                    save_to_cache_(session->group_robot_status_, group_index, message);
+                }
+                try {
+                    session->robot_state_->UpdateState(RobotStatusMessage(message));
+                } catch (const std::exception& e) {
+                    LOGGING(error) << "UDP receive_messages: UpdateState failed: " << e.what();
+                }
             }
         }
     } catch (const boost::system::system_error& e) {
@@ -670,6 +796,9 @@ awaitable<void> UdpRobotSocket::receive_messages(std::shared_ptr<Session> sessio
     } catch (const std::exception& e) {
         session->robot_state_->in_error.store(true);
         LOGGING(error) << "UDP receive_messages: unexpected error: " << e.what();
+    } catch (...) {
+        session->robot_state_->in_error.store(true);
+        LOGGING(error) << "UDP receive_messages: unknown exception";
     }
 }
 
@@ -781,6 +910,8 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts(std::share
         }
     } catch (const std::exception& e) {
         LOGGING(error) << "UDP broadcast listener: unexpected error: " << e.what();
+    } catch (...) {
+        LOGGING(error) << "UDP broadcast listener: unknown exception";
     }
     if (session->log_parser_) {
         session->log_parser_->flush();
@@ -797,8 +928,7 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
 
     auto group_index = find_config_attribute<double>(config, "group_index");
     constexpr int k_min_group_index = 0;
-    // TODO(RSDK-12470) support multiple arms
-    constexpr int k_max_group_index = 0;
+    constexpr int k_max_group_index = MAX_GROUPS - 1;
     if (group_index && (*group_index < k_min_group_index || *group_index > k_max_group_index || floor(*group_index) != *group_index)) {
         throw std::invalid_argument(std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
                                                 k_min_group_index,
@@ -825,6 +955,40 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
 }
 
+YaskawaController::~YaskawaController() {
+    try {
+        disconnect();
+    } catch (...) {
+    }
+}
+
+static std::mutex s_registry_mutex;
+static std::map<std::string, std::weak_ptr<YaskawaController>> s_controller_registry;
+
+std::shared_ptr<YaskawaController> YaskawaController::get_or_create(boost::asio::io_context& io_context,
+                                                                    const viam::sdk::ResourceConfig& config) {
+    auto host_attr = find_config_attribute<std::string>(config, "host");
+    if (!host_attr) {
+        throw std::runtime_error("host attribute is required");
+    }
+    const auto& host = *host_attr;
+
+    std::lock_guard lock(s_registry_mutex);
+    // The registry stores weak_ptr — if the controller is still alive (held by YaskawaArm
+    // instances), lock() returns the existing shared_ptr. A new controller is only created
+    // if all references were released (weak_ptr expired).
+    auto it = s_controller_registry.find(host);
+    if (it != s_controller_registry.end()) {
+        if (auto existing = it->second.lock()) {
+            return existing;
+        }
+        s_controller_registry.erase(it);
+    }
+    auto ctrl = std::make_shared<YaskawaController>(io_context, config);
+    s_controller_registry[host] = ctrl;
+    return ctrl;
+}
+
 void YaskawaController::set_trajectory_loggers(std::string robot_model,
                                                std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn) {
     robot_model_ = std::move(robot_model);
@@ -839,6 +1003,15 @@ void YaskawaController::establish_connections_() {
         }
         tcp_future.get();
 
+        // Capabilities handshake: verify protocol version and discover controller groups
+        auto caps = get_capabilities();
+        LOGGING(info) << "controller capabilities: protocol_version=" << static_cast<int>(caps.protocol_version)
+                      << " num_groups=" << static_cast<int>(caps.num_groups);
+        for (const auto& grp : caps.groups) {
+            LOGGING(info) << "  group " << static_cast<int>(grp.group_id) << ": type=" << static_cast<int>(grp.group_type)
+                          << " axes=" << static_cast<int>(grp.num_axes) << " interpolation_us=" << grp.interpolation_period_us;
+        }
+
         udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
         auto udp_future = udp_socket_->connect();
         if (udp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
@@ -847,7 +1020,7 @@ void YaskawaController::establish_connections_() {
         udp_future.get();
 
         register_udp_port(udp_socket_->get_local_port());
-        robot_state_->UpdateState(get_robot_status());
+        get_robot_status();
     } catch (...) {
         tcp_socket_->disconnect();
         if (udp_socket_) {
@@ -946,17 +1119,24 @@ void YaskawaController::reconnect_() {
     // broadcast_listener_ is not restarted here: it is diagnostic-only and its UDP
     // socket is not affected by TCP/control-plane disconnects.
 
-    // Wait for any in-progress move to notice the disconnection and clear the flag.
-    // The move thread polls at 100Hz so this normally resolves within milliseconds.
-    // We proceed after the timeout regardless — the move will fail on its next
+    // Wait for any in-progress moves to notice the disconnection and clear their flags.
+    // The move threads poll at 100Hz so this normally resolves within milliseconds.
+    // We proceed after the timeout regardless — the moves will fail on their next
     // communication attempt.
     constexpr auto k_move_drain_timeout = std::chrono::milliseconds(500);
     const auto deadline = std::chrono::steady_clock::now() + k_move_drain_timeout;
-    while (move_in_progress_ && std::chrono::steady_clock::now() < deadline) {
+    auto any_group_moving = [this]() {
+        for (auto& flag : group_move_in_progress_) {
+            if (flag.load())
+                return true;
+        }
+        return false;
+    };
+    while (any_group_moving() && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    if (move_in_progress_) {
-        LOGGING(warning) << "reconnect: move still in progress after drain, proceeding anyway";
+    if (any_group_moving()) {
+        LOGGING(warning) << "reconnect: move still in progress on some groups after drain, proceeding anyway";
     }
 
     // Replace TCP socket without going through null: disconnect() above sets connected_=false
@@ -1073,32 +1253,31 @@ void YaskawaController::get_error_info() {
     auto msg = tcp_socket_->send_request(Message(MSG_GET_ERROR_INFO)).get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
-        throw std::runtime_error(std::format("MSG_GET_ERROR_INFO failed: {}", err));
+        throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_GET_ERROR_INFO), err));
     }
     LOGGING(debug) << "MSG_GET_ERROR_INFO: " << msg;
 }
 
 StatusMessage YaskawaController::get_robot_position_velocity_torque() {
+    return get_group_position_velocity_torque(0);
+}
+
+StatusMessage YaskawaController::get_group_position_velocity_torque(uint8_t group_index) {
     if (!udp_socket_) {
         throw std::runtime_error("UDP socket not connected");
     }
-
-    std::promise<Message> promise;
-    auto future = promise.get_future();
-    udp_socket_->get_status(std::move(promise));
-    return StatusMessage(future.get());
+    return StatusMessage(udp_socket_->get_group_status(group_index).get());
 }
 
 RobotStatusMessage YaskawaController::get_robot_status() {
+    return get_group_robot_status(0);
+}
+
+RobotStatusMessage YaskawaController::get_group_robot_status(uint8_t group_index) {
     if (!udp_socket_) {
         throw std::runtime_error("UDP socket not connected");
     }
-
-    // TODO(RSDK-12470) account for group_id_ in request
-    std::promise<Message> promise;
-    auto future = promise.get_future();
-    udp_socket_->get_robot_status(std::move(promise));
-    return RobotStatusMessage(future.get());
+    return RobotStatusMessage(udp_socket_->get_group_robot_status(group_index).get());
 }
 
 void YaskawaController::register_udp_port(uint16_t port) {
@@ -1110,7 +1289,7 @@ void YaskawaController::register_udp_port(uint16_t port) {
     auto msg = tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload))).get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
-        throw std::runtime_error(std::format("MSG_REGISTER_UDP_PORT failed: {}", err));
+        throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_REGISTER_UDP_PORT), err));
     }
     LOGGING(info) << "UDP port registration response: " << msg;
 }
@@ -1119,7 +1298,7 @@ void YaskawaController::reset_errors() {
     auto msg = tcp_socket_->send_request(Message(MSG_RESET_ERRORS)).get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
-        throw std::runtime_error(std::format("MSG_RESET_ERRORS failed: {}", err));
+        throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_RESET_ERRORS), err));
     }
     LOGGING(debug) << "MSG_RESET_ERRORS: " << msg;
 }
@@ -1147,28 +1326,40 @@ GoalAcceptedMessage YaskawaController::send_goal_(uint32_t group_index,
 }
 
 std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints,
+                                                           uint32_t group_index,
                                                            const std::string& unix_time,
                                                            const Eigen::VectorXd& velocity_limits,
                                                            const Eigen::VectorXd& acceleration_limits) {
-    // If move_in_progress_ is already true, it fails and we throw.
+    if (group_index >= MAX_GROUPS) {
+        throw std::runtime_error(std::format("group_index {} exceeds MAX_GROUPS ({})", group_index, MAX_GROUPS));
+    }
+
+    // Per-group lock: only one move per group at a time, different groups can move in parallel.
     bool expected = false;
-    if (!move_in_progress_.compare_exchange_strong(expected, true)) {
-        throw std::runtime_error("an actuation is already in progress");
+    if (!group_move_in_progress_[group_index].compare_exchange_strong(expected, true)) {
+        throw std::runtime_error(std::format("an actuation is already in progress on group {}", group_index));
     }
 
-    // Scope guard clears move_in_progress_ on any exit path.
+    // Scope guard clears the per-group lock on any exit path.
     // Dismissed after the monitoring thread is successfully created (which takes over cleanup responsibility).
-    ScopeGuard cleanup{[this]() { move_in_progress_ = false; }};
+    ScopeGuard cleanup{[this, group_index]() { group_move_in_progress_[group_index] = false; }};
 
-    if (!robot_state_->IsReady()) {
-        // TODO(future PR): we already have enough state to know whether reset_errors() can help
-        // (it can't if mode != ROBOT_MODE_REMOTE), but we call it unconditionally anyway.
-        // Revisit when reworking the state machine.
-        reset_errors();
+    // Check if any other group is currently moving. Both reset_errors() and setMotionMode()
+    // are global operations that would interfere with in-progress motion on other groups.
+    bool any_other_group_moving = false;
+    for (uint32_t i = 0; i < MAX_GROUPS; ++i) {
+        if (i != group_index && group_move_in_progress_[i].load()) {
+            any_other_group_moving = true;
+            break;
+        }
     }
-    // TODO check servo on and & errors
+    if (!any_other_group_moving) {
+        if (!robot_state_->IsReady()) {
+            reset_errors();
+        }
+        setMotionMode(1);
+    }
     turn_servo_power_on();
-    setMotionMode(1);
 
     auto promise = std::promise<goal_state_t>();
 
@@ -1177,18 +1368,18 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
         auto telemetry_path = (*telemetry_path_fn_)();
         if (telemetry_path) {
             try {
-                logger.emplace(*telemetry_path, unix_time, robot_model_, group_index_);
+                logger.emplace(*telemetry_path, unix_time, robot_model_, group_index);
             } catch (const std::exception& e) {
                 LOGGING(warning) << "Failed to create realtime trajectory logger: " << e.what();
             }
         }
     }
 
-    auto goal_result = make_goal_(std::move(waypoints), unix_time, velocity_limits, acceleration_limits, logger);
+    auto goal_result = make_goal_(std::move(waypoints), group_index, unix_time, velocity_limits, acceleration_limits, logger);
     // we only want to move if the future was valid
     if (!goal_result) {
         LOGGING(debug) << "already at desired position";
-        // cleanup guard will clear move_in_progress_ on return
+        // cleanup guard will clear per-group lock on return
         promise.set_value(GOAL_STATE_SUCCEEDED);
         return std::make_unique<GoalRequestHandle>(0, shared_from_this(), promise.get_future());
     }
@@ -1208,13 +1399,15 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     std::thread([promise = std::move(promise),
                  self = weak_from_this(),
                  goal_id = accepted.goal_id,
+                 group_index,
                  remaining = std::move(goal_result->remaining_trajectory),
                  goal_status_polling_trigger = (k_logging_freq / static_cast<uint64_t>(trajectory_sampling_freq_)),
+                 axes_controlled = static_cast<uint32_t>(velocity_limits.size()),
                  logger = std::move(logger)]() mutable {
-        // Scope guard clears move_in_progress_ when thread exits (success or failure)
-        const ScopeGuard thread_cleanup{[&self]() {
+        // Scope guard clears per-group lock when thread exits (success or failure)
+        const ScopeGuard thread_cleanup{[&self, group_index]() {
             if (auto shared = self.lock()) {
-                shared->move_in_progress_ = false;
+                shared->group_move_in_progress_[group_index] = false;
             }
         }};
         try {
@@ -1233,7 +1426,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                 // capture robot status at k_logging_freq Hz
                 if (logger.has_value()) {
                     try {
-                        logger->append_realtime_sample(shared->get_robot_position_velocity_torque());
+                        logger->append_realtime_sample(shared->get_group_position_velocity_torque(static_cast<uint8_t>(group_index)));
                     } catch (const std::exception& e) {
                         LOGGING(warning) << "Failed to log realtime sample: " << e.what();
                     }
@@ -1260,7 +1453,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                                         << "sending chunk: points " << offset << " to " << end << " (" << chunk.size() << " points)";
 
                                     // tolerance can be threaded through here when needed
-                                    const auto chunk_accepted = shared->send_goal_(shared->group_index_, 6, chunk, {});
+                                    const auto chunk_accepted = shared->send_goal_(group_index, axes_controlled, chunk, {});
                                     LOGGING(debug) << "chunk accepted: " << chunk_accepted.num_trajectory_accepted << " points";
                                     offset += chunk_accepted.num_trajectory_accepted;
                                 }
@@ -1290,9 +1483,11 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                         case GOAL_STATE_PENDING:
                             break;
                         case GOAL_STATE_CANCELLED:
-                            throw std::runtime_error("goal was cancelled");
+                            promise.set_value_at_thread_exit(GOAL_STATE_CANCELLED);
+                            return;
                         case GOAL_STATE_ABORTED:
-                            throw std::runtime_error(std::format("goal aborted: {}", status_msg.abort_message));
+                            throw std::runtime_error(
+                                std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
                     }
                 }
             }
@@ -1305,12 +1500,13 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
     }).detach();
 
     // Thread was successfully created and detached — thread_cleanup now owns the
-    // responsibility of clearing move_in_progress_, so dismiss the outer guard.
+    // responsibility of clearing group_move_in_progress_[group_index], so dismiss the outer guard.
     cleanup.dismiss();
     return handle;
 }
 
 std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::VectorXd> waypoints,
+                                                            uint32_t group_index,
                                                             const std::string& unix_time,
                                                             const Eigen::VectorXd& max_velocity_vec,
                                                             const Eigen::VectorXd& max_acceleration_vec,
@@ -1344,7 +1540,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
     auto planner =
         totg::planner<segment_accumulator>(planner_cfg)
             .with_waypoint_provider([&](auto& p) -> totg::waypoint_accumulator {
-                auto curr_joint_pos = get_robot_position_velocity_torque().position;
+                auto curr_joint_pos = get_group_position_velocity_torque(static_cast<uint8_t>(group_index)).position;
                 auto current_pos = p.stash(eigen_waypoints_to_xarray(
                     {Eigen::VectorXd::Map(curr_joint_pos.data(), boost::numeric_cast<Eigen::Index>(curr_joint_pos.size()))}));
                 auto goal_waypoints = p.stash(eigen_waypoints_to_xarray(waypoints));
@@ -1378,25 +1574,20 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
 
                 auto sampler = totg::uniform_sampler::quantized_for_trajectory(traj, types::hertz{trajectory_sampling_freq_});
 
-                for (const auto& sample : traj.samples(sampler) | std::views::drop(1)) {
+                // The first sample of each segment duplicates the last sample of the previous segment,
+                // so we drop it to avoid duplicate trajectory points. However, the FIRST segment's
+                // first sample is the robot's current position — the controller validates that the
+                // trajectory starts at the commanded position (within START_MAX_PULSE_DEVIATION pulses),
+                // so we must keep it.
+                bool is_first_segment = (acc.segment_count == 1);
+                for (const auto& sample : traj.samples(sampler) | std::views::drop(is_first_segment ? 0 : 1)) {
                     const auto absolute_time = acc.cumulative_time + std::chrono::duration<double>(sample.time.count());
                     auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
                     auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
-                    acc.samples.push_back({{sample.configuration(0),
-                                            sample.configuration(1),
-                                            sample.configuration(2),
-                                            sample.configuration(3),
-                                            sample.configuration(4),
-                                            sample.configuration(5)},
-                                           {sample.velocity(0),
-                                            sample.velocity(1),
-                                            sample.velocity(2),
-                                            sample.velocity(3),
-                                            sample.velocity(4),
-                                            sample.velocity(5)},
-                                           {0},
-                                           {0},
-                                           {static_cast<uint32_t>(secs.count()), static_cast<uint32_t>(nanos.count())}});
+                    acc.samples.push_back(
+                        make_trajectory_point(sample.configuration,
+                                              sample.velocity,
+                                              {static_cast<uint32_t>(secs.count()), static_cast<uint32_t>(nanos.count())}));
                 }
 
                 acc.cumulative_time += std::chrono::duration<double>(traj.duration());
@@ -1430,22 +1621,15 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
             }
 
             if (acc.samples.empty()) {
-                auto p = traj.getPosition(0.0);
-                auto v = traj.getVelocity(0.0);
-                acc.samples.push_back({{p[0], p[1], p[2], p[3], p[4], p[5]}, {v[0], v[1], v[2], v[3], v[4], v[5]}, {0}, {0}, {0, 0}});
+                acc.samples.push_back(make_trajectory_point(traj.getPosition(0.0), traj.getVelocity(0.0), {0, 0}));
             }
 
             sampling_func(acc.samples, duration, trajectory_sampling_freq_, [&](const double t, const double) {
-                auto p = traj.getPosition(t);
-                auto v = traj.getVelocity(t);
                 const auto absolute_time = acc.cumulative_time + std::chrono::duration<double>(t);
                 auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
                 auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
-                return trajectory_point_t{{p[0], p[1], p[2], p[3], p[4], p[5]},
-                                          {v[0], v[1], v[2], v[3], v[4], v[5]},
-                                          {0},
-                                          {0},
-                                          {static_cast<uint32_t>(secs.count()), static_cast<uint32_t>(nanos.count())}};
+                return make_trajectory_point(
+                    traj.getPosition(t), traj.getVelocity(t), {static_cast<uint32_t>(secs.count()), static_cast<uint32_t>(nanos.count())});
             });
 
             acc.cumulative_time += std::chrono::duration<double>(duration);
@@ -1496,7 +1680,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
         logger->set_max_velocity(max_velocity_vec);
         logger->set_max_acceleration(max_acceleration_vec);
         logger->set_waypoints(original_waypoints);
-        logger->set_planned_trajectory(samples);
+        logger->set_planned_trajectory(samples, static_cast<int>(velocity_limits_.size()));
     }
 
     LOGGING(debug) << "total trajectory points: " << samples.size();
@@ -1505,13 +1689,21 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
     const auto first_end = std::min(k_chunk_size, samples.size());
     const std::vector<trajectory_point_t> first_chunk(samples.begin(), std::next(samples.begin(), static_cast<ptrdiff_t>(first_end)));
     // tolerance can be threaded through here when needed
-    auto accepted = send_goal_(group_index_, 6, first_chunk, {});
+    auto accepted = send_goal_(group_index, static_cast<uint32_t>(max_velocity_vec.size()), first_chunk, {});
 
-    // Return accepted message + any remaining trajectory points
-    const size_t offset = accepted.num_trajectory_accepted;
+    // Return accepted message + any remaining trajectory points.
+    // If the controller reports 0 or a value exceeding what we sent, assume the entire chunk was consumed.
+    // This handles firmware that doesn't set num_trajectory_accepted (field may be uninitialized).
+    const size_t raw = accepted.num_trajectory_accepted;
+    size_t accepted_count = raw;
+    if (raw == 0 || raw > first_end) {
+        LOGGING(warning) << "controller reported " << raw << " points accepted (sent " << first_end
+                         << "), assuming all accepted";
+        accepted_count = first_end;
+    }
     std::vector<trajectory_point_t> remaining;
-    if (offset < samples.size()) {
-        remaining.assign(std::next(samples.begin(), static_cast<ptrdiff_t>(offset)), samples.end());
+    if (accepted_count < samples.size()) {
+        remaining.assign(std::next(samples.begin(), static_cast<ptrdiff_t>(accepted_count)), samples.end());
     }
 
     return MakeGoalResult{std::move(accepted), std::move(remaining)};
@@ -1522,8 +1714,10 @@ std::future<Message> YaskawaController::echo_trajectory() {
     return tcp_socket_->send_request(Message(MSG_ECHO_TRAJECTORY));
 }
 bool YaskawaController::stop() {
-    // TODO(RSDK-12470) account for group_index_ in request
-    auto msg = tcp_socket_->send_request(Message(MSG_STOP_MOTION)).get();
+    std::vector<uint8_t> payload(sizeof(group_id_t));
+    group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
+    id->group_id = static_cast<int32_t>(group_index_);
+    auto msg = tcp_socket_->send_request(Message(MSG_STOP_MOTION, std::move(payload))).get();
     const auto err = msg.get_error(MSG_STOP_MOTION);
     if (!err.empty()) {
         throw std::runtime_error(std::format("failed to stop arm motion: {}", err));
@@ -1585,6 +1779,15 @@ bool YaskawaController::checkGroupIndex() {
     return CheckGroupMessage(tcp_socket_->send_request(Message(MSG_CHECK_GROUP, std::move(payload))).get()).is_known_group;
 }
 
+CapabilitiesMessage YaskawaController::get_capabilities() {
+    auto msg = tcp_socket_->send_request(Message(MSG_GET_CAPABILITIES)).get();
+    const auto err = msg.get_error(MSG_CAPABILITIES);
+    if (!err.empty()) {
+        throw std::runtime_error(std::format("MSG_GET_CAPABILITIES failed: {}", err));
+    }
+    return CapabilitiesMessage(msg);
+}
+
 // GoalStatusMessage implementation
 GoalStatusMessage::GoalStatusMessage(const Message& msg) {
     if (msg.header.message_type != MSG_GOAL_STATUS) {
@@ -1601,14 +1804,16 @@ GoalStatusMessage::GoalStatusMessage(const Message& msg) {
     current_queue_size = payload->current_queue_size;
     progress = payload->progress;
     timestamp_ms = payload->timestamp_ms;
-    abort_message = std::string(payload->abort_message);
 }
 
 // GoalAcceptedMessage implementation
 GoalAcceptedMessage::GoalAcceptedMessage(const Message& msg) {
     if (msg.header.message_type != MSG_GOAL_ACCEPTED) {
+        auto detail = msg.get_error(MSG_GOAL_ACCEPTED);
         throw std::runtime_error(
-            std::format("wrong message type expected {} had {}", static_cast<int>(MSG_GOAL_ACCEPTED), msg.header.message_type));
+            detail.empty()
+                ? std::format("wrong message type expected {} had {}", static_cast<int>(MSG_GOAL_ACCEPTED), msg.header.message_type)
+                : detail);
     }
     if (msg.payload.size() != sizeof(goal_accepted_payload_t)) {
         throw std::runtime_error(
@@ -1651,8 +1856,15 @@ std::future<GoalStatusMessage> GoalRequestHandle::get_status() {
 
 void GoalRequestHandle::cancel() {
     auto shared = controller_.lock();
-    if (shared) {
+    if (!shared) {
+        return;
+    }
+    try {
         shared->cancel_goal(goal_id_);
+    } catch (const std::exception& e) {
+        // Cancel may fail if the goal already completed or the connection dropped.
+        // This is expected when cancel races with goal completion.
+        LOGGING(warning) << "cancel_goal(" << goal_id_ << ") failed: " << e.what();
     }
 }
 
@@ -1660,19 +1872,14 @@ bool GoalRequestHandle::is_done() const {
     return completion_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
 }
 
-State::State() : e_stopped(false), in_motion(false), drive_powered(false), in_error(true), mode(ROBOT_MODE_UNKNOWN) {}
+State::State() : e_stopped(false), in_motion(false), drive_powered(false), in_error(true) {}
 void State::UpdateState(const RobotStatusMessage& msg) {
     e_stopped.store(msg.e_stopped);
     in_error.store(msg.in_error);
     drive_powered.store(msg.drives_powered);
     in_motion.store(msg.in_motion);
-    mode.store(msg.mode);
 }
 bool State::IsReady() const {
-    // TODO(future PR): revisit the state machine — IsReady() returning false due to mode !=
-    // ROBOT_MODE_REMOTE is not recoverable by reset_errors(), but callers don't distinguish
-    // between error-not-ready and mode-not-ready. The state machine should surface separate
-    // reasons so callers can fail fast instead of attempting a pointless reset.
-    return !e_stopped.load() && !in_error.load() && mode.load() == ROBOT_MODE_REMOTE;
+    return !e_stopped.load() && !in_error.load();
 }
 }  // namespace robot

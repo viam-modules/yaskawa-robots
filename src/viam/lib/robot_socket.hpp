@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <boost/asio.hpp>
 #include <boost/asio/any_completion_handler.hpp>
@@ -222,8 +223,10 @@ struct AnglePosition {
 };
 
 struct StatusMessage {
-    int64_t timestamp;             // 8 bytes
-    uint8_t num_axes;              // 1 byte
+    uint8_t group_index{0};        // 1 byte - which group this status is for
+    uint8_t group_type{0};         // 1 byte - group_type_t
+    int64_t timestamp{0};          // 8 bytes
+    uint8_t num_axes{0};           // 1 byte
     std::vector<double> position;  // 8 * 8 = 64 bytes
     std::vector<double> velocity;  // 8 * 8 = 64 bytes
     std::vector<double> torque;    // 8 * 8 = 64 bytes
@@ -234,15 +237,16 @@ struct StatusMessage {
 };
 
 struct RobotStatusMessage {
-    int64_t ts;            // 8 bytes - timestamp
-    robot_mode_t mode;     // 4 bytes - robot mode
-    bool e_stopped;        // 1 byte - estop status
-    bool drives_powered;   // 1 byte - drive power status
-    bool motion_possible;  // 1 byte - motion enabled
-    bool in_motion;        // 1 byte - motion status
-    bool in_error;         // 1 byte - error status
+    int64_t ts{0};                // 8 bytes - timestamp
+    uint8_t group_index{0};       // 1 byte - which group this status is for
+    int mode{0};                  // 4 bytes - robot mode
+    bool e_stopped{false};        // 1 byte - estop status
+    bool drives_powered{false};   // 1 byte - drive power status
+    bool motion_possible{false};  // 1 byte - motion enabled
+    bool in_motion{false};        // 1 byte - motion status
+    bool in_error{false};         // 1 byte - error status
     std::vector<int> error_codes;
-    int size;  // 4 bytes - number of active error codes
+    int size{0};  // 4 bytes - number of active error codes
 
     RobotStatusMessage() = default;
     RobotStatusMessage(const Message&);
@@ -254,12 +258,30 @@ struct CheckGroupMessage {
     CheckGroupMessage(const Message&);
 };
 
+struct GroupCapability {
+    uint8_t group_id{0};
+    uint8_t group_type{0};
+    uint8_t group_sub_index{0};
+    uint8_t num_axes{0};
+    std::vector<uint8_t> axis_types;
+    std::vector<int8_t> base_axis_motion;
+    int32_t interpolation_period_us{0};
+};
+
+struct CapabilitiesMessage {
+    uint8_t protocol_version{0};
+    uint8_t num_groups{0};
+    std::vector<GroupCapability> groups;
+
+    CapabilitiesMessage() = default;
+    CapabilitiesMessage(const Message&);
+};
+
 struct State {
     std::atomic<bool> e_stopped;
     std::atomic<bool> in_motion;
     std::atomic<bool> drive_powered;
     std::atomic<bool> in_error;
-    std::atomic<robot_mode_t> mode;
     explicit State();
     void UpdateState(const RobotStatusMessage& msg);
     bool IsReady() const;
@@ -271,7 +293,6 @@ struct GoalStatusMessage {
     uint32_t current_queue_size;
     double progress;
     int64_t timestamp_ms;
-    std::string abort_message;
 
     GoalStatusMessage() = default;
     GoalStatusMessage(const Message& msg);
@@ -342,6 +363,59 @@ class TcpRobotSocket : public RobotSocketBase {
     static boost::asio::awaitable<void> process_requests(std::shared_ptr<Session> session);
 };
 
+// RAII wrapper around std::promise that prevents std::terminate on unfulfilled destruction.
+// If the promise is destroyed without being fulfilled, the destructor sets a descriptive exception.
+class SafePromise {
+    std::promise<Message> promise_;
+    bool fulfilled_ = false;
+
+   public:
+    SafePromise() = default;
+    SafePromise(SafePromise&& other) noexcept : promise_(std::move(other.promise_)), fulfilled_(other.fulfilled_) {
+        other.fulfilled_ = true;  // prevent moved-from destructor from touching the promise
+    }
+    SafePromise& operator=(SafePromise&& other) noexcept {
+        if (this != &other) {
+            promise_ = std::move(other.promise_);
+            fulfilled_ = other.fulfilled_;
+            other.fulfilled_ = true;
+        }
+        return *this;
+    }
+
+    void set_value(Message msg) {
+        if (!fulfilled_) {
+            promise_.set_value(std::move(msg));
+            fulfilled_ = true;
+        }
+    }
+
+    void set_exception(std::exception_ptr e) {
+        if (!fulfilled_) {
+            promise_.set_exception(e);
+            fulfilled_ = true;
+        }
+    }
+
+    std::future<Message> get_future() {
+        return promise_.get_future();
+    }
+
+    ~SafePromise() {
+        if (!fulfilled_) {
+            try {
+                promise_.set_exception(std::make_exception_ptr(std::runtime_error("status not received before disconnect")));
+            } catch (...) {
+            }
+        }
+    }
+};
+
+template <class... Ts>
+struct cacheVisitor : Ts... {
+    using Ts::operator()...;
+};
+
 class UdpRobotSocket : public RobotSocketBase {
    public:
     UdpRobotSocket(boost::asio::io_context& io_context, std::shared_ptr<State> state);
@@ -351,18 +425,19 @@ class UdpRobotSocket : public RobotSocketBase {
     std::future<Message> send_request(Message request) override;
     void disconnect() final;
 
-    void get_status(std::promise<Message>);
-    void get_robot_status(std::promise<Message>);
+    std::future<Message> get_group_status(uint8_t group_index);
+    std::future<Message> get_group_robot_status(uint8_t group_index);
     uint16_t get_local_port() const;
 
    private:
     using udp = boost::asio::ip::udp;
+    using CacheSlot = std::variant<std::monostate, Message, SafePromise>;
 
     struct Session {
         udp::socket socket_;
-        mutable std::shared_mutex status_mutex_;
-        std::variant<std::monostate, Message, std::promise<Message>> cached_status_;
-        std::variant<std::monostate, Message, std::promise<Message>> cached_robot_status_;
+        mutable std::mutex status_mutex_;
+        std::array<CacheSlot, MAX_GROUPS> group_status_;
+        std::array<CacheSlot, MAX_GROUPS> group_robot_status_;
         std::shared_ptr<State> robot_state_;
         Session(boost::asio::io_context& io_context, std::shared_ptr<State> state) : socket_(io_context), robot_state_(std::move(state)) {}
     };
@@ -370,6 +445,8 @@ class UdpRobotSocket : public RobotSocketBase {
     std::shared_ptr<State> robot_state_;
     std::shared_ptr<Session> session_;
 
+    std::future<Message> request_from_cache_(std::array<CacheSlot, MAX_GROUPS>& cache, uint8_t group_index);
+    static void save_to_cache_(std::array<CacheSlot, MAX_GROUPS>& cache, uint8_t group_index, const Message& msg);
     static boost::asio::awaitable<void> receive_messages(std::shared_ptr<Session> session);
     static Message parse_message(const std::vector<uint8_t>& buffer);
 };
@@ -406,7 +483,7 @@ class GoalRequestHandle;
 class YaskawaController : public std::enable_shared_from_this<YaskawaController> {
    public:
     explicit YaskawaController(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config);
-    ~YaskawaController() = default;
+    ~YaskawaController();
 
     std::future<void> connect();
     void disconnect();
@@ -419,7 +496,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     void send_test_error_command();
     void get_error_info();
     StatusMessage get_robot_position_velocity_torque();
+    StatusMessage get_group_position_velocity_torque(uint8_t group_index);
     RobotStatusMessage get_robot_status();
+    RobotStatusMessage get_group_robot_status(uint8_t group_index);
     void register_udp_port(uint16_t port);
     void reset_errors();
     std::future<Message> echo_trajectory();  // currently unused and unimplemented on the controller
@@ -431,11 +510,16 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     AnglePosition cartPosToAngle(CartesianPosition& pos);
     CartesianPosition angleToCartPos(AnglePosition& pos);
     bool checkGroupIndex();
+    CapabilitiesMessage get_capabilities();
 
     std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints,
+                                            uint32_t group_index,
                                             const std::string& unix_time,
                                             const Eigen::VectorXd& velocity_limits,
                                             const Eigen::VectorXd& acceleration_limits);
+
+    /// Factory: returns an existing controller for the same host, or creates a new one.
+    static std::shared_ptr<YaskawaController> get_or_create(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config);
 
     const Eigen::VectorXd& get_velocity_limits() const {
         return velocity_limits_;
@@ -461,8 +545,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     double trajectory_sampling_freq_;
     double waypoint_dedup_tolerance_rad_;
 
-    // Move locking: prevents concurrent moves
-    std::atomic<bool> move_in_progress_{false};
+    // Per-group move locking: prevents concurrent moves on the same group
+    // while allowing parallel moves on different groups.
+    std::array<std::atomic<bool>, MAX_GROUPS> group_move_in_progress_{};
 
     // Connection lifecycle: true between connect() and disconnect()
     std::atomic<bool> running_{false};
@@ -481,6 +566,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;
     std::optional<MakeGoalResult> make_goal_(std::list<Eigen::VectorXd> waypoints,
+                                             uint32_t group_index,
                                              const std::string& unix_time,
                                              const Eigen::VectorXd& max_velocity_vec,
                                              const Eigen::VectorXd& max_acceleration_vec,
