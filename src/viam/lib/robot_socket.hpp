@@ -487,7 +487,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     std::future<void> connect();
     void disconnect();
-    uint32_t get_group_index() const;
     double get_waypoint_deduplication_tolerance_rad() const;
 
     void send_test_trajectory();
@@ -495,7 +494,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     void send_heartbeat();
     void send_test_error_command();
     void get_error_info();
-    StatusMessage get_robot_position_velocity_torque();
     StatusMessage get_group_position_velocity_torque(uint8_t group_index);
     RobotStatusMessage get_robot_status();
     RobotStatusMessage get_group_robot_status(uint8_t group_index);
@@ -504,12 +502,12 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::future<Message> echo_trajectory();  // currently unused and unimplemented on the controller
     GoalStatusMessage get_goal_status(int32_t id);
     void cancel_goal(int32_t id);
-    bool stop();
+    bool stop(uint32_t group_index);
     void setMotionMode(uint8_t mode);
-    CartesianPosition getCartPosition();
-    AnglePosition cartPosToAngle(CartesianPosition& pos);
-    CartesianPosition angleToCartPos(AnglePosition& pos);
-    bool checkGroupIndex();
+    CartesianPosition getCartPosition(uint32_t group_index);
+    AnglePosition cartPosToAngle(uint32_t group_index, CartesianPosition& pos);
+    CartesianPosition angleToCartPos(uint32_t group_index, AnglePosition& pos);
+    bool checkGroupIndex(uint32_t group_index);
     CapabilitiesMessage get_capabilities();
 
     std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints,
@@ -541,7 +539,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::unique_ptr<UdpBroadcastListener> broadcast_listener_;
     Eigen::VectorXd velocity_limits_;
     Eigen::VectorXd acceleration_limits_;
-    uint32_t group_index_;
     double trajectory_sampling_freq_;
     double waypoint_dedup_tolerance_rad_;
 

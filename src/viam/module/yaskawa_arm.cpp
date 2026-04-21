@@ -150,8 +150,7 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
 
     auto group_index = find_config_attribute<double>(cfg, "group_index");
     constexpr int k_min_group_index = 0;
-    // TODO(RSDK-12470) support multiple arms
-    constexpr int k_max_group_index = 0;
+    constexpr int k_max_group_index = MAX_GROUPS - 1;
     if (group_index && (*group_index < k_min_group_index || *group_index > k_max_group_index || floor(*group_index) != *group_index)) {
         throw std::invalid_argument(std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
                                                 k_min_group_index,
@@ -248,7 +247,8 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
 
     VIAM_SDK_LOG(debug) << "telemetry output path set : " << telemetry_output_path_;
 
-    robot_ = std::make_shared<YaskawaController>(io_context_, config);
+    robot_ = YaskawaController::get_or_create(io_context_, config);
+    group_index_ = static_cast<uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));
 
     // Setup trajectory logging (always enabled)
     robot_->set_trajectory_loggers(model_.model_name(), [weak = weak_from_this()]() -> std::optional<std::string> {
@@ -278,10 +278,8 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
             }
         }
     }
-    if (!robot_->checkGroupIndex()) {
-        std::ostringstream buffer;
-        buffer << std::format("group_index {} is not available on the arm controller", robot_->get_group_index());
-        throw std::invalid_argument(buffer.str());
+    if (!robot_->checkGroupIndex(group_index_)) {
+        throw std::invalid_argument(std::format("group_index {} is not available on the arm controller", group_index_));
     }
 }
 
@@ -294,7 +292,7 @@ void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg
 
 std::vector<double> YaskawaArm::get_joint_positions(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
-    auto joint_rads = robot_->get_robot_position_velocity_torque();
+    auto joint_rads = robot_->get_group_position_velocity_torque(static_cast<uint8_t>(group_index_));
     auto joint_position_degree = joint_rads.position | boost::adaptors::transformed(radians_to_degrees<const double&>);
     return {std::begin(joint_position_degree), std::end(joint_position_degree)};
 }
@@ -336,7 +334,7 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
 
     const auto unix_time = unix_time_iso8601();
 
-    robot_->move(std::move(waypoints), robot_->get_group_index(), unix_time, velocity, acceleration)->wait();
+    robot_->move(std::move(waypoints), group_index_, unix_time, velocity, acceleration)->wait();
 }
 
 void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
@@ -349,7 +347,7 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 
     const auto unix_time = unix_time_iso8601();
 
-    robot_->move(std::move(waypoints), robot_->get_group_index(), unix_time, robot_->get_velocity_limits(), robot_->get_acceleration_limits())->wait();
+    robot_->move(std::move(waypoints), group_index_, unix_time, robot_->get_velocity_limits(), robot_->get_acceleration_limits())->wait();
 }
 
 ::viam::sdk::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
@@ -378,7 +376,7 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 pose YaskawaArm::get_end_position(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
 
-    auto p = cartesian_position_to_pose(robot_->getCartPosition());
+    auto p = cartesian_position_to_pose(robot_->getCartPosition(group_index_));
 
     // The controller is what provides is with a cartesian position. However, it
     // is not aware of the base links position, i.e. that is translated up by some
@@ -400,7 +398,7 @@ pose YaskawaArm::get_end_position(const ProtoStruct&) {
 }
 
 void YaskawaArm::stop(const ProtoStruct&) {
-    if (!robot_->stop()) {
+    if (!robot_->stop(group_index_)) {
         // we were not checking this before. Add a log to see how often it occurs
         VIAM_SDK_LOG(warn) << "stop did not error but did not return as stopped";
     }
@@ -427,5 +425,5 @@ YaskawaArm::~YaskawaArm() {
 }
 
 bool YaskawaArm::is_moving() {
-    return robot_->get_robot_status().in_motion;
+    return robot_->get_group_robot_status(static_cast<uint8_t>(group_index_)).in_motion;
 }

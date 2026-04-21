@@ -142,7 +142,7 @@ BOOST_FIXTURE_TEST_CASE(stop_motion, ControllerFixture,
     controller->turn_servo_power_on();
     controller->send_test_trajectory();
     BOOST_CHECK(server.robot().groups[0].in_motion);
-    bool stopped = controller->stop();
+    bool stopped = controller->stop(0);
     BOOST_CHECK(stopped);
     BOOST_CHECK(!server.robot().groups[0].in_motion);
 }
@@ -164,7 +164,7 @@ BOOST_FIXTURE_TEST_CASE(test_error_command, ControllerFixture,
 BOOST_FIXTURE_TEST_CASE(check_group_index, ControllerFixture,
                         *boost::unit_test::timeout(15)) {
     connect();
-    BOOST_CHECK(controller->checkGroupIndex());
+    BOOST_CHECK(controller->checkGroupIndex(0));
 }
 
 BOOST_FIXTURE_TEST_CASE(get_robot_status, ControllerFixture,
@@ -186,7 +186,7 @@ BOOST_FIXTURE_TEST_CASE(get_position_velocity_torque, ControllerFixture,
     // Wait for pump to push the new values
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    auto pvt = controller->get_robot_position_velocity_torque();
+    auto pvt = controller->get_group_position_velocity_torque(0);
     for (int i = 0; i < k_dof; ++i) {
         BOOST_CHECK_CLOSE(pvt.position[static_cast<size_t>(i)], i * 10.0, 1e-6);
     }
@@ -410,7 +410,7 @@ BOOST_FIXTURE_TEST_CASE(multi_group_status_positions, GantryFixture,
     // Wait for pump to push status
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    auto pvt = controller->get_robot_position_velocity_torque();
+    auto pvt = controller->get_group_position_velocity_torque(0);
     BOOST_CHECK_GT(pvt.num_axes, static_cast<uint8_t>(0));
 }
 

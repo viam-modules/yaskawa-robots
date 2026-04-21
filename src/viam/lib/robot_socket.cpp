@@ -926,16 +926,6 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     velocity_limits_ = read_limit_vector(config, "speed_rad_per_sec", dof);
     acceleration_limits_ = read_limit_vector(config, "acceleration_rad_per_sec2", dof);
 
-    auto group_index = find_config_attribute<double>(config, "group_index");
-    constexpr int k_min_group_index = 0;
-    constexpr int k_max_group_index = MAX_GROUPS - 1;
-    if (group_index && (*group_index < k_min_group_index || *group_index > k_max_group_index || floor(*group_index) != *group_index)) {
-        throw std::invalid_argument(std::format("attribute `group_index` should be a whole number between {} and {} , it is : {}",
-                                                k_min_group_index,
-                                                k_max_group_index,
-                                                *group_index));
-    }
-    group_index_ = static_cast<std::uint32_t>(group_index.value_or(k_min_group_index));
     trajectory_sampling_freq_ =
         find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(k_default_trajectory_sampling_freq);
 
@@ -1148,10 +1138,6 @@ void YaskawaController::reconnect_() {
     LOGGING(info) << "reconnect complete";
 }
 
-uint32_t YaskawaController::get_group_index() const {
-    return group_index_;
-}
-
 double YaskawaController::get_waypoint_deduplication_tolerance_rad() const {
     return waypoint_dedup_tolerance_rad_;
 }
@@ -1256,10 +1242,6 @@ void YaskawaController::get_error_info() {
         throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_GET_ERROR_INFO), err));
     }
     LOGGING(debug) << "MSG_GET_ERROR_INFO: " << msg;
-}
-
-StatusMessage YaskawaController::get_robot_position_velocity_torque() {
-    return get_group_position_velocity_torque(0);
 }
 
 StatusMessage YaskawaController::get_group_position_velocity_torque(uint8_t group_index) {
@@ -1464,7 +1446,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                             if (offset < remaining.size()) {
                                 std::string stop_detail;
                                 try {
-                                    if (!shared->stop()) {
+                                    if (!shared->stop(group_index)) {
                                         LOGGING(warning) << "stop returned false while handling early goal completion";
                                     }
                                 } catch (const std::exception& e) {
@@ -1713,10 +1695,10 @@ std::future<Message> YaskawaController::echo_trajectory() {
     // Echo trajectory command has no payload
     return tcp_socket_->send_request(Message(MSG_ECHO_TRAJECTORY));
 }
-bool YaskawaController::stop() {
+bool YaskawaController::stop(uint32_t group_index) {
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
-    id->group_id = static_cast<int32_t>(group_index_);
+    id->group_id = static_cast<int32_t>(group_index);
     auto msg = tcp_socket_->send_request(Message(MSG_STOP_MOTION, std::move(payload))).get();
     const auto err = msg.get_error(MSG_STOP_MOTION);
     if (!err.empty()) {
@@ -1737,16 +1719,16 @@ bool YaskawaController::stop() {
     const boolean_payload_t* is_stopped = reinterpret_cast<const boolean_payload_t*>(msg.payload.data());
     return is_stopped->value;
 }
-CartesianPosition YaskawaController::getCartPosition() {
+CartesianPosition YaskawaController::getCartPosition(uint32_t group_index) {
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
-    id->group_id = (int32_t)group_index_;
+    id->group_id = static_cast<int32_t>(group_index);
     return CartesianPosition(tcp_socket_->send_request(Message(MSG_GET_CART, std::move(payload))).get());
 }
-AnglePosition YaskawaController::cartPosToAngle(CartesianPosition& pos) {
+AnglePosition YaskawaController::cartPosToAngle(uint32_t group_index, CartesianPosition& pos) {
     std::vector<uint8_t> payload(sizeof(cartesian_payload_t));
     cartesian_payload_t* cid = reinterpret_cast<cartesian_payload_t*>(payload.data());
-    cid->group_id = (int32_t)group_index_;
+    cid->group_id = static_cast<int32_t>(group_index);
     cid->cartesianCoord[0] = pos.x;
     cid->cartesianCoord[1] = pos.y;
     cid->cartesianCoord[2] = pos.z;
@@ -1755,10 +1737,10 @@ AnglePosition YaskawaController::cartPosToAngle(CartesianPosition& pos) {
     cid->cartesianCoord[5] = pos.rz;
     return AnglePosition(tcp_socket_->send_request(Message(MSG_FROM_CART_TO_JOINT, std::move(payload))).get());
 }
-CartesianPosition YaskawaController::angleToCartPos(AnglePosition& pos) {
+CartesianPosition YaskawaController::angleToCartPos(uint32_t group_index, AnglePosition& pos) {
     std::vector<uint8_t> payload(sizeof(position_angle_degree_payload_t));
     position_angle_degree_payload_t* pid = reinterpret_cast<position_angle_degree_payload_t*>(payload.data());
-    pid->group_id = (int32_t)group_index_;
+    pid->group_id = static_cast<int32_t>(group_index);
     pid->positionAngleDegree[0] = pos.pos[0];
     pid->positionAngleDegree[1] = pos.pos[1];
     pid->positionAngleDegree[2] = pos.pos[2];
@@ -1772,10 +1754,10 @@ bool YaskawaController::is_status_command(message_type_t type) {
     return type == MSG_ROBOT_POSITION_VELOCITY_TORQUE || type == MSG_ROBOT_STATUS;
 }
 
-bool YaskawaController::checkGroupIndex() {
+bool YaskawaController::checkGroupIndex(uint32_t group_index) {
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
-    id->group_id = (int32_t)group_index_;
+    id->group_id = static_cast<int32_t>(group_index);
     return CheckGroupMessage(tcp_socket_->send_request(Message(MSG_CHECK_GROUP, std::move(payload))).get()).is_known_group;
 }
 
