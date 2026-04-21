@@ -28,8 +28,8 @@
 #include <variant>
 #include <vector>
 
-#include <Eigen/Core>
 #include <third_party/trajectories/Path.h>
+#include <Eigen/Core>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
 
@@ -415,7 +415,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::future<void> connect();
     void disconnect();
     uint32_t get_group_index() const;
-    const std::string& host() const { return host_; }
+    const std::string& host() const {
+        return host_;
+    }
 
     // FSM state accessors
     std::string describe_state() const;
@@ -650,7 +652,7 @@ class YaskawaController::state_ {
        private:
         void connect_(state_&);
 
-        int reconnect_attempts_{-1};
+        int reconnect_attempts_{0};
         std::optional<std::future<void>> pending_connection_;
         std::unique_ptr<event_connection_lost_> triggering_event_;
     };

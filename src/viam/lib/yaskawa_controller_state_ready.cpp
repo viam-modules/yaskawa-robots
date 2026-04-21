@@ -51,12 +51,18 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
     return std::nullopt;
 }
 
-std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_ready_::handle_move_request(
-    state_& state) {
+std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_ready_::handle_move_request(state_& state) {
+    // TODO(PR #54): pass req.group_index to move() once the API accepts it.
     for (auto it = state.move_requests_.begin(); it != state.move_requests_.end();) {
         auto& req = *it;
         if (!req.handle) {
-            req.handle = state.controller_->move(req.waypoints, req.unix_time, req.velocity, req.acceleration);
+            try {
+                req.handle = state.controller_->move(req.waypoints, req.unix_time, req.velocity, req.acceleration);
+            } catch (const std::exception& ex) {
+                req.complete_error(ex.what());
+                it = state.move_requests_.erase(it);
+                continue;
+            }
             ++it;
         } else if (req.handle->is_done()) {
             try {
@@ -86,6 +92,8 @@ std::optional<YaskawaController::state_::state_variant_> YaskawaController::stat
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_ready_::handle_event(
     state_&, event_blocking_detected_ event) {
     VIAM_SDK_LOG(warn) << "blocking condition detected in ready state, entering independent state";
+    // In-flight move_requests_ are not cancelled here. They are cancelled on the next
+    // handle_move_request_() call, which runs after upgrade_downgrade_() in the same cycle.
     return state_independent_{event.mask};
 }
 // NOLINTEND(readability-convert-member-functions-to-static)

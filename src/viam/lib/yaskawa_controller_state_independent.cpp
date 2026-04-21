@@ -29,8 +29,7 @@ std::string YaskawaController::state_::state_independent_::describe() const {
 // state_independent_ cycle
 // ---------------------------------------------------------------
 
-std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_independent_::upgrade_downgrade(
-    state_& state) {
+std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_independent_::upgrade_downgrade(state_& state) {
     const auto status = state.controller_->get_robot_status();
 
     blocking_mask mask = 0;

@@ -43,8 +43,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
     return std::nullopt;
 }
 
-std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_disconnected_::upgrade_downgrade(
-    state_& state) {
+std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_disconnected_::upgrade_downgrade(state_& state) {
     if (pending_connection_) {
         switch (pending_connection_->wait_for(std::chrono::seconds(0))) {
             case std::future_status::ready:

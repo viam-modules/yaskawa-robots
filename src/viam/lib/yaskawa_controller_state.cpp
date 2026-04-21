@@ -67,11 +67,10 @@ void YaskawaController::state_::emit_event_(event_variant_&& event) {
     auto new_state = std::visit(
         [&](auto& current_state) -> std::optional<state_variant_> {
             const auto pre = describe_state_(current_state_);
-            auto next = std::visit([&](auto&& ev) { return current_state.handle_event(*this, std::forward<decltype(ev)>(ev)); },
-                                   std::move(event));
+            auto next =
+                std::visit([&](auto&& ev) { return current_state.handle_event(*this, std::forward<decltype(ev)>(ev)); }, std::move(event));
             if (next) {
-                VIAM_SDK_LOG(info) << controller_->host() << ": state transition `" << pre << "` -> `"
-                                   << describe_state_(*next) << "`";
+                VIAM_SDK_LOG(info) << controller_->host() << ": state transition `" << pre << "` -> `" << describe_state_(*next) << "`";
             }
             return next;
         },
@@ -160,15 +159,15 @@ std::string YaskawaController::state_::describe() const {
 
 bool YaskawaController::state_::is_any_moving() const {
     const std::lock_guard lock{mutex_};
-    return std::any_of(move_requests_.begin(), move_requests_.end(),
-                       [](const move_request& req) { return req.handle && !req.handle->is_done(); });
+    return std::any_of(
+        move_requests_.begin(), move_requests_.end(), [](const move_request& req) { return req.handle && !req.handle->is_done(); });
 }
 
 std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group_index,
-                                                                   std::list<Eigen::VectorXd> waypoints,
-                                                                   std::string unix_time,
-                                                                   Eigen::VectorXd velocity,
-                                                                   Eigen::VectorXd acceleration) {
+                                                                  std::list<Eigen::VectorXd> waypoints,
+                                                                  std::string unix_time,
+                                                                  Eigen::VectorXd velocity,
+                                                                  Eigen::VectorXd acceleration) {
     std::future<void> future;
     {
         const std::lock_guard lock{mutex_};
@@ -213,8 +212,8 @@ std::future<void> YaskawaController::enqueue_move_request(uint32_t group_index,
     if (!fsm_) {
         throw std::runtime_error("controller FSM not initialized");
     }
-    return fsm_->enqueue_move_request(group_index, std::move(waypoints), std::move(unix_time), std::move(velocity),
-                                      std::move(acceleration));
+    return fsm_->enqueue_move_request(
+        group_index, std::move(waypoints), std::move(unix_time), std::move(velocity), std::move(acceleration));
 }
 
 // ---------------------------------------------------------------
@@ -231,6 +230,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 }
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_connected_::send_heartbeat(state_&) {
+    // TODO(PR 2): implement — controller disconnects the module if heartbeat stops.
     return std::nullopt;
 }
 // NOLINTEND(readability-convert-member-functions-to-static)
