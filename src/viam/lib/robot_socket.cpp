@@ -144,11 +144,11 @@ trajectory_point_t make_trajectory_point(const Container& positions, const Conta
     trajectory_point_t pt{};
     const auto n = std::min(static_cast<size_t>(NUMBER_OF_DOF), static_cast<size_t>(positions.size()));
     for (size_t i = 0; i < n; ++i) {
-        pt.positions[i] = positions(i);
+        pt.positions[i] = positions(static_cast<Eigen::Index>(i));
     }
     const auto nv = std::min(static_cast<size_t>(NUMBER_OF_DOF), static_cast<size_t>(velocities.size()));
     for (size_t i = 0; i < nv; ++i) {
-        pt.velocities[i] = velocities(i);
+        pt.velocities[i] = velocities(static_cast<Eigen::Index>(i));
     }
     pt.time_from_start = time_from_start;
     return pt;
@@ -168,23 +168,6 @@ using viam::ScopeGuard;
 constexpr double k_default_min_timestep_sec = 1e-2;
 constexpr double k_default_trajectory_sampling_freq = 3;
 constexpr auto k_socket_timeout = std::chrono::seconds(5);
-
-constexpr const char* goal_state_to_string(goal_state_t state) {
-    switch (state) {
-        case GOAL_STATE_SUCCEEDED:
-            return "goal succeeded";
-        case GOAL_STATE_PENDING:
-            return "goal pending";
-        case GOAL_STATE_ABORTED:
-            return "goal aborted (server side)";
-        case GOAL_STATE_CANCELLED:
-            return "goal cancelled (client side)";
-        case GOAL_STATE_ACTIVE:
-            return "goal state active";
-        default:
-            return "unknown goal state";
-    }
-}
 
 template <typename Func>
 void sampling_func(std::vector<trajectory_point_t>& samples, double duration_sec, double sampling_frequency_hz, const Func& f) {
@@ -345,9 +328,9 @@ StatusMessage::StatusMessage(const Message& msg) {
 
     position.assign(arrays.begin(), arrays.begin() + axes);
     velocity.assign(arrays.begin() + MAX_AXES, arrays.begin() + MAX_AXES + axes);
-    torque.assign(arrays.begin() + static_cast<size_t>(2) * MAX_AXES, arrays.begin() + static_cast<size_t>(2) * MAX_AXES + axes);
-    position_corrected.assign(arrays.begin() + static_cast<size_t>(3) * MAX_AXES,
-                              arrays.begin() + static_cast<size_t>(3) * MAX_AXES + axes);
+    torque.assign(arrays.begin() + (static_cast<size_t>(2) * MAX_AXES), arrays.begin() + (static_cast<size_t>(2) * MAX_AXES) + axes);
+    position_corrected.assign(arrays.begin() + (static_cast<size_t>(3) * MAX_AXES),
+                              arrays.begin() + (static_cast<size_t>(3) * MAX_AXES) + axes);
 }
 
 RobotStatusMessage::RobotStatusMessage(const Message& msg) {
@@ -949,11 +932,14 @@ YaskawaController::~YaskawaController() {
     try {
         disconnect();
     } catch (...) {
+        LOGGING(debug) << "caught unknown exception";
     }
 }
 
-static std::mutex s_registry_mutex;
-static std::map<std::string, std::weak_ptr<YaskawaController>> s_controller_registry;
+namespace {
+std::mutex s_registry_mutex;
+std::map<std::string, std::weak_ptr<YaskawaController>> s_controller_registry;
+}  // namespace
 
 std::shared_ptr<YaskawaController> YaskawaController::get_or_create(boost::asio::io_context& io_context,
                                                                     const viam::sdk::ResourceConfig& config) {
@@ -963,7 +949,7 @@ std::shared_ptr<YaskawaController> YaskawaController::get_or_create(boost::asio:
     }
     const auto& host = *host_attr;
 
-    std::lock_guard lock(s_registry_mutex);
+    const std::lock_guard lock(s_registry_mutex);
     // The registry stores weak_ptr — if the controller is still alive (held by YaskawaArm
     // instances), lock() returns the existing shared_ptr. A new controller is only created
     // if all references were released (weak_ptr expired).
@@ -1115,13 +1101,7 @@ void YaskawaController::reconnect_() {
     // communication attempt.
     constexpr auto k_move_drain_timeout = std::chrono::milliseconds(500);
     const auto deadline = std::chrono::steady_clock::now() + k_move_drain_timeout;
-    auto any_group_moving = [this]() {
-        for (auto& flag : group_move_in_progress_) {
-            if (flag.load())
-                return true;
-        }
-        return false;
-    };
+    auto any_group_moving = [this]() { return std::ranges::any_of(group_move_in_progress_, [](const auto& flag) { return flag.load(); }); };
     while (any_group_moving() && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
@@ -1468,15 +1448,15 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::Vect
                             promise.set_value_at_thread_exit(GOAL_STATE_CANCELLED);
                             return;
                         case GOAL_STATE_ABORTED:
-                            throw std::runtime_error(
-                                std::format("goal failed - goal status is {}", goal_state_to_string(status_msg.state)));
+                            throw std::runtime_error(std::format("goal failed - goal status is {}", static_cast<int>(status_msg.state)));
                     }
                 }
             }
         } catch (std::exception& e) {
             try {
                 promise.set_exception_at_thread_exit(std::current_exception());
-            } catch (...) {  // NOLINT(bugprone-empty-catch)
+            } catch (...) {
+                LOGGING(debug) << "caught unknown exception";
             }
         }
     }).detach();
@@ -1561,7 +1541,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
                 // first sample is the robot's current position — the controller validates that the
                 // trajectory starts at the commanded position (within START_MAX_PULSE_DEVIATION pulses),
                 // so we must keep it.
-                bool is_first_segment = (acc.segment_count == 1);
+                const bool is_first_segment = (acc.segment_count == 1);
                 for (const auto& sample : traj.samples(sampler) | std::views::drop(is_first_segment ? 0 : 1)) {
                     const auto absolute_time = acc.cumulative_time + std::chrono::duration<double>(sample.time.count());
                     auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
@@ -1679,8 +1659,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
     const size_t raw = accepted.num_trajectory_accepted;
     size_t accepted_count = raw;
     if (raw == 0 || raw > first_end) {
-        LOGGING(warning) << "controller reported " << raw << " points accepted (sent " << first_end
-                         << "), assuming all accepted";
+        LOGGING(warning) << "controller reported " << raw << " points accepted (sent " << first_end << "), assuming all accepted";
         accepted_count = first_end;
     }
     std::vector<trajectory_point_t> remaining;

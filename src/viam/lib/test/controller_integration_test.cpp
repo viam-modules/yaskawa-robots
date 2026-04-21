@@ -48,6 +48,7 @@ struct TestFixture {
             try {
                 controller->disconnect();
             } catch (...) {
+                LOGGING(debug) << "caught unknown exception";
             }
         }
         controller.reset();

@@ -392,7 +392,7 @@ class SafePromise {
 
     void set_exception(std::exception_ptr e) {
         if (!fulfilled_) {
-            promise_.set_exception(e);
+            promise_.set_exception(std::move(e));
             fulfilled_ = true;
         }
     }
@@ -406,6 +406,7 @@ class SafePromise {
             try {
                 promise_.set_exception(std::make_exception_ptr(std::runtime_error("status not received before disconnect")));
             } catch (...) {
+                LOGGING(debug) << "caught unknown exception";
             }
         }
     }
