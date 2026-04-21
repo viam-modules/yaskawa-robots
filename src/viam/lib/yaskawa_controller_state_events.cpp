@@ -51,14 +51,14 @@ std::string_view YaskawaController::state_::event_connection_lost_::describe() c
 }
 
 // ---------------------------------------------------------------
-// event_blocking_detected_
+// event_not_ready_detected_
 // ---------------------------------------------------------------
 
-std::string_view YaskawaController::state_::event_blocking_detected_::name() {
-    return "blocking_detected";
+std::string_view YaskawaController::state_::event_not_ready_detected_::name() {
+    return "not_ready_detected";
 }
 
-std::string_view YaskawaController::state_::event_blocking_detected_::describe() const {
+std::string_view YaskawaController::state_::event_not_ready_detected_::describe() const {
     return name();
 }
 

@@ -94,12 +94,12 @@ std::string YaskawaController::state_::describe_state_(const state_variant_& sv)
     return std::visit([](const auto& s) { return s.describe(); }, sv);
 }
 
-std::string YaskawaController::state_::describe_blocking_mask_(blocking_mask mask) {
+std::string YaskawaController::state_::describe_not_ready_mask_(not_ready_mask mask) {
     if (mask == 0) {
         return "none";
     }
     std::string result;
-    auto append = [&](blocking_reason r, std::string_view label) {
+    auto append = [&](not_ready_reason r, std::string_view label) {
         if (has_reason(mask, r)) {
             if (!result.empty()) {
                 result += ", ";
@@ -107,12 +107,12 @@ std::string YaskawaController::state_::describe_blocking_mask_(blocking_mask mas
             result += label;
         }
     };
-    append(blocking_reason::k_in_error, "in_error");
-    append(blocking_reason::k_servo_off, "servo_off");
-    append(blocking_reason::k_motion_blocked, "motion_blocked");
-    append(blocking_reason::k_major_alarm, "major_alarm");
-    append(blocking_reason::k_estop, "estop");
-    append(blocking_reason::k_not_remote, "not_remote");
+    append(not_ready_reason::k_in_error, "in_error");
+    append(not_ready_reason::k_servo_off, "servo_off");
+    append(not_ready_reason::k_motion_blocked, "motion_blocked");
+    append(not_ready_reason::k_major_alarm, "major_alarm");
+    append(not_ready_reason::k_estop, "estop");
+    append(not_ready_reason::k_not_remote, "not_remote");
     return result;
 }
 

@@ -27,25 +27,25 @@ std::string YaskawaController::state_::state_ready_::describe() const {
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_ready_::upgrade_downgrade(state_& state) {
     const auto status = state.controller_->get_robot_status();
 
-    blocking_mask mask = 0;
+    not_ready_mask mask = 0;
     if (status.e_stopped) {
-        mask = mask | blocking_reason::k_estop;
+        mask = mask | not_ready_reason::k_estop;
     }
     if (status.mode != ROBOT_MODE_REMOTE) {
-        mask = mask | blocking_reason::k_not_remote;
+        mask = mask | not_ready_reason::k_not_remote;
     }
     if (status.in_error) {
-        mask = mask | blocking_reason::k_in_error;
+        mask = mask | not_ready_reason::k_in_error;
     }
     if (!status.drives_powered) {
-        mask = mask | blocking_reason::k_servo_off;
+        mask = mask | not_ready_reason::k_servo_off;
     }
     if (!status.motion_possible) {
-        mask = mask | blocking_reason::k_motion_blocked;
+        mask = mask | not_ready_reason::k_motion_blocked;
     }
 
     if (mask != 0) {
-        return event_blocking_detected_{mask};
+        return event_not_ready_detected_{mask};
     }
 
     return std::nullopt;
@@ -90,8 +90,8 @@ std::optional<YaskawaController::state_::state_variant_> YaskawaController::stat
 }
 
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_ready_::handle_event(
-    state_&, event_blocking_detected_ event) {
-    VIAM_SDK_LOG(warn) << "blocking condition detected in ready state, entering independent state";
+    state_&, event_not_ready_detected_ event) {
+    VIAM_SDK_LOG(warn) << "not-ready condition detected in ready state, entering independent state";
     // In-flight move_requests_ are not cancelled here. They are cancelled on the next
     // handle_move_request_() call, which runs after upgrade_downgrade_() in the same cycle.
     return state_independent_{event.mask};

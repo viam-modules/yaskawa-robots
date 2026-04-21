@@ -552,9 +552,9 @@ class YaskawaController::state_ {
 
    private:
     // ---------------------------------------------------------------
-    // Blocking reason bitmask
+    // Not-ready reason bitmask
     // ---------------------------------------------------------------
-    enum class blocking_reason : uint8_t {
+    enum class not_ready_reason : uint8_t {
         k_in_error = 0x01,        // auto-recoverable: reset_errors()
         k_servo_off = 0x02,       // auto-recoverable: turn_servo_power_on()
         k_motion_blocked = 0x04,  // auto-recoverable: setMotionMode(RUN)
@@ -562,23 +562,23 @@ class YaskawaController::state_ {
         k_estop = 0x10,           // human-required: release button
         k_not_remote = 0x20,      // human-required: pendant
     };
-    using blocking_mask = uint8_t;
+    using not_ready_mask = uint8_t;
 
-    static constexpr blocking_mask k_auto_recoverable_mask = static_cast<blocking_mask>(blocking_reason::k_in_error) |
-                                                             static_cast<blocking_mask>(blocking_reason::k_servo_off) |
-                                                             static_cast<blocking_mask>(blocking_reason::k_motion_blocked);
+    static constexpr not_ready_mask k_auto_recoverable_mask = static_cast<not_ready_mask>(not_ready_reason::k_in_error) |
+                                                              static_cast<not_ready_mask>(not_ready_reason::k_servo_off) |
+                                                              static_cast<not_ready_mask>(not_ready_reason::k_motion_blocked);
 
-    friend constexpr blocking_mask operator|(blocking_reason a, blocking_reason b) {
-        return static_cast<blocking_mask>(a) | static_cast<blocking_mask>(b);
+    friend constexpr not_ready_mask operator|(not_ready_reason a, not_ready_reason b) {
+        return static_cast<not_ready_mask>(a) | static_cast<not_ready_mask>(b);
     }
-    friend constexpr blocking_mask operator|(blocking_mask a, blocking_reason b) {
-        return a | static_cast<blocking_mask>(b);
+    friend constexpr not_ready_mask operator|(not_ready_mask a, not_ready_reason b) {
+        return a | static_cast<not_ready_mask>(b);
     }
-    friend constexpr bool has_reason(blocking_mask mask, blocking_reason r) {
-        return (mask & static_cast<blocking_mask>(r)) != 0;
+    friend constexpr bool has_reason(not_ready_mask mask, not_ready_reason r) {
+        return (mask & static_cast<not_ready_mask>(r)) != 0;
     }
 
-    static std::string describe_blocking_mask_(blocking_mask mask);
+    static std::string describe_not_ready_mask_(not_ready_mask mask);
 
     // ---------------------------------------------------------------
     // State and event forward declarations
@@ -596,11 +596,11 @@ class YaskawaController::state_ {
 
     struct event_connection_established_;
     class event_connection_lost_;
-    struct event_blocking_detected_;
+    struct event_not_ready_detected_;
     struct event_ready_detected_;
 
     using event_variant_ =
-        std::variant<event_connection_established_, event_connection_lost_, event_blocking_detected_, event_ready_detected_>;
+        std::variant<event_connection_established_, event_connection_lost_, event_not_ready_detected_, event_ready_detected_>;
 
     // ---------------------------------------------------------------
     // Catch-all event handler base (logs unexpected events)
@@ -661,7 +661,7 @@ class YaskawaController::state_ {
     // State: INDEPENDENT
     // ---------------------------------------------------------------
     struct state_independent_ : public state_event_handler_base_<state_independent_>, public state_connected_ {
-        explicit state_independent_(blocking_mask reasons);
+        explicit state_independent_(not_ready_mask reasons);
 
         static std::string_view name();
         std::string describe() const;
@@ -673,11 +673,11 @@ class YaskawaController::state_ {
         using state_connected_::send_heartbeat;
 
         std::optional<state_variant_> handle_event(state_&, event_connection_lost_);
-        std::optional<state_variant_> handle_event(state_&, event_blocking_detected_);
+        std::optional<state_variant_> handle_event(state_&, event_not_ready_detected_);
         std::optional<state_variant_> handle_event(state_&, event_ready_detected_);
         using state_event_handler_base_<state_independent_>::handle_event;
 
-        blocking_mask reasons_;
+        not_ready_mask reasons_;
         int recovery_attempts_{0};
     };
 
@@ -699,7 +699,7 @@ class YaskawaController::state_ {
         using state_connected_::send_heartbeat;
 
         std::optional<state_variant_> handle_event(state_&, event_connection_lost_);
-        std::optional<state_variant_> handle_event(state_&, event_blocking_detected_);
+        std::optional<state_variant_> handle_event(state_&, event_not_ready_detected_);
         using state_event_handler_base_<state_ready_>::handle_event;
     };
 
@@ -732,12 +732,12 @@ class YaskawaController::state_ {
         reason reason_code_;
     };
 
-    struct event_blocking_detected_ {
+    struct event_not_ready_detected_ {
         static std::string_view name();
         // NOLINTBEGIN(readability-convert-member-functions-to-static)
         std::string_view describe() const;
         // NOLINTEND(readability-convert-member-functions-to-static)
-        blocking_mask mask;
+        not_ready_mask mask;
     };
 
     struct event_ready_detected_ {

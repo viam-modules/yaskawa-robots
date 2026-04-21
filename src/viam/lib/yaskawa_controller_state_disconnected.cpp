@@ -89,8 +89,8 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_disconnected_::handle_event(
     state_&, event_connection_established_) {
     VIAM_SDK_LOG(info) << "connection established, entering independent state";
-    const blocking_mask all_bits = blocking_reason::k_in_error | blocking_reason::k_servo_off | blocking_reason::k_motion_blocked |
-                                   blocking_reason::k_estop | blocking_reason::k_not_remote;
+    const not_ready_mask all_bits = not_ready_reason::k_in_error | not_ready_reason::k_servo_off | not_ready_reason::k_motion_blocked |
+                                    not_ready_reason::k_estop | not_ready_reason::k_not_remote;
     return state_independent_{all_bits};
 }
 
