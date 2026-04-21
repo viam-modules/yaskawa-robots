@@ -170,6 +170,11 @@ target_sources(viam-yaskawa
     src/viam/lib/robot_socket.cpp
     src/viam/lib/logger.cpp
     src/viam/lib/trajectory_logger.cpp
+    src/viam/lib/yaskawa_controller_state.cpp
+    src/viam/lib/yaskawa_controller_state_events.cpp
+    src/viam/lib/yaskawa_controller_state_disconnected.cpp
+    src/viam/lib/yaskawa_controller_state_independent.cpp
+    src/viam/lib/yaskawa_controller_state_ready.cpp
 )
 
 target_include_directories(viam-yaskawa
@@ -251,11 +256,6 @@ target_sources(yaskawa-robots
   src/viam/module/main.cpp
   src/viam/module/utils.cpp
   src/viam/module/yaskawa_arm.cpp
-  src/viam/module/yaskawa_arm_state.cpp
-  src/viam/module/yaskawa_arm_state_events.cpp
-  src/viam/module/yaskawa_arm_state_disconnected.cpp
-  src/viam/module/yaskawa_arm_state_independent.cpp
-  src/viam/module/yaskawa_arm_state_ready.cpp
 )
 
 # Tell boost::dll to use std::filesystem rather than boost::filesystem.
