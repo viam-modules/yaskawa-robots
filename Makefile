@@ -42,11 +42,11 @@ module.tar.gz: format-check install
 	ninja -C build package
 
 run-clang-tidy:
-	clang-tidy-19 \
+	run-clang-tidy-19 \
         -p build \
-        --config-file ./.clang-tidy \
-        --header-filter=".*/src/viam/(lib|module)/.*" \
-        --extra-arg=-D_Bool=bool \
+        -config-file ./.clang-tidy \
+        -header-filter=".*/src/viam/(lib|module)/.*" \
+        -extra-arg=-D_Bool=bool \
 	./src/viam/*/*.cpp
 
 run-clang-check:

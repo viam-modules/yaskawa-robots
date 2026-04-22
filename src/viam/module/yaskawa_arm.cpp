@@ -250,6 +250,10 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     robot_ = YaskawaController::get_or_create(io_context_, config);
     group_index_ = static_cast<uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));
 
+    auto dof = number_of_dof_configured(config, "speed_rad_per_sec", "acceleration_rad_per_sec2");
+    velocity_limits_ = read_limit_vector(config, "speed_rad_per_sec", dof);
+    acceleration_limits_ = read_limit_vector(config, "acceleration_rad_per_sec2", dof);
+
     // Setup trajectory logging (always enabled)
     robot_->set_trajectory_loggers(model_.model_name(), [weak = weak_from_this()]() -> std::optional<std::string> {
         auto self = weak.lock();
@@ -322,12 +326,12 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
         waypoints.emplace_back(std::move(next_waypoint_rad));
     }
 
-    auto velocity = robot_->get_velocity_limits();
+    auto velocity = velocity_limits_;
     if (options.max_vel_degs_per_sec) {
         apply_move_limit(velocity, *options.max_vel_degs_per_sec);
     }
 
-    auto acceleration = robot_->get_acceleration_limits();
+    auto acceleration = acceleration_limits_;
     if (options.max_acc_degs_per_sec2) {
         apply_move_limit(acceleration, *options.max_acc_degs_per_sec2);
     }
@@ -347,7 +351,7 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 
     const auto unix_time = unix_time_iso8601();
 
-    robot_->move(std::move(waypoints), group_index_, unix_time, robot_->get_velocity_limits(), robot_->get_acceleration_limits())->wait();
+    robot_->move(std::move(waypoints), group_index_, unix_time, velocity_limits_, acceleration_limits_)->wait();
 }
 
 ::viam::sdk::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {

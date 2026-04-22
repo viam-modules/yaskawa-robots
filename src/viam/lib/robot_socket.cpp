@@ -89,53 +89,6 @@ xt::xarray<double> eigen_waypoints_to_xarray(const std::list<Eigen::VectorXd>& w
 
 constexpr double k_default_waypoint_deduplication_tolerance_rads = 1e-3;
 constexpr double k_default_segmentation_threshold = 0.005;
-constexpr Eigen::Index k_default_dof = 6;
-
-// Reads a validated config attribute (scalar or array of doubles) into an Eigen::VectorXd.
-Eigen::VectorXd read_limit_vector(const viam::sdk::ResourceConfig& config, const std::string& attribute, Eigen::Index target_dof) {
-    const auto& value = config.attributes().at(attribute);
-    // if we have a scalar cast is to default dof (6) or whichever is the dimension of max acc or max vel
-    if (const auto* scalar = value.get<double>()) {
-        return Eigen::VectorXd::Constant(target_dof, *scalar);
-    }
-    const auto& arr = *value.get<std::vector<viam::sdk::ProtoValue>>();
-    // we already checked that dimensions of acceleration or velocity are correct
-    // but throw for good measure
-    const auto n_dof = static_cast<Eigen::Index>(arr.size());
-    if (n_dof != target_dof) {
-        throw std::runtime_error(std::format(
-            "the attribute {} number of dof : {} is not equal to the configured number of dof : {}", attribute, n_dof, target_dof));
-    }
-    Eigen::VectorXd result(n_dof);
-
-    for (size_t i = 0; i < arr.size(); ++i) {
-        result[static_cast<Eigen::Index>(i)] = *arr[i].get<double>();
-    }
-    return result;
-}
-
-Eigen::Index number_of_dof_configured(const viam::sdk::ResourceConfig& config, const std::string& attr_a, const std::string& attr_b) {
-    auto dim_of = [&](const std::string& attr) -> Eigen::Index {
-        const auto& value = config.attributes().at(attr);
-        if (value.get<double>()) {
-            return -1;
-        }
-        return static_cast<Eigen::Index>(value.get<std::vector<viam::sdk::ProtoValue>>()->size());
-    };
-    auto dim_a = dim_of(attr_a);
-    auto dim_b = dim_of(attr_b);
-    if (dim_a == -1 && dim_b == -1) {
-        return k_default_dof;
-    }
-    if (dim_a == -1) {
-        return dim_b;
-    }
-    if (dim_b == -1) {
-        return dim_a;
-    }
-    return std::max(dim_a, dim_b);
-}
-
 // Build a trajectory_point_t from dynamic-sized position/velocity containers.
 // Copies up to NUMBER_OF_DOF elements; remaining slots are zero-initialized.
 // Works with Eigen::VectorXd (operator[]) and xt::xarray<double> (operator()).
@@ -903,9 +856,6 @@ boost::asio::awaitable<void> UdpBroadcastListener::receive_broadcasts(std::share
 YaskawaController::YaskawaController(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config)
     : io_context_(io_context), robot_state_(std::make_shared<State>()) {
     host_ = find_config_attribute<std::string>(config, "host").value();
-    auto dof = number_of_dof_configured(config, "speed_rad_per_sec", "acceleration_rad_per_sec2");
-    velocity_limits_ = read_limit_vector(config, "speed_rad_per_sec", dof);
-    acceleration_limits_ = read_limit_vector(config, "acceleration_rad_per_sec2", dof);
 
     trajectory_sampling_freq_ =
         find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(k_default_trajectory_sampling_freq);
@@ -1647,7 +1597,7 @@ std::optional<MakeGoalResult> YaskawaController::make_goal_(std::list<Eigen::Vec
         logger->set_max_velocity(max_velocity_vec);
         logger->set_max_acceleration(max_acceleration_vec);
         logger->set_waypoints(original_waypoints);
-        logger->set_planned_trajectory(samples, static_cast<int>(velocity_limits_.size()));
+        logger->set_planned_trajectory(samples, static_cast<int>(max_velocity_vec.size()));
     }
 
     LOGGING(debug) << "total trajectory points: " << samples.size();

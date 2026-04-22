@@ -520,13 +520,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     /// Factory: returns an existing controller for the same host, or creates a new one.
     static std::shared_ptr<YaskawaController> get_or_create(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config);
 
-    const Eigen::VectorXd& get_velocity_limits() const {
-        return velocity_limits_;
-    }
-    const Eigen::VectorXd& get_acceleration_limits() const {
-        return acceleration_limits_;
-    }
-
     void set_trajectory_loggers(std::string robot_model, std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn);
 
    private:
@@ -538,8 +531,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::unique_ptr<TcpRobotSocket> tcp_socket_;
     std::unique_ptr<UdpRobotSocket> udp_socket_;
     std::unique_ptr<UdpBroadcastListener> broadcast_listener_;
-    Eigen::VectorXd velocity_limits_;
-    Eigen::VectorXd acceleration_limits_;
     double trajectory_sampling_freq_;
     double waypoint_dedup_tolerance_rad_;
 

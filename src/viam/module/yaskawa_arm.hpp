@@ -114,6 +114,8 @@ class YaskawaArm final : public Arm, public Reconfigurable, public std::enable_s
     std::shared_mutex config_mutex_;
     std::shared_ptr<YaskawaController> robot_;
     uint32_t group_index_{0};
+    Eigen::VectorXd velocity_limits_;
+    Eigen::VectorXd acceleration_limits_;
     std::optional<double> threshold_;
     boost::asio::io_context& io_context_;
     std::filesystem::path resource_root_;

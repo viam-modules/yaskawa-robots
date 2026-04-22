@@ -132,7 +132,10 @@ void example(asio::io_context& io_context) {
             std::cout << "Motion trajectory mode..." << '\n';
 
             robot->setMotionMode(1);
-            auto ret = robot->move(finalPoints, 0, "", robot->get_velocity_limits(), robot->get_acceleration_limits());
+            constexpr int k_dof = 6;
+            const Eigen::VectorXd vel = Eigen::VectorXd::Constant(k_dof, 1.1);
+            const Eigen::VectorXd accel = Eigen::VectorXd::Constant(k_dof, 1.1);
+            auto ret = robot->move(finalPoints, 0, "", vel, accel);
             std::cout << "will wait" << '\n';
             ret->wait();
         }

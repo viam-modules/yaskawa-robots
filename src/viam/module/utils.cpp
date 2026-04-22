@@ -111,6 +111,46 @@ size_t validate_joint_limit_attribute(const viam::sdk::ResourceConfig& cfg, cons
     throw std::invalid_argument(std::format("attribute `{}` must be a number or array of numbers", attribute));
 }
 
+Eigen::Index number_of_dof_configured(const viam::sdk::ResourceConfig& config, const std::string& attr_a, const std::string& attr_b) {
+    auto dim_of = [&](const std::string& attr) -> Eigen::Index {
+        const auto& value = config.attributes().at(attr);
+        if (value.get<double>()) {
+            return -1;
+        }
+        return static_cast<Eigen::Index>(value.get<std::vector<viam::sdk::ProtoValue>>()->size());
+    };
+    auto dim_a = dim_of(attr_a);
+    auto dim_b = dim_of(attr_b);
+    if (dim_a == -1 && dim_b == -1) {
+        return k_default_dof;
+    }
+    if (dim_a == -1) {
+        return dim_b;
+    }
+    if (dim_b == -1) {
+        return dim_a;
+    }
+    return std::max(dim_a, dim_b);
+}
+
+Eigen::VectorXd read_limit_vector(const viam::sdk::ResourceConfig& config, const std::string& attribute, Eigen::Index target_dof) {
+    const auto& value = config.attributes().at(attribute);
+    if (const auto* scalar = value.get<double>()) {
+        return Eigen::VectorXd::Constant(target_dof, *scalar);
+    }
+    const auto& arr = *value.get<std::vector<viam::sdk::ProtoValue>>();
+    const auto n_dof = static_cast<Eigen::Index>(arr.size());
+    if (n_dof != target_dof) {
+        throw std::runtime_error(std::format(
+            "the attribute {} number of dof : {} is not equal to the configured number of dof : {}", attribute, n_dof, target_dof));
+    }
+    Eigen::VectorXd result(n_dof);
+    for (size_t i = 0; i < arr.size(); ++i) {
+        result[static_cast<Eigen::Index>(i)] = *arr[i].get<double>();
+    }
+    return result;
+}
+
 void apply_move_limit(Eigen::VectorXd& limits, const boost::variant<double, std::vector<double>>& value) {
     struct visitor {
         Eigen::VectorXd& limits;

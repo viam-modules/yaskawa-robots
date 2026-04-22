@@ -78,8 +78,8 @@ struct TestFixture {
 
     // Helper: issue a move on the given group using default velocity/acceleration limits.
     std::unique_ptr<robot::GoalRequestHandle> do_move(uint32_t group_index = 0, double offset = 0.1) {
-        auto vel = controller->get_velocity_limits();
-        auto accel = controller->get_acceleration_limits();
+        Eigen::VectorXd vel = Eigen::VectorXd::Constant(k_dof, 1.0);
+        Eigen::VectorXd accel = Eigen::VectorXd::Constant(k_dof, 1.0);
         return controller->move(make_waypoints(offset), group_index, "0", vel, accel);
     }
 };
