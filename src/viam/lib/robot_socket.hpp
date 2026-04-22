@@ -372,7 +372,7 @@ class SafePromise {
    public:
     SafePromise() = default;
     SafePromise(SafePromise&& other) noexcept : promise_(std::move(other.promise_)), fulfilled_(other.fulfilled_) {
-        other.fulfilled_ = true;  // prevent moved-from destructor from touching the promise
+        other.fulfilled_ = true;
     }
     SafePromise& operator=(SafePromise&& other) noexcept {
         if (this != &other) {

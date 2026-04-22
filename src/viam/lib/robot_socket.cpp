@@ -652,22 +652,20 @@ void UdpRobotSocket::disconnect() {
     if (connected_) {
         connected_ = false;
         robot_state_->in_error.store(true);
-        // Fulfill any pending SafePromise slots before closing the socket,
-        // so waiters get an error rather than hanging or crashing during destruction.
         if (session_) {
             const std::lock_guard lock(session_->status_mutex_);
             auto err = std::make_exception_ptr(std::runtime_error("UDP socket disconnected"));
             for (auto& slot : session_->group_status_) {
                 if (auto* sp = std::get_if<SafePromise>(&slot)) {
                     sp->set_exception(err);
-                    slot = std::monostate{};
                 }
+                slot = std::monostate{};
             }
             for (auto& slot : session_->group_robot_status_) {
                 if (auto* sp = std::get_if<SafePromise>(&slot)) {
                     sp->set_exception(err);
-                    slot = std::monostate{};
                 }
+                slot = std::monostate{};
             }
         }
         if (session_ && session_->socket_.is_open()) {
@@ -696,10 +694,10 @@ std::future<Message> UdpRobotSocket::request_from_cache_(std::array<CacheSlot, M
             [&](Message& msg) -> std::future<Message> {
                 std::promise<Message> p;
                 p.set_value(msg);
-                slot = std::monostate{};
                 return p.get_future();
             },
-            // Only one caller per group may wait at a time. Concurrent callers on the same group_index get this exception.
+            // SafePromise branch is only reachable before the first UDP packet arrives.
+            // After that, the slot permanently holds Message (peek semantics).
             [&](SafePromise&) -> std::future<Message> { throw std::runtime_error("another caller is already waiting on this cache slot"); },
         },
         slot);
@@ -712,7 +710,7 @@ void UdpRobotSocket::save_to_cache_(std::array<CacheSlot, MAX_GROUPS>& cache, ui
                    [&](Message&) { slot = msg; },
                    [&](SafePromise& sp) {
                        sp.set_value(msg);
-                       slot = std::monostate{};
+                       slot = msg;
                    },
                },
                slot);
@@ -1007,6 +1005,13 @@ void YaskawaController::establish_connections_() {
 }
 
 std::future<void> YaskawaController::connect() {
+    // If already connected (shared controller, another arm already called connect()),
+    // return a resolved future immediately — don't reconnect.
+    if (running_) {
+        std::promise<void> p;
+        p.set_value();
+        return p.get_future();
+    }
     return std::async(std::launch::async, [this]() {
         try {
             establish_connections_();
