@@ -15,7 +15,6 @@
 #include <functional>
 #include <future>
 #include <iostream>
-#include <list>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -238,15 +237,19 @@ struct StatusMessage {
 
 struct RobotStatusMessage {
     int64_t ts{0};                // 8 bytes - timestamp
-    uint8_t group_index{0};       // 1 byte - which group this status is for
     int mode{0};                  // 4 bytes - robot mode
     bool e_stopped{false};        // 1 byte - estop status
     bool drives_powered{false};   // 1 byte - drive power status
     bool motion_possible{false};  // 1 byte - motion enabled
-    bool in_motion{false};        // 1 byte - motion status
+    uint8_t in_motion{0};         // 1 byte - bitfield: bit N = group N is moving
     bool in_error{false};         // 1 byte - error status
     std::vector<int> error_codes;
     int size{0};  // 4 bytes - number of active error codes
+
+    /// Returns true if the specified group is currently moving.
+    bool is_group_moving(uint32_t group_index) const {
+        return (in_motion >> group_index) & 1U;
+    }
 
     RobotStatusMessage() = default;
     RobotStatusMessage(const Message&);
@@ -279,7 +282,7 @@ struct CapabilitiesMessage {
 
 struct State {
     std::atomic<bool> e_stopped;
-    std::atomic<bool> in_motion;
+    std::atomic<uint8_t> in_motion;  // bitfield: bit N = group N is moving
     std::atomic<bool> drive_powered;
     std::atomic<bool> in_error;
     explicit State();
@@ -305,11 +308,6 @@ struct GoalAcceptedMessage {
 
     GoalAcceptedMessage() = default;
     GoalAcceptedMessage(const Message& msg);
-};
-
-struct MakeGoalResult {
-    GoalAcceptedMessage accepted;
-    std::vector<trajectory_point_t> remaining_trajectory;
 };
 
 class RobotSocketBase {
@@ -427,7 +425,7 @@ class UdpRobotSocket : public RobotSocketBase {
     void disconnect() final;
 
     std::future<Message> get_group_status(uint8_t group_index);
-    std::future<Message> get_group_robot_status(uint8_t group_index);
+    std::future<Message> get_robot_status();
     uint16_t get_local_port() const;
 
    private:
@@ -438,7 +436,7 @@ class UdpRobotSocket : public RobotSocketBase {
         udp::socket socket_;
         mutable std::mutex status_mutex_;
         std::array<CacheSlot, MAX_GROUPS> group_status_;
-        std::array<CacheSlot, MAX_GROUPS> group_robot_status_;
+        CacheSlot robot_status_;
         std::shared_ptr<State> robot_state_;
         Session(boost::asio::io_context& io_context, std::shared_ptr<State> state) : socket_(io_context), robot_state_(std::move(state)) {}
     };
@@ -447,7 +445,9 @@ class UdpRobotSocket : public RobotSocketBase {
     std::shared_ptr<Session> session_;
 
     std::future<Message> request_from_cache_(std::array<CacheSlot, MAX_GROUPS>& cache, uint8_t group_index);
+    std::future<Message> request_from_single_cache_(CacheSlot& slot);
     static void save_to_cache_(std::array<CacheSlot, MAX_GROUPS>& cache, uint8_t group_index, const Message& msg);
+    static void save_to_single_cache_(CacheSlot& slot, const Message& msg);
     static boost::asio::awaitable<void> receive_messages(std::shared_ptr<Session> session);
     static Message parse_message(const std::vector<uint8_t>& buffer);
 };
@@ -488,7 +488,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     std::future<void> connect();
     void disconnect();
-    double get_waypoint_deduplication_tolerance_rad() const;
 
     void send_test_trajectory();
     void turn_servo_power_on();
@@ -497,7 +496,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     void get_error_info();
     StatusMessage get_group_position_velocity_torque(uint8_t group_index);
     RobotStatusMessage get_robot_status();
-    RobotStatusMessage get_group_robot_status(uint8_t group_index);
     void register_udp_port(uint16_t port);
     void reset_errors();
     std::future<Message> echo_trajectory();  // currently unused and unimplemented on the controller
@@ -511,16 +509,15 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     bool checkGroupIndex(uint32_t group_index);
     CapabilitiesMessage get_capabilities();
 
-    std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints,
-                                            uint32_t group_index,
-                                            const std::string& unix_time,
-                                            const Eigen::VectorXd& velocity_limits,
-                                            const Eigen::VectorXd& acceleration_limits);
+    std::unique_ptr<GoalRequestHandle> execute_trajectory(uint32_t group_index,
+                                                          uint32_t axes_controlled,
+                                                          std::vector<trajectory_point_t> samples,
+                                                          const std::vector<tolerance_t>& tolerance,
+                                                          double trajectory_sampling_freq,
+                                                          std::optional<RealtimeTrajectoryLogger> logger = std::nullopt);
 
     /// Factory: returns an existing controller for the same host, or creates a new one.
     static std::shared_ptr<YaskawaController> get_or_create(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config);
-
-    void set_trajectory_loggers(std::string robot_model, std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn);
 
    private:
     boost::asio::io_context& io_context_;
@@ -531,8 +528,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::unique_ptr<TcpRobotSocket> tcp_socket_;
     std::unique_ptr<UdpRobotSocket> udp_socket_;
     std::unique_ptr<UdpBroadcastListener> broadcast_listener_;
-    double trajectory_sampling_freq_;
-    double waypoint_dedup_tolerance_rad_;
 
     // Per-group move locking: prevents concurrent moves on the same group
     // while allowing parallel moves on different groups.
@@ -542,24 +537,11 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::atomic<bool> running_{false};
     std::thread heartbeat_thread_;
 
-    bool use_new_trajectory_planner_{false};
-    double path_tolerance_rad_{0.1};
-    std::optional<double> collinearization_ratio_;
-    double segmentation_threshold_rad_;
-    std::string robot_model_;
-    std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn_;
-
     void establish_connections_();
     void reconnect_();
 
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;
-    std::optional<MakeGoalResult> make_goal_(std::list<Eigen::VectorXd> waypoints,
-                                             uint32_t group_index,
-                                             const std::string& unix_time,
-                                             const Eigen::VectorXd& max_velocity_vec,
-                                             const Eigen::VectorXd& max_acceleration_vec,
-                                             std::optional<RealtimeTrajectoryLogger>& logger);
     GoalAcceptedMessage send_goal_(uint32_t group_index,
                                    uint32_t axes_controlled,
                                    const std::vector<trajectory_point_t>& trajectory,

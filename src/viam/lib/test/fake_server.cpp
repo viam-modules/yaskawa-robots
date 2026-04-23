@@ -159,11 +159,12 @@ void FakeServer::start_udp_status_pump(uint32_t interval_ms) {
                 status_payload_t status{};
                 mock_robot_get_status(&robot_, &status, now, g);
                 robot_protocol_send_position_velocity_torque(server_ctx_, &status);
-
-                robot_status_payload_t robot_status{};
-                mock_robot_get_robot_status(&robot_, &robot_status, now, g);
-                robot_protocol_send_robot_status(server_ctx_, &robot_status);
             }
+
+            // Robot status is per-controller (not per-group): send once per cycle
+            robot_status_payload_t robot_status{};
+            mock_robot_get_robot_status(&robot_, &robot_status, now);
+            robot_protocol_send_robot_status(server_ctx_, &robot_status);
 
             mock_robot_update_goal_progress(&robot_);
 

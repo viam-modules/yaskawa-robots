@@ -76,11 +76,26 @@ struct TestFixture {
         return {target};
     }
 
-    // Helper: issue a move on the given group using default velocity/acceleration limits.
+    // Helper: build simple trajectory samples and issue execute_trajectory on the given group.
     std::unique_ptr<robot::GoalRequestHandle> do_move(uint32_t group_index = 0, double offset = 0.1) {
-        Eigen::VectorXd vel = Eigen::VectorXd::Constant(k_dof, 1.0);
-        Eigen::VectorXd accel = Eigen::VectorXd::Constant(k_dof, 1.0);
-        return controller->move(make_waypoints(offset), group_index, "0", vel, accel);
+        // Build a minimal 2-point trajectory: start at 0, end at offset
+        std::vector<trajectory_point_t> samples;
+        {
+            trajectory_point_t start{};
+            start.time_from_start = {0, 0};
+            samples.push_back(start);
+
+            trajectory_point_t end{};
+            for (int i = 0; i < k_dof; ++i) {
+                end.positions[i] = offset;
+            }
+            end.time_from_start = {1, 0};
+            samples.push_back(end);
+        }
+
+        controller->turn_servo_power_on();
+        controller->setMotionMode(1);
+        return controller->execute_trajectory(group_index, k_dof, std::move(samples), {}, 3.0);
     }
 };
 
@@ -415,11 +430,11 @@ BOOST_FIXTURE_TEST_CASE(multi_group_status_positions, GantryFixture,
     BOOST_CHECK_GT(pvt.num_axes, static_cast<uint8_t>(0));
 }
 
-BOOST_FIXTURE_TEST_CASE(multi_group_robot_status_group_index, GantryFixture,
+BOOST_FIXTURE_TEST_CASE(multi_group_robot_status, GantryFixture,
                         *boost::unit_test::timeout(15)) {
     connect();
     auto status = controller->get_robot_status();
-    // Robot status should carry a valid group_index
+    // Controller-wide robot status (not per-group)
     BOOST_CHECK_EQUAL(status.mode, 1);
     BOOST_CHECK(!status.e_stopped);
 }

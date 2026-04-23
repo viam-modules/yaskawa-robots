@@ -18,7 +18,6 @@
 
 #include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Core/util/Constants.h>
-#include <third_party/trajectories/Trajectory.h>
 #include <Eigen/Dense>
 
 using namespace robot;
@@ -133,9 +132,20 @@ void example(asio::io_context& io_context) {
 
             robot->setMotionMode(1);
             constexpr int k_dof = 6;
-            const Eigen::VectorXd vel = Eigen::VectorXd::Constant(k_dof, 1.1);
-            const Eigen::VectorXd accel = Eigen::VectorXd::Constant(k_dof, 1.1);
-            auto ret = robot->move(finalPoints, 0, "", vel, accel);
+
+            // Build simple trajectory samples from the waypoints
+            std::vector<trajectory_point_t> samples;
+            uint32_t sec = 0;
+            for (const auto& wp : finalPoints) {
+                trajectory_point_t pt{};
+                for (int j = 0; j < k_dof; ++j) {
+                    pt.positions[j] = wp[j];
+                }
+                pt.time_from_start = {sec++, 0};
+                samples.push_back(pt);
+            }
+
+            auto ret = robot->execute_trajectory(0, k_dof, std::move(samples), {}, 3.0);
             std::cout << "will wait" << '\n';
             ret->wait();
         }

@@ -109,6 +109,18 @@ class YaskawaArm final : public Arm, public Reconfigurable, public std::enable_s
     template <template <typename> typename lock_type>
     void stop_(const lock_type<std::shared_mutex>&);
 
+    struct TrajectoryResult {
+        std::vector<trajectory_point_t> samples;
+        std::vector<tolerance_t> tolerance;
+    };
+
+    std::optional<TrajectoryResult> generate_trajectory_(const std::list<Eigen::VectorXd>& waypoints,
+                                                         uint32_t group_index,
+                                                         const std::string& unix_time,
+                                                         const Eigen::VectorXd& max_velocity_vec,
+                                                         const Eigen::VectorXd& max_acceleration_vec,
+                                                         std::optional<RealtimeTrajectoryLogger>& logger);
+
     const Model model_;
 
     std::shared_mutex config_mutex_;
@@ -116,6 +128,12 @@ class YaskawaArm final : public Arm, public Reconfigurable, public std::enable_s
     uint32_t group_index_{0};
     Eigen::VectorXd velocity_limits_;
     Eigen::VectorXd acceleration_limits_;
+    double trajectory_sampling_freq_{3.0};
+    double waypoint_dedup_tolerance_rad_{1e-3};
+    bool use_new_trajectory_planner_{true};
+    double path_tolerance_rad_{0.1};
+    std::optional<double> collinearization_ratio_;
+    double segmentation_threshold_rad_{0.005};
     std::optional<double> threshold_;
     boost::asio::io_context& io_context_;
     std::filesystem::path resource_root_;
