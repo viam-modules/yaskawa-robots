@@ -29,6 +29,7 @@ void YaskawaController::state_::shutdown() {
         const std::lock_guard lock{mutex_};
         shutdown_requested_ = true;
     }
+    // TODO(RSDK-13808) try jthread and stop_token
     worker_wakeup_cv_.notify_all();
     if (worker_thread_.joinable()) {
         worker_thread_.join();
@@ -47,7 +48,7 @@ void YaskawaController::state_::run_() {
             break;
         }
         try {
-            recv_arm_data_();
+            recv_robot_data_();
             upgrade_downgrade_();
             handle_move_request_();
             send_heartbeat_();
@@ -99,20 +100,20 @@ std::string YaskawaController::state_::describe_not_ready_mask_(not_ready_mask m
         return "none";
     }
     std::string result;
-    auto append = [&](not_ready_reason r, std::string_view label) {
-        if (has_reason(mask, r)) {
+    auto append = [&](not_ready_mask r, std::string_view label) {
+        if (mask & r) {
             if (!result.empty()) {
                 result += ", ";
             }
             result += label;
         }
     };
-    append(not_ready_reason::k_in_error, "in_error");
-    append(not_ready_reason::k_servo_off, "servo_off");
-    append(not_ready_reason::k_motion_blocked, "motion_blocked");
-    append(not_ready_reason::k_major_alarm, "major_alarm");
-    append(not_ready_reason::k_estop, "estop");
-    append(not_ready_reason::k_not_remote, "not_remote");
+    append(k_in_error, "in_error");
+    append(k_servo_off, "servo_off");
+    append(k_motion_blocked, "motion_blocked");
+    append(k_major_alarm, "major_alarm");
+    append(k_estop, "estop");
+    append(k_not_remote, "not_remote");
     return result;
 }
 
@@ -120,8 +121,8 @@ std::string YaskawaController::state_::describe_not_ready_mask_(not_ready_mask m
 // Cycle dispatch (called from run_() under mutex_)
 // ---------------------------------------------------------------
 
-void YaskawaController::state_::recv_arm_data_() {
-    auto ev = std::visit([this](auto& s) { return s.recv_arm_data(*this); }, current_state_);
+void YaskawaController::state_::recv_robot_data_() {
+    auto ev = std::visit([this](auto& s) { return s.recv_robot_data(*this); }, current_state_);
     if (ev) {
         emit_event_(std::move(*ev));
     }
@@ -164,7 +165,7 @@ bool YaskawaController::state_::is_any_moving() const {
 }
 
 std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group_index,
-                                                                  std::list<Eigen::VectorXd> waypoints,
+                                                                  std::list<Eigen::VectorXd>&& waypoints,
                                                                   std::string unix_time,
                                                                   Eigen::VectorXd velocity,
                                                                   Eigen::VectorXd acceleration) {
@@ -174,12 +175,13 @@ std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group
         if (!std::holds_alternative<state_ready_>(current_state_)) {
             throw std::runtime_error(std::format("cannot move: arm is in state `{}`", describe_state_(current_state_)));
         }
-        auto& req = move_requests_.emplace_back();
-        req.group_index = group_index;
-        req.waypoints = std::move(waypoints);
-        req.unix_time = std::move(unix_time);
-        req.velocity = std::move(velocity);
-        req.acceleration = std::move(acceleration);
+        auto& req = move_requests_.emplace_back(move_request{
+            .group_index = group_index,
+            .waypoints = std::move(waypoints),
+            .unix_time = std::move(unix_time),
+            .velocity = std::move(velocity),
+            .acceleration = std::move(acceleration),
+        });
         future = req.completion.get_future();
     }
     worker_wakeup_cv_.notify_one();
@@ -205,7 +207,7 @@ bool YaskawaController::is_any_moving() const {
 }
 
 std::future<void> YaskawaController::enqueue_move_request(uint32_t group_index,
-                                                          std::list<Eigen::VectorXd> waypoints,
+                                                          std::list<Eigen::VectorXd>&& waypoints,
                                                           std::string unix_time,
                                                           Eigen::VectorXd velocity,
                                                           Eigen::VectorXd acceleration) {
@@ -225,7 +227,7 @@ std::chrono::milliseconds YaskawaController::state_::state_connected_::get_timeo
     return std::chrono::milliseconds{100};
 }
 
-std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_connected_::recv_arm_data(state_&) {
+std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_connected_::recv_robot_data(state_&) {
     return std::nullopt;
 }
 

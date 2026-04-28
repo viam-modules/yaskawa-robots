@@ -29,19 +29,19 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 
     not_ready_mask mask = 0;
     if (status.e_stopped) {
-        mask = mask | not_ready_reason::k_estop;
+        mask = mask | k_estop;
     }
     if (status.mode != ROBOT_MODE_REMOTE) {
-        mask = mask | not_ready_reason::k_not_remote;
+        mask = mask | k_not_remote;
     }
     if (status.in_error) {
-        mask = mask | not_ready_reason::k_in_error;
+        mask = mask | k_in_error;
     }
     if (!status.drives_powered) {
-        mask = mask | not_ready_reason::k_servo_off;
+        mask = mask | k_servo_off;
     }
     if (!status.motion_possible) {
-        mask = mask | not_ready_reason::k_motion_blocked;
+        mask = mask | k_motion_blocked;
     }
 
     if (mask != 0) {
@@ -57,7 +57,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
         auto& req = *it;
         if (!req.handle) {
             try {
-                req.handle = state.controller_->move(req.waypoints, req.unix_time, req.velocity, req.acceleration);
+                req.handle = state.controller_->move(std::move(req.waypoints), req.unix_time, req.velocity, req.acceleration);
             } catch (const std::exception& ex) {
                 req.complete_error(ex.what());
                 it = state.move_requests_.erase(it);
@@ -66,7 +66,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
             ++it;
         } else if (req.handle->is_done()) {
             try {
-                std::ignore = req.handle->wait_for(std::chrono::milliseconds(0));
+                std::ignore = req.handle->wait_for(std::chrono::milliseconds(0));  // only care if it throws
                 req.complete_success();
             } catch (const std::exception& ex) {
                 req.complete_error(ex.what());

@@ -81,7 +81,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     }
 
    public:
-    explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)) {};
+    explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)){};
     static auto create(boost::asio::any_io_executor exec) {
         return std::make_shared<AsyncQueue<T>>(private_{}, std::move(exec));
     };
@@ -423,7 +423,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::string describe_state() const;
     bool is_any_moving() const;
     std::future<void> enqueue_move_request(uint32_t group_index,
-                                           std::list<Eigen::VectorXd> waypoints,
+                                           std::list<Eigen::VectorXd>&& waypoints,
                                            std::string unix_time,
                                            Eigen::VectorXd velocity,
                                            Eigen::VectorXd acceleration);
@@ -448,7 +448,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     CartesianPosition angleToCartPos(AnglePosition& pos);
     bool checkGroupIndex();
 
-    std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd> waypoints,
+    std::unique_ptr<GoalRequestHandle> move(std::list<Eigen::VectorXd>&& waypoints,
                                             const std::string& unix_time,
                                             const Eigen::VectorXd& velocity_limits,
                                             const Eigen::VectorXd& acceleration_limits);
@@ -545,7 +545,7 @@ class YaskawaController::state_ {
     bool is_any_moving() const;
 
     std::future<void> enqueue_move_request(uint32_t group_index,
-                                           std::list<Eigen::VectorXd> waypoints,
+                                           std::list<Eigen::VectorXd>&& waypoints,
                                            std::string unix_time,
                                            Eigen::VectorXd velocity,
                                            Eigen::VectorXd acceleration);
@@ -554,29 +554,15 @@ class YaskawaController::state_ {
     // ---------------------------------------------------------------
     // Not-ready reason bitmask
     // ---------------------------------------------------------------
-    enum class not_ready_reason : uint8_t {
-        k_in_error = 0x01,        // auto-recoverable: reset_errors()
-        k_servo_off = 0x02,       // auto-recoverable: turn_servo_power_on()
-        k_motion_blocked = 0x04,  // auto-recoverable: setMotionMode(RUN)
-        k_major_alarm = 0x08,     // human-required: physical panel
-        k_estop = 0x10,           // human-required: release button
-        k_not_remote = 0x20,      // human-required: pendant
-    };
     using not_ready_mask = uint8_t;
+    static constexpr not_ready_mask k_in_error = 0b00000001;        // auto-recoverable: reset_errors()
+    static constexpr not_ready_mask k_servo_off = 0b00000010;       // auto-recoverable: turn_servo_power_on()
+    static constexpr not_ready_mask k_motion_blocked = 0b00000100;  // auto-recoverable: setMotionMode(RUN)
+    static constexpr not_ready_mask k_major_alarm = 0b00001000;     // human-required: physical panel
+    static constexpr not_ready_mask k_estop = 0b00010000;           // human-required: release button
+    static constexpr not_ready_mask k_not_remote = 0b00100000;      // human-required: pendant
 
-    static constexpr not_ready_mask k_auto_recoverable_mask = static_cast<not_ready_mask>(not_ready_reason::k_in_error) |
-                                                              static_cast<not_ready_mask>(not_ready_reason::k_servo_off) |
-                                                              static_cast<not_ready_mask>(not_ready_reason::k_motion_blocked);
-
-    friend constexpr not_ready_mask operator|(not_ready_reason a, not_ready_reason b) {
-        return static_cast<not_ready_mask>(a) | static_cast<not_ready_mask>(b);
-    }
-    friend constexpr not_ready_mask operator|(not_ready_mask a, not_ready_reason b) {
-        return a | static_cast<not_ready_mask>(b);
-    }
-    friend constexpr bool has_reason(not_ready_mask mask, not_ready_reason r) {
-        return (mask & static_cast<not_ready_mask>(r)) != 0;
-    }
+    static constexpr not_ready_mask k_auto_recoverable_mask = k_in_error | k_servo_off | k_motion_blocked;
 
     static std::string describe_not_ready_mask_(not_ready_mask mask);
 
@@ -595,7 +581,7 @@ class YaskawaController::state_ {
     using state_variant_ = std::variant<state_disconnected_, state_independent_, state_ready_>;
 
     struct event_connection_established_;
-    class event_connection_lost_;
+    struct event_connection_lost_;
     struct event_not_ready_detected_;
     struct event_ready_detected_;
 
@@ -620,11 +606,9 @@ class YaskawaController::state_ {
     // Shared base for connected states (no controller pointer — use state.controller_)
     // ---------------------------------------------------------------
     struct state_connected_ {
-        // NOLINTBEGIN(readability-convert-member-functions-to-static)
         std::chrono::milliseconds get_timeout() const;
-        std::optional<event_variant_> recv_arm_data(state_&);
+        std::optional<event_variant_> recv_robot_data(state_&);
         std::optional<event_variant_> send_heartbeat(state_&);
-        // NOLINTEND(readability-convert-member-functions-to-static)
     };
 
     // ---------------------------------------------------------------
@@ -639,7 +623,7 @@ class YaskawaController::state_ {
         std::string describe() const;
         std::chrono::milliseconds get_timeout() const;
 
-        std::optional<event_variant_> recv_arm_data(state_&);
+        std::optional<event_variant_> recv_robot_data(state_&);
         std::optional<event_variant_> upgrade_downgrade(state_&);
         std::optional<event_variant_> handle_move_request(state_&) const;
         std::optional<event_variant_> send_heartbeat(state_&);
@@ -653,8 +637,8 @@ class YaskawaController::state_ {
         void connect_(state_&);
 
         int reconnect_attempts_{0};
-        std::optional<std::future<void>> pending_connection_;
-        std::unique_ptr<event_connection_lost_> triggering_event_;
+        std::future<void> pending_connection_;
+        std::optional<event_connection_lost_> triggering_event_;
     };
 
     // ---------------------------------------------------------------
@@ -667,7 +651,7 @@ class YaskawaController::state_ {
         std::string describe() const;
         using state_connected_::get_timeout;
 
-        using state_connected_::recv_arm_data;
+        using state_connected_::recv_robot_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
         std::optional<event_variant_> handle_move_request(state_&) const;
         using state_connected_::send_heartbeat;
@@ -688,12 +672,10 @@ class YaskawaController::state_ {
         state_ready_() = default;
 
         static std::string_view name();
-        // NOLINTBEGIN(readability-convert-member-functions-to-static)
         std::string describe() const;
-        // NOLINTEND(readability-convert-member-functions-to-static)
         using state_connected_::get_timeout;
 
-        using state_connected_::recv_arm_data;
+        using state_connected_::recv_robot_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
         std::optional<event_variant_> handle_move_request(state_&);
         using state_connected_::send_heartbeat;
@@ -708,14 +690,11 @@ class YaskawaController::state_ {
     // ---------------------------------------------------------------
     struct event_connection_established_ {
         static std::string_view name();
-        // NOLINTBEGIN(readability-convert-member-functions-to-static)
         std::string_view describe() const;
-        // NOLINTEND(readability-convert-member-functions-to-static)
     };
 
-    class event_connection_lost_ {
-       public:
-        static event_connection_lost_ tcp_failure();
+    struct event_connection_lost_ {
+        static event_connection_lost_ socket_failure();
         static event_connection_lost_ heartbeat_failure();
         static event_connection_lost_ module_shutdown();
 
@@ -724,7 +703,7 @@ class YaskawaController::state_ {
 
        private:
         enum class reason : uint8_t {
-            k_tcp_failure,
+            k_socket_failure,
             k_heartbeat_failure,
             k_module_shutdown,
         };
@@ -734,17 +713,13 @@ class YaskawaController::state_ {
 
     struct event_not_ready_detected_ {
         static std::string_view name();
-        // NOLINTBEGIN(readability-convert-member-functions-to-static)
         std::string_view describe() const;
-        // NOLINTEND(readability-convert-member-functions-to-static)
         not_ready_mask mask;
     };
 
     struct event_ready_detected_ {
         static std::string_view name();
-        // NOLINTBEGIN(readability-convert-member-functions-to-static)
         std::string_view describe() const;
-        // NOLINTEND(readability-convert-member-functions-to-static)
     };
 
     // ---------------------------------------------------------------
@@ -775,7 +750,7 @@ class YaskawaController::state_ {
     static std::string describe_state_(const state_variant_& sv);
 
     void upgrade_downgrade_();
-    void recv_arm_data_();
+    void recv_robot_data_();
     void handle_move_request_();
     void send_heartbeat_();
 
@@ -784,7 +759,7 @@ class YaskawaController::state_ {
     // ---------------------------------------------------------------
     // Fields
     // ---------------------------------------------------------------
-    YaskawaController* controller_;
+    YaskawaController* const controller_;
 
     mutable std::mutex mutex_;
     state_variant_ current_state_{state_disconnected_{}};

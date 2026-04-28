@@ -14,7 +14,7 @@ using namespace viam::sdk;
 // ---------------------------------------------------------------
 
 YaskawaController::state_::state_disconnected_::state_disconnected_(event_connection_lost_ triggering_event)
-    : triggering_event_(std::make_unique<event_connection_lost_>(std::move(triggering_event))) {}
+    : triggering_event_(std::move(triggering_event)) {}
 
 // ---------------------------------------------------------------
 // state_disconnected_ identity
@@ -29,7 +29,7 @@ std::string YaskawaController::state_::state_disconnected_::describe() const {
 }
 
 std::chrono::milliseconds YaskawaController::state_::state_disconnected_::get_timeout() const {
-    if (pending_connection_) {
+    if (pending_connection_.valid()) {
         return std::chrono::milliseconds{50};
     }
     return std::chrono::milliseconds{1000};
@@ -39,29 +39,24 @@ std::chrono::milliseconds YaskawaController::state_::state_disconnected_::get_ti
 // state_disconnected_ cycle
 // ---------------------------------------------------------------
 
-std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_disconnected_::recv_arm_data(state_&) {
+std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_disconnected_::recv_robot_data(state_&) {
     return std::nullopt;
 }
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_disconnected_::upgrade_downgrade(state_& state) {
-    if (pending_connection_) {
-        switch (pending_connection_->wait_for(std::chrono::seconds(0))) {
-            case std::future_status::ready:
-                try {
-                    pending_connection_->get();
-                } catch (...) {
-                    pending_connection_.reset();
-                    throw;
-                }
-                pending_connection_.reset();
-                return event_connection_established_{};
-            case std::future_status::timeout:
-                break;
-            case std::future_status::deferred:
-                std::abort();
-        }
-    } else {
-        pending_connection_.emplace(std::async(std::launch::async, [this, &state] { connect_(state); }));
+    if (!pending_connection_.valid()) {
+        pending_connection_ = std::async(std::launch::async, [this, &state] { connect_(state); });
+        return std::nullopt;
+    }
+
+    switch (pending_connection_.wait_for(std::chrono::seconds(0))) {
+        case std::future_status::ready:
+            pending_connection_.get();
+            return event_connection_established_{};
+        case std::future_status::timeout:
+            break;
+        case std::future_status::deferred:
+            std::abort();
     }
     return std::nullopt;
 }
@@ -72,13 +67,16 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_disconnected_::handle_move_request(
     state_& state) const {
-    for (auto& req : state.move_requests_) {
+    auto requests = std::exchange(state.move_requests_, {});
+    for (auto& req : requests) {
         if (req.handle && !req.handle->is_done()) {
-            req.handle->cancel();
+            try {
+                req.handle->cancel();
+            } catch (...) {
+            }
         }
         req.complete_error("arm is disconnected");
     }
-    state.move_requests_.clear();
     return std::nullopt;
 }
 
@@ -89,13 +87,12 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_disconnected_::handle_event(
     state_&, event_connection_established_) {
     VIAM_SDK_LOG(info) << "connection established, entering independent state";
-    const not_ready_mask all_bits = not_ready_reason::k_in_error | not_ready_reason::k_servo_off | not_ready_reason::k_motion_blocked |
-                                    not_ready_reason::k_estop | not_ready_reason::k_not_remote;
+    const not_ready_mask all_bits = k_in_error | k_servo_off | k_motion_blocked | k_estop | k_not_remote;
     return state_independent_{all_bits};
 }
 
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_disconnected_::handle_event(
-    state_&, event_connection_lost_ /*event*/) {
+    state_&, event_connection_lost_) {
     return std::nullopt;
 }
 

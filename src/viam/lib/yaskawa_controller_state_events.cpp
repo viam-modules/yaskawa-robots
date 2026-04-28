@@ -22,8 +22,8 @@ std::string_view YaskawaController::state_::event_connection_established_::descr
 
 YaskawaController::state_::event_connection_lost_::event_connection_lost_(reason r) : reason_code_(r) {}
 
-YaskawaController::state_::event_connection_lost_ YaskawaController::state_::event_connection_lost_::tcp_failure() {
-    return event_connection_lost_{reason::k_tcp_failure};
+YaskawaController::state_::event_connection_lost_ YaskawaController::state_::event_connection_lost_::socket_failure() {
+    return event_connection_lost_{reason::k_socket_failure};
 }
 
 YaskawaController::state_::event_connection_lost_ YaskawaController::state_::event_connection_lost_::heartbeat_failure() {
@@ -40,8 +40,8 @@ std::string_view YaskawaController::state_::event_connection_lost_::name() {
 
 std::string_view YaskawaController::state_::event_connection_lost_::describe() const {
     switch (reason_code_) {
-        case reason::k_tcp_failure:
-            return "connection_lost(tcp_failure)";
+        case reason::k_socket_failure:
+            return "connection_lost(socket_failure)";
         case reason::k_heartbeat_failure:
             return "connection_lost(heartbeat_failure)";
         case reason::k_module_shutdown:

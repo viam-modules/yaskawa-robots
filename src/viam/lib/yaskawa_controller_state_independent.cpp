@@ -34,24 +34,24 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 
     not_ready_mask mask = 0;
     if (status.e_stopped) {
-        mask = mask | not_ready_reason::k_estop;
+        mask = mask | k_estop;
     }
     if (status.mode != ROBOT_MODE_REMOTE) {
-        mask = mask | not_ready_reason::k_not_remote;
+        mask = mask | k_not_remote;
     }
     if (status.in_error) {
-        mask = mask | not_ready_reason::k_in_error;
+        mask = mask | k_in_error;
     }
     if (!status.drives_powered) {
-        mask = mask | not_ready_reason::k_servo_off;
+        mask = mask | k_servo_off;
     }
     if (!status.motion_possible) {
-        mask = mask | not_ready_reason::k_motion_blocked;
+        mask = mask | k_motion_blocked;
     }
 
     // Preserve a previously diagnosed major alarm while in_error persists on the wire.
-    if (has_reason(reasons_, not_ready_reason::k_major_alarm) && has_reason(mask, not_ready_reason::k_in_error)) {
-        mask = (mask & ~static_cast<not_ready_mask>(not_ready_reason::k_in_error)) | not_ready_reason::k_major_alarm;
+    if ((reasons_ & k_major_alarm) && (mask & k_in_error)) {
+        mask = (mask & ~k_in_error) | k_major_alarm;
     }
 
     if (mask == 0) {
@@ -68,20 +68,19 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
         return std::nullopt;
     }
 
-    if (has_reason(mask, not_ready_reason::k_in_error)) {
+    if (mask & k_in_error) {
         constexpr int k_max_reset_attempts = 3;
         if (recovery_attempts_ < k_max_reset_attempts) {
             state.controller_->reset_errors();
             ++recovery_attempts_;
         } else {
-            return event_not_ready_detected_{(mask & ~static_cast<not_ready_mask>(not_ready_reason::k_in_error)) |
-                                             not_ready_reason::k_major_alarm};
+            return event_not_ready_detected_{(mask & ~k_in_error) | k_major_alarm};
         }
     } else {
-        if (has_reason(mask, not_ready_reason::k_servo_off)) {
+        if (mask & k_servo_off) {
             state.controller_->turn_servo_power_on();
         }
-        if (has_reason(mask, not_ready_reason::k_motion_blocked)) {
+        if (mask & k_motion_blocked) {
             state.controller_->setMotionMode(1);
         }
     }
@@ -91,14 +90,17 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_independent_::handle_move_request(
     state_& state) const {
-    for (auto& req : state.move_requests_) {
+    auto requests = std::exchange(state.move_requests_, {});
+    for (auto& req : requests) {
         if (req.handle && !req.handle->is_done()) {
-            req.handle->cancel();
+            try {
+                req.handle->cancel();
+            } catch (...) {
+            }
         }
         req.complete_error(
             std::format("cannot move: arm is independent({})", YaskawaController::state_::describe_not_ready_mask_(reasons_)));
     }
-    state.move_requests_.clear();
     return std::nullopt;
 }
 
