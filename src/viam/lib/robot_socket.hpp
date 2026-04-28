@@ -618,7 +618,6 @@ class YaskawaController::state_ {
         state_disconnected_() = default;
         explicit state_disconnected_(event_connection_lost_ triggering_event);
 
-        // NOLINTBEGIN(readability-convert-member-functions-to-static)
         static std::string_view name();
         std::string describe() const;
         std::chrono::milliseconds get_timeout() const;
@@ -627,7 +626,6 @@ class YaskawaController::state_ {
         std::optional<event_variant_> upgrade_downgrade(state_&);
         std::optional<event_variant_> handle_move_request(state_&) const;
         std::optional<event_variant_> send_heartbeat(state_&);
-        // NOLINTEND(readability-convert-member-functions-to-static)
 
         std::optional<state_variant_> handle_event(state_&, event_connection_established_);
         std::optional<state_variant_> handle_event(state_&, event_connection_lost_);
