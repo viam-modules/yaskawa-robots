@@ -117,7 +117,11 @@ Eigen::Index number_of_dof_configured(const viam::sdk::ResourceConfig& config, c
         if (value.get<double>()) {
             return -1;
         }
-        return static_cast<Eigen::Index>(value.get<std::vector<viam::sdk::ProtoValue>>()->size());
+        const auto* vec = value.get<std::vector<viam::sdk::ProtoValue>>();
+        if (!vec) {
+            throw std::invalid_argument(std::format("attribute `{}` is neither a number nor an array", attr));
+        }
+        return static_cast<Eigen::Index>(vec->size());
     };
     auto dim_a = dim_of(attr_a);
     auto dim_b = dim_of(attr_b);
@@ -138,7 +142,11 @@ Eigen::VectorXd read_limit_vector(const viam::sdk::ResourceConfig& config, const
     if (const auto* scalar = value.get<double>()) {
         return Eigen::VectorXd::Constant(target_dof, *scalar);
     }
-    const auto& arr = *value.get<std::vector<viam::sdk::ProtoValue>>();
+    const auto* arr_ptr = value.get<std::vector<viam::sdk::ProtoValue>>();
+    if (!arr_ptr) {
+        throw std::invalid_argument(std::format("attribute `{}` is neither a number nor an array", attribute));
+    }
+    const auto& arr = *arr_ptr;
     const auto n_dof = static_cast<Eigen::Index>(arr.size());
     if (n_dof != target_dof) {
         throw std::runtime_error(std::format(
