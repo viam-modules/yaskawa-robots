@@ -44,6 +44,8 @@ When multiple arm components point to the same controller host, they share a sin
 
 The available groups and their axis counts are discovered automatically via the capabilities handshake at connection time. You can find the group layout for your controller in the module logs at startup.
 
+All configuration attributes (speed, acceleration, trajectory planner settings, telemetry path, etc.) are per-arm. Each arm component has its own config; only the underlying controller connection is shared.
+
 ### Example configurations:
 
 #### Basic configuration (single arm)
