@@ -181,6 +181,8 @@ std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group
             .unix_time = std::move(unix_time),
             .velocity = std::move(velocity),
             .acceleration = std::move(acceleration),
+            .handle = {},
+            .completion = {},
         });
         future = req.completion.get_future();
     }

@@ -74,7 +74,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
             state.controller_->reset_errors();
             ++recovery_attempts_;
         } else {
-            return event_not_ready_detected_{(mask & ~k_in_error) | k_major_alarm};
+            return event_not_ready_detected_{static_cast<not_ready_mask>((mask & ~k_in_error) | k_major_alarm)};
         }
     } else {
         if (mask & k_servo_off) {

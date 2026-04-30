@@ -567,7 +567,7 @@ class YaskawaController::state_ {
     static std::string describe_not_ready_mask_(not_ready_mask mask);
 
     // ---------------------------------------------------------------
-    // State and event forward declarations
+    // State forward declarations
     // ---------------------------------------------------------------
     struct state_disconnected_;
     friend struct state_disconnected_;
@@ -580,10 +580,42 @@ class YaskawaController::state_ {
 
     using state_variant_ = std::variant<state_disconnected_, state_independent_, state_ready_>;
 
-    struct event_connection_established_;
-    struct event_connection_lost_;
-    struct event_not_ready_detected_;
-    struct event_ready_detected_;
+    // ---------------------------------------------------------------
+    // Events (defined before states so they can be stored by value in states)
+    // ---------------------------------------------------------------
+    struct event_connection_established_ {
+        static std::string_view name();
+        std::string_view describe() const;
+    };
+
+    struct event_connection_lost_ {
+        static event_connection_lost_ socket_failure();
+        static event_connection_lost_ heartbeat_failure();
+        static event_connection_lost_ module_shutdown();
+
+        static std::string_view name();
+        std::string_view describe() const;
+
+       private:
+        enum class reason : uint8_t {
+            k_socket_failure,
+            k_heartbeat_failure,
+            k_module_shutdown,
+        };
+        explicit event_connection_lost_(reason r);
+        reason reason_code_;
+    };
+
+    struct event_not_ready_detected_ {
+        static std::string_view name();
+        std::string_view describe() const;
+        not_ready_mask mask;
+    };
+
+    struct event_ready_detected_ {
+        static std::string_view name();
+        std::string_view describe() const;
+    };
 
     using event_variant_ =
         std::variant<event_connection_established_, event_connection_lost_, event_not_ready_detected_, event_ready_detected_>;
@@ -681,43 +713,6 @@ class YaskawaController::state_ {
         std::optional<state_variant_> handle_event(state_&, event_connection_lost_);
         std::optional<state_variant_> handle_event(state_&, event_not_ready_detected_);
         using state_event_handler_base_<state_ready_>::handle_event;
-    };
-
-    // ---------------------------------------------------------------
-    // Events
-    // ---------------------------------------------------------------
-    struct event_connection_established_ {
-        static std::string_view name();
-        std::string_view describe() const;
-    };
-
-    struct event_connection_lost_ {
-        static event_connection_lost_ socket_failure();
-        static event_connection_lost_ heartbeat_failure();
-        static event_connection_lost_ module_shutdown();
-
-        static std::string_view name();
-        std::string_view describe() const;
-
-       private:
-        enum class reason : uint8_t {
-            k_socket_failure,
-            k_heartbeat_failure,
-            k_module_shutdown,
-        };
-        explicit event_connection_lost_(reason r);
-        reason reason_code_;
-    };
-
-    struct event_not_ready_detected_ {
-        static std::string_view name();
-        std::string_view describe() const;
-        not_ready_mask mask;
-    };
-
-    struct event_ready_detected_ {
-        static std::string_view name();
-        std::string_view describe() const;
     };
 
     // ---------------------------------------------------------------
