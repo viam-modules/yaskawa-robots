@@ -289,6 +289,7 @@ struct State {
     std::atomic<uint8_t> in_motion;  // bitfield: bit N = group N is moving
     std::atomic<bool> drive_powered;
     std::atomic<bool> in_error;
+    std::atomic<robot_mode_t> mode;  // robot_mode_t (0=unknown, 1=teach, 2=play, 3=remote)
     explicit State();
     void UpdateState(const RobotStatusMessage& msg);
     bool IsReady() const;
@@ -300,6 +301,7 @@ struct GoalStatusMessage {
     uint32_t current_queue_size;
     double progress;
     int64_t timestamp_ms;
+    std::string abort_message;
 
     GoalStatusMessage() = default;
     GoalStatusMessage(const Message& msg);

@@ -1071,7 +1071,7 @@ void YaskawaController::send_heartbeat() {
     if (!err.empty()) {
         throw std::runtime_error(std::format("failed to send heartbeat: {}", err));
     }
-    LOGGING(debug) << "MSG_HEARTBEAT: " << msg;
+    //    LOGGING(debug) << "MSG_HEARTBEAT: " << msg;
 }
 
 void YaskawaController::send_test_error_command() {
@@ -1318,7 +1318,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                             return;
                         case GOAL_STATE_ABORTED:
                             LOGGING(debug) << "goal ABORTED";
-                            throw std::runtime_error(std::format("goal failed - goal status is {}", static_cast<int>(status_msg.state)));
+                            throw std::runtime_error(std::format("goal aborted: {}", status_msg.abort_message));
                     }
                 }
             }
@@ -1432,6 +1432,7 @@ GoalStatusMessage::GoalStatusMessage(const Message& msg) {
     current_queue_size = payload->current_queue_size;
     progress = payload->progress;
     timestamp_ms = payload->timestamp_ms;
+    abort_message = std::string(payload->abort_message);
 }
 
 // GoalAcceptedMessage implementation
@@ -1500,26 +1501,33 @@ bool GoalRequestHandle::is_done() const {
     return completion_future_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
 }
 
-State::State() : e_stopped(false), in_motion(0), drive_powered(false), in_error(true) {}
+State::State() : e_stopped(false), in_motion(0), drive_powered(false), in_error(true), mode(ROBOT_MODE_UNKNOWN) {}
 void State::UpdateState(const RobotStatusMessage& msg) {
     const bool prev_e_stopped = e_stopped.load();
     const bool prev_in_error = in_error.load();
     const bool prev_drive_powered = drive_powered.load();
     const uint8_t prev_in_motion = in_motion.load();
+    const int prev_mode = mode.load();
 
     e_stopped.store(msg.e_stopped);
     in_error.store(msg.in_error);
     drive_powered.store(msg.drives_powered);
     in_motion.store(msg.in_motion);
+    mode.store((robot_mode_t)msg.mode);
 
     if (prev_e_stopped != msg.e_stopped || prev_in_error != msg.in_error || prev_drive_powered != msg.drives_powered ||
-        prev_in_motion != msg.in_motion) {
+        prev_in_motion != msg.in_motion || prev_mode != msg.mode) {
         LOGGING(debug) << "UpdateState: e_stopped " << prev_e_stopped << "->" << msg.e_stopped << " in_error " << prev_in_error << "->"
                        << msg.in_error << " drives_powered " << prev_drive_powered << "->" << msg.drives_powered << " in_motion 0x"
-                       << std::hex << static_cast<int>(prev_in_motion) << "->0x" << static_cast<int>(msg.in_motion) << std::dec;
+                       << std::hex << static_cast<int>(prev_in_motion) << "->0x" << static_cast<int>(msg.in_motion) << std::dec << " mode "
+                       << prev_mode << "->" << msg.mode;
     }
 }
+// TODO(future PR): revisit the state machine — IsReady() returning false due to mode !=
+// ROBOT_MODE_REMOTE is not recoverable by reset_errors(), but callers don't distinguish
+// between error-not-ready and mode-not-ready. The state machine should surface separate
+// reasons so callers can fail fast instead of attempting a pointless reset.
 bool State::IsReady() const {
-    return !e_stopped.load() && !in_error.load();
+    return !e_stopped.load() && !in_error.load() && mode.load() == ROBOT_MODE_REMOTE;
 }
 }  // namespace robot
