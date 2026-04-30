@@ -1158,6 +1158,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                                                                          const std::vector<tolerance_t>& tolerance,
                                                                          double trajectory_sampling_freq,
                                                                          std::optional<RealtimeTrajectoryLogger> logger) {
+    LOGGING(debug) << "execute_trajectory: group=" << group_index << " samples=" << samples.size();
+
     if (group_index >= MAX_GROUPS) {
         throw std::runtime_error(std::format("group_index {} exceeds MAX_GROUPS ({})", group_index, MAX_GROUPS));
     }
@@ -1167,6 +1169,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
     if (!group_move_in_progress_[group_index].compare_exchange_strong(expected, true)) {
         throw std::runtime_error(std::format("an actuation is already in progress on group {}", group_index));
     }
+    LOGGING(debug) << "execute_trajectory: acquired move lock for group " << group_index;
 
     // Scope guard clears the per-group lock on any exit path.
     // Dismissed after the monitoring thread is successfully created (which takes over cleanup responsibility).
@@ -1182,16 +1185,20 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
         }
     }
     if (!any_other_group_moving) {
+        LOGGING(debug) << "execute_trajectory: first mover, performing global setup";
         if (!robot_state_->IsReady()) {
             reset_errors();
         }
+        turn_servo_power_on();
         setMotionMode(1);
+    } else {
+        LOGGING(debug) << "execute_trajectory: another group is moving, skipping global setup";
     }
-    turn_servo_power_on();
 
     // Send the first chunk
     const auto first_end = std::min(k_chunk_size, samples.size());
     const std::vector<trajectory_point_t> first_chunk(samples.begin(), std::next(samples.begin(), static_cast<ptrdiff_t>(first_end)));
+    LOGGING(debug) << "execute_trajectory: sending first chunk, group=" << group_index << " points=" << first_end;
     auto accepted = send_goal_(group_index, axes_controlled, first_chunk, tolerance);
 
     // If the controller reports 0 or a value exceeding what we sent, assume the entire chunk was consumed.
@@ -1207,7 +1214,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
         remaining.assign(std::next(samples.begin(), static_cast<ptrdiff_t>(accepted_count)), samples.end());
     }
 
-    LOGGING(debug) << "goal accepted: goal_id=" << accepted.goal_id;
+    LOGGING(debug) << "execute_trajectory: first chunk sent, goal_id=" << accepted.goal_id << " accepted=" << accepted_count << "/"
+                   << first_end;
     if (logger.has_value()) {
         logger->set_goal_accepted_timestamp(accepted.timestamp_ms);
     }
@@ -1217,6 +1225,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
 
     // Derive poll interval from trajectory sampling frequency
     constexpr auto k_logging_freq = 250;
+    LOGGING(debug) << "execute_trajectory: spawning monitor thread, remaining=" << remaining.size();
     // Single thread handles both chunk streaming and goal monitoring
     std::thread([promise = std::move(promise),
                  self = weak_from_this(),
@@ -1228,6 +1237,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                  logger = std::move(logger)]() mutable {
         // Scope guard clears per-group lock when thread exits (success or failure)
         const ScopeGuard thread_cleanup{[&self, group_index]() {
+            LOGGING(debug) << "monitor thread exiting: releasing move lock for group " << group_index;
             if (auto shared = self.lock()) {
                 shared->group_move_in_progress_[group_index] = false;
             }
@@ -1256,6 +1266,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                 // Check the goal status @goal_status_polling_trigger Hz
                 if (iteration++ % goal_status_polling_trigger == 0) {
                     const auto status_msg = shared->get_goal_status(goal_id);
+                    LOGGING(debug) << "group " << group_index << " goal status poll: state=" << static_cast<int>(status_msg.state)
+                                   << " queue=" << status_msg.current_queue_size << " offset=" << offset << "/" << remaining.size();
 
                     switch (status_msg.state) {
                         case GOAL_STATE_ACTIVE:
@@ -1278,6 +1290,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                             }
                             break;
                         case GOAL_STATE_SUCCEEDED:
+                            LOGGING(debug) << "goal SUCCEEDED: offset=" << offset << " remaining=" << remaining.size();
                             if (offset < remaining.size()) {
                                 std::string stop_detail;
                                 try {
@@ -1300,9 +1313,11 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                         case GOAL_STATE_PENDING:
                             break;
                         case GOAL_STATE_CANCELLED:
+                            LOGGING(debug) << "goal CANCELLED";
                             promise.set_value_at_thread_exit(GOAL_STATE_CANCELLED);
                             return;
                         case GOAL_STATE_ABORTED:
+                            LOGGING(debug) << "goal ABORTED";
                             throw std::runtime_error(std::format("goal failed - goal status is {}", static_cast<int>(status_msg.state)));
                     }
                 }
@@ -1487,10 +1502,22 @@ bool GoalRequestHandle::is_done() const {
 
 State::State() : e_stopped(false), in_motion(0), drive_powered(false), in_error(true) {}
 void State::UpdateState(const RobotStatusMessage& msg) {
+    const bool prev_e_stopped = e_stopped.load();
+    const bool prev_in_error = in_error.load();
+    const bool prev_drive_powered = drive_powered.load();
+    const uint8_t prev_in_motion = in_motion.load();
+
     e_stopped.store(msg.e_stopped);
     in_error.store(msg.in_error);
     drive_powered.store(msg.drives_powered);
     in_motion.store(msg.in_motion);
+
+    if (prev_e_stopped != msg.e_stopped || prev_in_error != msg.in_error || prev_drive_powered != msg.drives_powered ||
+        prev_in_motion != msg.in_motion) {
+        LOGGING(debug) << "UpdateState: e_stopped " << prev_e_stopped << "->" << msg.e_stopped << " in_error " << prev_in_error << "->"
+                       << msg.in_error << " drives_powered " << prev_drive_powered << "->" << msg.drives_powered << " in_motion 0x"
+                       << std::hex << static_cast<int>(prev_in_motion) << "->0x" << static_cast<int>(msg.in_motion) << std::dec;
+    }
 }
 bool State::IsReady() const {
     return !e_stopped.load() && !in_error.load();

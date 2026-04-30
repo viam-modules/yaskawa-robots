@@ -154,7 +154,11 @@ Eigen::VectorXd read_limit_vector(const viam::sdk::ResourceConfig& config, const
     }
     Eigen::VectorXd result(n_dof);
     for (size_t i = 0; i < arr.size(); ++i) {
-        result[static_cast<Eigen::Index>(i)] = *arr[i].get<double>();
+        const auto* elem = arr[i].get<double>();
+        if (!elem) {
+            throw std::invalid_argument(std::format("attribute `{}` element {} is not a number", attribute, i));
+        }
+        result[static_cast<Eigen::Index>(i)] = *elem;
     }
     return result;
 }
