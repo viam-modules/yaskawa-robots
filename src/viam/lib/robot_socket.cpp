@@ -1146,7 +1146,7 @@ GoalAcceptedMessage YaskawaController::send_goal_(uint32_t group_index,
     return GoalAcceptedMessage(tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload))).get());
 }
 
-std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd> waypoints,
+std::unique_ptr<GoalRequestHandle> YaskawaController::move(std::list<Eigen::VectorXd>&& waypoints,
                                                            const std::string& unix_time,
                                                            const Eigen::VectorXd& velocity_limits,
                                                            const Eigen::VectorXd& acceleration_limits) {
