@@ -73,6 +73,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
             try {
                 req.handle->cancel();
             } catch (...) {
+                VIAM_SDK_LOG(warn) << "exception while cancelling move request on disconnect";
             }
         }
         req.complete_error("arm is disconnected");
