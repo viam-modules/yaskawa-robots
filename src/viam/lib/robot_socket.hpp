@@ -10,6 +10,7 @@
 #include <boost/asio/post.hpp>
 #include <boost/system/detail/error_code.hpp>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -22,12 +23,15 @@
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
 
 #include <third_party/trajectories/Path.h>
+#include <Eigen/Core>
 #include <viam/sdk/config/resource.hpp>
+#include <viam/sdk/log/logging.hpp>
 
 #include "protocol.h"
 
@@ -488,6 +492,19 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     std::future<void> connect();
     void disconnect();
+    const std::string& host() const {
+        return host_;
+    }
+
+    // FSM state accessors
+    std::string describe_state() const;
+    bool is_any_moving() const;
+    std::future<void> enqueue_move_request(uint32_t group_index,
+                                           std::list<Eigen::VectorXd>&& waypoints,
+                                           std::string unix_time,
+                                           Eigen::VectorXd velocity,
+                                           Eigen::VectorXd acceleration);
+    double get_waypoint_deduplication_tolerance_rad() const;
 
     void send_test_trajectory();
     void turn_servo_power_on();
@@ -520,6 +537,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     static std::shared_ptr<YaskawaController> get_or_create(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config);
 
    private:
+    class state_;
+    friend class state_;
+
     boost::asio::io_context& io_context_;
     std::string host_;
     uint16_t tcp_port_;
@@ -539,6 +559,8 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
 
     void establish_connections_();
     void reconnect_();
+
+    std::unique_ptr<state_> fsm_;
 
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;
@@ -566,5 +588,248 @@ class GoalRequestHandle {
     std::shared_future<goal_state_t> completion_future_;
     mutable std::mutex mutex_;
 };
+
+class YaskawaController::state_ {
+    struct private_ {};
+
+   public:
+    explicit state_(private_, YaskawaController* controller);
+    ~state_();
+
+    static std::unique_ptr<state_> create(YaskawaController* controller);
+    void shutdown();
+
+    std::string describe() const;
+    bool is_any_moving() const;
+
+    std::future<void> enqueue_move_request(uint32_t group_index,
+                                           std::list<Eigen::VectorXd>&& waypoints,
+                                           std::string unix_time,
+                                           Eigen::VectorXd velocity,
+                                           Eigen::VectorXd acceleration);
+
+   private:
+    // ---------------------------------------------------------------
+    // Not-ready reason bitmask
+    // ---------------------------------------------------------------
+    using not_ready_mask = uint8_t;
+    static constexpr not_ready_mask k_in_error = 0b00000001;        // auto-recoverable: reset_errors()
+    static constexpr not_ready_mask k_servo_off = 0b00000010;       // auto-recoverable: turn_servo_power_on()
+    static constexpr not_ready_mask k_motion_blocked = 0b00000100;  // auto-recoverable: setMotionMode(RUN)
+    static constexpr not_ready_mask k_major_alarm = 0b00001000;     // human-required: physical panel
+    static constexpr not_ready_mask k_estop = 0b00010000;           // human-required: release button
+    static constexpr not_ready_mask k_not_remote = 0b00100000;      // human-required: pendant
+
+    static constexpr not_ready_mask k_auto_recoverable_mask = k_in_error | k_servo_off | k_motion_blocked;
+
+    static std::string describe_not_ready_mask_(not_ready_mask mask);
+
+    // ---------------------------------------------------------------
+    // State forward declarations
+    // ---------------------------------------------------------------
+    struct state_disconnected_;
+    friend struct state_disconnected_;
+
+    struct state_independent_;
+    friend struct state_independent_;
+
+    struct state_ready_;
+    friend struct state_ready_;
+
+    using state_variant_ = std::variant<state_disconnected_, state_independent_, state_ready_>;
+
+    // ---------------------------------------------------------------
+    // Events (defined before states so they can be stored by value in states)
+    // ---------------------------------------------------------------
+    struct event_connection_established_ {
+        static std::string_view name();
+        std::string_view describe() const;
+    };
+
+    struct event_connection_lost_ {
+        static event_connection_lost_ socket_failure();
+        static event_connection_lost_ heartbeat_failure();
+        static event_connection_lost_ module_shutdown();
+
+        static std::string_view name();
+        std::string_view describe() const;
+
+       private:
+        enum class reason : uint8_t {
+            k_socket_failure,
+            k_heartbeat_failure,
+            k_module_shutdown,
+        };
+        explicit event_connection_lost_(reason r);
+        reason reason_code_;
+    };
+
+    struct event_not_ready_detected_ {
+        static std::string_view name();
+        std::string_view describe() const;
+        not_ready_mask mask;
+    };
+
+    struct event_ready_detected_ {
+        static std::string_view name();
+        std::string_view describe() const;
+    };
+
+    using event_variant_ =
+        std::variant<event_connection_established_, event_connection_lost_, event_not_ready_detected_, event_ready_detected_>;
+
+    // ---------------------------------------------------------------
+    // Catch-all event handler base (logs unexpected events)
+    // ---------------------------------------------------------------
+    template <typename T>
+    class state_event_handler_base_ {
+       public:
+        template <typename Event>
+        std::optional<state_variant_> handle_event(state_&, Event&& event);
+
+       private:
+        friend T;
+        state_event_handler_base_() = default;
+    };
+
+    // ---------------------------------------------------------------
+    // Shared base for connected states (no controller pointer — use state.controller_)
+    // ---------------------------------------------------------------
+    struct state_connected_ {
+        std::chrono::milliseconds get_timeout() const;
+        std::optional<event_variant_> recv_robot_data(state_&);
+        std::optional<event_variant_> send_heartbeat(state_&);
+    };
+
+    // ---------------------------------------------------------------
+    // State: DISCONNECTED
+    // ---------------------------------------------------------------
+    struct state_disconnected_ : public state_event_handler_base_<state_disconnected_> {
+        state_disconnected_() = default;
+        explicit state_disconnected_(event_connection_lost_ triggering_event);
+
+        static std::string_view name();
+        std::string describe() const;
+        std::chrono::milliseconds get_timeout() const;
+
+        std::optional<event_variant_> recv_robot_data(state_&);
+        std::optional<event_variant_> upgrade_downgrade(state_&);
+        std::optional<event_variant_> handle_move_request(state_&) const;
+        std::optional<event_variant_> send_heartbeat(state_&);
+
+        std::optional<state_variant_> handle_event(state_&, event_connection_established_);
+        std::optional<state_variant_> handle_event(state_&, event_connection_lost_);
+        using state_event_handler_base_<state_disconnected_>::handle_event;
+
+       private:
+        void connect_(state_&);
+
+        int reconnect_attempts_{0};
+        std::future<void> pending_connection_;
+        std::optional<event_connection_lost_> triggering_event_;
+    };
+
+    // ---------------------------------------------------------------
+    // State: INDEPENDENT
+    // ---------------------------------------------------------------
+    struct state_independent_ : public state_event_handler_base_<state_independent_>, public state_connected_ {
+        explicit state_independent_(not_ready_mask reasons);
+
+        static std::string_view name();
+        std::string describe() const;
+        using state_connected_::get_timeout;
+
+        using state_connected_::recv_robot_data;
+        std::optional<event_variant_> upgrade_downgrade(state_&);
+        std::optional<event_variant_> handle_move_request(state_&) const;
+        using state_connected_::send_heartbeat;
+
+        std::optional<state_variant_> handle_event(state_&, event_connection_lost_);
+        std::optional<state_variant_> handle_event(state_&, event_not_ready_detected_);
+        std::optional<state_variant_> handle_event(state_&, event_ready_detected_);
+        using state_event_handler_base_<state_independent_>::handle_event;
+
+        not_ready_mask reasons_;
+        int recovery_attempts_{0};
+    };
+
+    // ---------------------------------------------------------------
+    // State: READY
+    // ---------------------------------------------------------------
+    struct state_ready_ : public state_event_handler_base_<state_ready_>, public state_connected_ {
+        state_ready_() = default;
+
+        static std::string_view name();
+        std::string describe() const;
+        using state_connected_::get_timeout;
+
+        using state_connected_::recv_robot_data;
+        std::optional<event_variant_> upgrade_downgrade(state_&);
+        std::optional<event_variant_> handle_move_request(state_&);
+        using state_connected_::send_heartbeat;
+
+        std::optional<state_variant_> handle_event(state_&, event_connection_lost_);
+        std::optional<state_variant_> handle_event(state_&, event_not_ready_detected_);
+        using state_event_handler_base_<state_ready_>::handle_event;
+    };
+
+    // ---------------------------------------------------------------
+    // Move request (orthogonal to FSM state)
+    // ---------------------------------------------------------------
+    struct move_request {
+        uint32_t group_index{0};
+        std::list<Eigen::VectorXd> waypoints;
+        std::string unix_time;
+        Eigen::VectorXd velocity;
+        Eigen::VectorXd acceleration;
+        std::unique_ptr<GoalRequestHandle> handle;
+        std::promise<void> completion;
+
+        void complete_success();
+        void complete_error(std::string_view message);
+    };
+
+    // ---------------------------------------------------------------
+    // Core FSM machinery (called from run_() under mutex_)
+    // ---------------------------------------------------------------
+    void emit_event_(event_variant_&& event);
+
+    template <typename Event>
+    void emit_event_(Event&& event);
+
+    std::chrono::milliseconds get_timeout_() const;
+    static std::string describe_state_(const state_variant_& sv);
+
+    void upgrade_downgrade_();
+    void recv_robot_data_();
+    void handle_move_request_();
+    void send_heartbeat_();
+
+    void run_();
+
+    // ---------------------------------------------------------------
+    // Fields
+    // ---------------------------------------------------------------
+    YaskawaController* const controller_;
+
+    mutable std::mutex mutex_;
+    state_variant_ current_state_{state_disconnected_{}};
+    std::thread worker_thread_;
+    std::condition_variable worker_wakeup_cv_;
+    bool shutdown_requested_{false};
+
+    std::list<move_request> move_requests_;
+};
+
+// ---------------------------------------------------------------
+// state_event_handler_base_ catch-all: log and ignore unknown events
+// ---------------------------------------------------------------
+template <typename T>
+template <typename Event>
+std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_event_handler_base_<T>::handle_event(
+    state_&, Event&& /*event*/) {
+    VIAM_SDK_LOG(warn) << "state `" << T::name() << "` received unexpected event `" << Event::name() << "`";
+    return std::nullopt;
+}
 
 }  // namespace robot

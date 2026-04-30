@@ -170,6 +170,11 @@ target_sources(viam-yaskawa
     src/viam/lib/robot_socket.cpp
     src/viam/lib/logger.cpp
     src/viam/lib/trajectory_logger.cpp
+    src/viam/lib/yaskawa_controller_state.cpp
+    src/viam/lib/yaskawa_controller_state_events.cpp
+    src/viam/lib/yaskawa_controller_state_disconnected.cpp
+    src/viam/lib/yaskawa_controller_state_independent.cpp
+    src/viam/lib/yaskawa_controller_state_ready.cpp
 )
 
 target_include_directories(viam-yaskawa
