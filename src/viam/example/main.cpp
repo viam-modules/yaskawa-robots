@@ -18,7 +18,6 @@
 
 #include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Core/util/Constants.h>
-#include <third_party/trajectories/Trajectory.h>
 #include <Eigen/Dense>
 
 using namespace robot;
@@ -57,7 +56,7 @@ void example(asio::io_context& io_context) {
                 while (1) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                     // std::cout << "RUN" << '\n';
-                    StatusMessage pos_vel_msg(robot->get_robot_position_velocity_torque());
+                    StatusMessage pos_vel_msg(robot->get_group_position_velocity_torque(0));
                     std::cout << " Position [" << pos_vel_msg.position[0] << " " << pos_vel_msg.position[1] << " "
                               << pos_vel_msg.position[2] << " " << pos_vel_msg.position[3] << " " << pos_vel_msg.position[4] << " "
                               << pos_vel_msg.position[5] << "] Velocity [ " << pos_vel_msg.velocity[0] << " " << pos_vel_msg.velocity[1]
@@ -81,9 +80,9 @@ void example(asio::io_context& io_context) {
         std::cout << "Reset errors " << '\n';
         robot->reset_errors();
         for (int i = 0; i < 1; i++) {
-            auto currentCartPositon = robot->getCartPosition();
+            auto currentCartPositon = robot->getCartPosition(0);
             currentCartPositon.z -= 100;
-            StatusMessage pos_vel_msg(robot->get_robot_position_velocity_torque());
+            StatusMessage pos_vel_msg(robot->get_group_position_velocity_torque(0));
             auto currentAnglePos = AnglePosition(pos_vel_msg.position);
             // currentAnglePos.toRad()
             auto currentAnglePosEigen = Eigen::VectorXd::Map(pos_vel_msg.position.data(), (long)pos_vel_msg.position.size()).eval();
@@ -91,7 +90,7 @@ void example(asio::io_context& io_context) {
             auto circleWayPointAngle = std::list<Eigen::VectorXd>();
             std::transform(
                 circleWayPointCart.begin(), circleWayPointCart.end(), std::back_inserter(circleWayPointAngle), [&](CartesianPosition& pos) {
-                    auto angle = robot->cartPosToAngle(pos);
+                    auto angle = robot->cartPosToAngle(0, pos);
                     angle.toRad();
                     return Eigen::VectorXd::Map(angle.pos.data(), (long)angle.pos.size()).eval();
                 });
@@ -132,7 +131,21 @@ void example(asio::io_context& io_context) {
             std::cout << "Motion trajectory mode..." << '\n';
 
             robot->setMotionMode(1);
-            auto ret = robot->move(std::move(finalPoints), "", robot->get_velocity_limits(), robot->get_acceleration_limits());
+            constexpr int k_dof = 6;
+
+            // Build simple trajectory samples from the waypoints
+            std::vector<trajectory_point_t> samples;
+            uint32_t sec = 0;
+            for (const auto& wp : finalPoints) {
+                trajectory_point_t pt{};
+                for (int j = 0; j < k_dof; ++j) {
+                    pt.positions[j] = wp[j];
+                }
+                pt.time_from_start = {sec++, 0};
+                samples.push_back(pt);
+            }
+
+            auto ret = robot->execute_trajectory(0, k_dof, std::move(samples), {}, 3.0);
             std::cout << "will wait" << '\n';
             ret->wait();
         }

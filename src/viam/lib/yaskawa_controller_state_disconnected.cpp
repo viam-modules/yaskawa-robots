@@ -112,8 +112,5 @@ void YaskawaController::state_::state_disconnected_::connect_(state_& state) {
     }
 
     state.controller_->connect().get();
-    if (!state.controller_->checkGroupIndex()) {
-        throw std::runtime_error("group index check failed after connecting");
-    }
 }
 // NOLINTEND(readability-convert-member-functions-to-static)
