@@ -581,7 +581,7 @@ void UdpRobotSocket::disconnect() {
 
 void UdpRobotSocket::get_status(std::promise<Message> promise) {
     if (!connected_) {
-        throw std::runtime_error("not connected to robot");
+        throw std::runtime_error("UDP socket is disconnected");
     }
     const std::unique_lock lock(session_->status_mutex_);
 
@@ -604,7 +604,7 @@ void UdpRobotSocket::get_status(std::promise<Message> promise) {
 
 void UdpRobotSocket::get_robot_status(std::promise<Message> promise) {
     if (!connected_) {
-        throw std::runtime_error("not connected to robot");
+        throw std::runtime_error("UDP socket is disconnected");
     }
     const std::unique_lock lock(session_->status_mutex_);
 
