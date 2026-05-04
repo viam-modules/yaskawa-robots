@@ -2,10 +2,7 @@
 
 #include <utility>
 
-#include <viam/sdk/log/logging.hpp>
-
 using namespace robot;
-using namespace viam::sdk;
 
 // NOLINTBEGIN(readability-convert-member-functions-to-static)
 
@@ -62,7 +59,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
                 constexpr int k_log_at_n_attempts = 100;
                 ++reconnect_attempts_;
                 if (reconnect_attempts_ == 1 || reconnect_attempts_ % k_log_at_n_attempts == 0) {
-                    VIAM_SDK_LOG(warn) << "[fsm] reconnect attempt " << reconnect_attempts_ << " failed: " << ex.what();
+                    LOGGING(warning) << "[fsm] reconnect attempt " << reconnect_attempts_ << " failed: " << ex.what();
                 }
                 return std::nullopt;
             }
@@ -87,7 +84,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
             try {
                 req.handle->cancel();
             } catch (...) {
-                VIAM_SDK_LOG(warn) << "[fsm] exception while cancelling move request on disconnect";
+                LOGGING(warning) << "[fsm] exception while cancelling move request on disconnect";
             }
         }
         req.complete_error("arm is disconnected");
@@ -101,7 +98,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_disconnected_::handle_event(
     state_&, event_connection_established_) {
-    VIAM_SDK_LOG(info) << "[fsm] connection established, entering independent state";
+    LOGGING(info) << "[fsm] connection established, entering independent state";
     const not_ready_mask all_bits = k_in_error | k_servo_off | k_motion_blocked | k_estop | k_not_remote;
     return state_independent_{all_bits};
 }

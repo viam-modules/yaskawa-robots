@@ -10,7 +10,6 @@
 #include <memory>
 #include <thread>
 
-#include <viam/sdk/common/instance.hpp>
 #include <viam/sdk/config/resource.hpp>
 
 // Ignore SIGPIPE — writes to closed sockets return EPIPE instead of killing the process
@@ -20,14 +19,6 @@ struct SigpipeIgnorer {
     }
 };
 static SigpipeIgnorer s_ignore_sigpipe;
-
-// The FSM uses VIAM_SDK_LOG, which throws if no SDK instance exists.
-struct SdkInstanceFixture {
-    SdkInstanceFixture() {
-        (void)viam::sdk::Instance::current(viam::sdk::Instance::Creation::if_needed);
-    }
-};
-BOOST_TEST_GLOBAL_FIXTURE(SdkInstanceFixture);
 
 #include "../robot_socket.hpp"
 #include "fake_server.hpp"
