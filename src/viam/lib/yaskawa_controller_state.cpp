@@ -66,7 +66,7 @@ void YaskawaController::state_::emit_event_(event_variant_&& event) {
                 std::visit([&](auto&& ev) { return current_state.handle_event(*this, std::forward<decltype(ev)>(ev)); }, std::move(event));
             if (next) {
                 LOGGING(info) << "[fsm] " << controller_->host() << ": state transition `" << pre << "` -> `" << describe_state_(*next)
-                                   << "`";
+                              << "`";
             }
             return next;
         },
