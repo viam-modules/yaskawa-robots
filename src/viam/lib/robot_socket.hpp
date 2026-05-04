@@ -584,18 +584,14 @@ class YaskawaController::state_ {
     };
 
     struct event_connection_lost_ {
-        static event_connection_lost_ socket_failure();
         static event_connection_lost_ heartbeat_failure();
-        static event_connection_lost_ module_shutdown();
 
         static std::string_view name();
         std::string_view describe() const;
 
        private:
         enum class reason : uint8_t {
-            k_socket_failure,
             k_heartbeat_failure,
-            k_module_shutdown,
         };
         explicit event_connection_lost_(reason r);
         reason reason_code_;

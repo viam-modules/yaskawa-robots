@@ -79,10 +79,8 @@ struct FaultFixture {
         server.robot().mode = ROBOT_MODE_REMOTE;
         server.start_udp_status_pump(10);
         controller->connect().get();
-        // Wait for UDP status messages to refresh the legacy `State` view. The FSM is spawned
-        // in the controller's constructor (before this fixture configures server state), so
-        // `robot_state_` is initially populated from the default server state.
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        // Wait for at least one UDP status to arrive and update State
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
     void make_new_controller() {
