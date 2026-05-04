@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot name="motoman_gp35l">
+  <link name="base_link">
+    <collision>
+      <geometry>
+        <mesh filename="package://description/gp35lmeshes/gp35l_base_link.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link_1_s">
+    <collision>
+      <geometry>
+        <mesh filename="package://description/gp35lmeshes/gp35l_link_1_s.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link_2_l">
+    <collision>
+      <geometry>
+        <mesh filename="package://description/gp35lmeshes/gp35l_link_2_l.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link_3_u">
+    <collision>
+      <geometry>
+        <mesh filename="package://description/gp35lmeshes/gp35l_link_3_u.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link_4_r">
+    <collision>
+      <geometry>
+        <mesh filename="package://description/gp35lmeshes/gp35l_link_4_r.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link_5_b">
+    <collision>
+      <geometry>
+        <mesh filename="package://description/gp35lmeshes/gp35l_link_5_b.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="link_6_t">
+    <collision>
+      <geometry>
+        <mesh filename="package://description/gp35lmeshes/gp35l_link_6_t.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <link name="flange"/>
+  <link name="tool0"/>
+
+  <joint name="joint_1_s" type="revolute">
+    <parent link="base_link"/>
+    <child link="link_1_s"/>
+    <origin rpy="0 0 0" xyz="0 0 0.540"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="5516.2" lower="-3.141592653589793" upper="3.141592653589793" velocity="3.141592653589793"/>
+  </joint>
+
+  <joint name="joint_2_l" type="revolute">
+    <parent link="link_1_s"/>
+    <child link="link_2_l"/>
+    <origin rpy="0 0 0" xyz="0.145 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="7060.7" lower="-1.5707963267948966" upper="2.356194490192345" velocity="2.443460952792061"/>
+  </joint>
+
+  <joint name="joint_3_u" type="revolute">
+    <parent link="link_2_l"/>
+    <child link="link_3_u"/>
+    <origin rpy="0 0 0" xyz="0 0 1.150"/>
+    <axis xyz="0 -1 0"/>
+    <limit effort="3089.0" lower="-1.3962634015954636" upper="3.595378259108319" velocity="3.1066860685499065"/>
+  </joint>
+
+  <joint name="joint_4_r" type="revolute">
+    <parent link="link_3_u"/>
+    <child link="link_4_r"/>
+    <origin rpy="0 0 0" xyz="1.225 0 0.210"/>
+    <axis xyz="-1 0 0"/>
+    <limit effort="926.7" lower="-6.283185307179586" upper="6.283185307179586" velocity="4.363323129985824"/>
+  </joint>
+
+  <joint name="joint_5_b" type="revolute">
+    <parent link="link_4_r"/>
+    <child link="link_5_b"/>
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <axis xyz="0 -1 0"/>
+    <limit effort="794.3" lower="-2.181661564992912" upper="2.181661564992912" velocity="4.363323129985824"/>
+  </joint>
+
+  <joint name="joint_6_t" type="revolute">
+    <parent link="link_5_b"/>
+    <child link="link_6_t"/>
+    <origin rpy="0 0 0" xyz="0 0 0"/>
+    <axis xyz="-1 0 0"/>
+    <limit effort="375.0" lower="-6.283185307179586" upper="6.283185307179586" velocity="6.283185307179586"/>
+  </joint>
+
+  <joint name="joint_6_t-flange" type="fixed">
+    <parent link="link_6_t"/>
+    <child link="flange"/>
+    <origin rpy="0 0 0" xyz="0.175 0 0"/>
+  </joint>
+
+  <joint name="flange-tool0" type="fixed">
+    <parent link="flange"/>
+    <child link="tool0"/>
+    <origin rpy="3.141592653589793 -1.5707963267948966 0" xyz="0 0 0"/>
+  </joint>
+</robot>
