@@ -1000,7 +1000,10 @@ void YaskawaController::get_error_info() {
 }
 
 StatusMessage YaskawaController::get_robot_position_velocity_torque() {
-    if (!udp_socket_) {
+    // Check both the pointer and the socket-level connected_ flag: disconnect() leaves the
+    // unique_ptr in place but flips connected_ to false, so a null check alone misses the
+    // post-disconnect case and the inner "not connected to robot" fires without FSM context.
+    if (!udp_socket_ || !udp_socket_->is_connected()) {
         throw std::runtime_error(std::format("arm is {}", describe_state()));
     }
 
@@ -1011,7 +1014,9 @@ StatusMessage YaskawaController::get_robot_position_velocity_torque() {
 }
 
 RobotStatusMessage YaskawaController::get_robot_status() {
-    if (!udp_socket_) {
+    // See note in get_robot_position_velocity_torque: both the pointer and the connected_
+    // flag must be checked to surface a post-disconnect call with FSM context.
+    if (!udp_socket_ || !udp_socket_->is_connected()) {
         throw std::runtime_error(std::format("arm is {}", describe_state()));
     }
 
