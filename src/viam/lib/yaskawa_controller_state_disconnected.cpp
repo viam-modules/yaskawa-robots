@@ -113,21 +113,10 @@ std::optional<YaskawaController::state_::state_variant_> YaskawaController::stat
 // ---------------------------------------------------------------
 
 void YaskawaController::state_::state_disconnected_::connect_(state_& state) {
-    auto* controller = state.controller_;
-    // Tear down any stale connections before re-establishing. Idempotent on the initial
-    // attempt (sockets have not connected yet); on reconnect this drops the dead session.
-    // TcpRobotSocket can't be reused after disconnect, so replace with a fresh instance;
-    // establish_connections_() replaces udp_socket_ internally.
-    if (controller->udp_socket_) {
-        controller->udp_socket_->disconnect();
-    }
-    if (controller->tcp_socket_) {
-        controller->tcp_socket_->disconnect();
-    }
-    controller->tcp_socket_ = std::make_unique<TcpRobotSocket>(controller->io_context_, controller->host_, controller->tcp_port_);
-
-    controller->establish_connections_();
-    if (!controller->checkGroupIndex()) {
+    // establish_connections_() handles both initial connect and reconnect — on reconnect it
+    // tears down the stale session and replaces tcp_socket_ before establishing.
+    state.controller_->establish_connections_();
+    if (!state.controller_->checkGroupIndex()) {
         throw std::runtime_error("group index check failed after connecting");
     }
 }

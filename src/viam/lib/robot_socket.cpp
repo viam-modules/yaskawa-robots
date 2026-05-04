@@ -839,6 +839,17 @@ void YaskawaController::set_trajectory_loggers(std::string robot_model,
 }
 
 void YaskawaController::establish_connections_() {
+    // Tear down any stale connection. No-op on the first call (sockets have not connected yet).
+    // On reconnect, this drops the dead session before we replace tcp_socket_, since
+    // TcpRobotSocket can't be reused after disconnect.
+    if (udp_socket_) {
+        udp_socket_->disconnect();
+    }
+    if (tcp_socket_ && tcp_socket_->is_connected()) {
+        tcp_socket_->disconnect();
+        tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_, tcp_port_);
+    }
+
     try {
         auto tcp_future = tcp_socket_->connect();
         if (tcp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
@@ -865,9 +876,11 @@ void YaskawaController::establish_connections_() {
 }
 
 std::future<void> YaskawaController::connect() {
+    // The constructor already spins up the FSM, which owns connection lifecycle and reconnects
+    // asynchronously. This method is a backwards-compat shim for callers (example/test) that
+    // expect a `connect()` entry point; in production it is a no-op. The fallback below would
+    // only fire if `fsm_` had been reset (e.g., by a prior `disconnect()`).
     return std::async(std::launch::async, [this]() {
-        // The FSM owns the connection lifecycle. state_::create() blocks until the FSM
-        // transitions out of state_disconnected_, or throws after a bounded number of attempts.
         if (!fsm_) {
             fsm_ = state_::create(this);
         }
@@ -1002,7 +1015,7 @@ void YaskawaController::get_error_info() {
 StatusMessage YaskawaController::get_robot_position_velocity_torque() {
     // Check both the pointer and the socket-level connected_ flag: disconnect() leaves the
     // unique_ptr in place but flips connected_ to false, so a null check alone misses the
-    // post-disconnect case and the inner "not connected to robot" fires without FSM context.
+    // post-disconnect case and the inner "UDP socket is disconnected" fires without FSM context.
     if (!udp_socket_ || !udp_socket_->is_connected()) {
         throw std::runtime_error(std::format("arm is {}", describe_state()));
     }

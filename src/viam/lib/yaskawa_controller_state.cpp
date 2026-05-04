@@ -50,7 +50,9 @@ void YaskawaController::state_::run_() {
         } catch (...) {
             LOGGING(warning) << "[fsm] " << controller_->host() << ": unknown exception in worker thread";
         }
-        worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] { return shutdown_requested_; });
+        // No predicate: any notify (e.g., from enqueue_move_request) returns control to the
+        // loop, the cycle re-runs, and shutdown is observed at the top of the next iteration.
+        worker_wakeup_cv_.wait_for(lock, get_timeout_());
     }
 }
 
