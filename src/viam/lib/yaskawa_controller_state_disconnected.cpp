@@ -2,10 +2,7 @@
 
 #include <utility>
 
-#include <viam/sdk/log/logging.hpp>
-
 using namespace robot;
-using namespace viam::sdk;
 
 // NOLINTBEGIN(readability-convert-member-functions-to-static)
 
@@ -25,6 +22,9 @@ std::string_view YaskawaController::state_::state_disconnected_::name() {
 }
 
 std::string YaskawaController::state_::state_disconnected_::describe() const {
+    if (triggering_event_) {
+        return std::string(name()) + "(" + std::string(triggering_event_->describe()) + ")";
+    }
     return std::string(name());
 }
 
@@ -51,7 +51,18 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 
     switch (pending_connection_.wait_for(std::chrono::seconds(0))) {
         case std::future_status::ready:
-            pending_connection_.get();
+            try {
+                pending_connection_.get();
+            } catch (const std::exception& ex) {
+                // Reconnect failed; log deduped to avoid spamming when the controller is unreachable.
+                // The next worker cycle will spawn a fresh attempt (future is now invalid).
+                constexpr int k_log_at_n_attempts = 100;
+                ++reconnect_attempts_;
+                if (reconnect_attempts_ == 1 || reconnect_attempts_ % k_log_at_n_attempts == 0) {
+                    LOGGING(warning) << "[fsm] reconnect attempt " << reconnect_attempts_ << " failed: " << ex.what();
+                }
+                return std::nullopt;
+            }
             return event_connection_established_{};
         case std::future_status::timeout:
             break;
@@ -73,7 +84,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
             try {
                 req.handle->cancel();
             } catch (...) {
-                VIAM_SDK_LOG(warn) << "exception while cancelling move request on disconnect";
+                LOGGING(warning) << "[fsm] exception while cancelling move request on disconnect";
             }
         }
         req.complete_error("arm is disconnected");
@@ -87,7 +98,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_disconnected_::handle_event(
     state_&, event_connection_established_) {
-    VIAM_SDK_LOG(info) << "connection established, entering independent state";
+    LOGGING(info) << "[fsm] connection established, entering independent state";
     const not_ready_mask all_bits = k_in_error | k_servo_off | k_motion_blocked | k_estop | k_not_remote;
     return state_independent_{all_bits};
 }
@@ -102,16 +113,9 @@ std::optional<YaskawaController::state_::state_variant_> YaskawaController::stat
 // ---------------------------------------------------------------
 
 void YaskawaController::state_::state_disconnected_::connect_(state_& state) {
-    constexpr int k_log_at_n_attempts = 100;
-    if (++reconnect_attempts_ % k_log_at_n_attempts == 0) {
-        if (triggering_event_) {
-            VIAM_SDK_LOG(warn) << "disconnected: connection was lost due to " << triggering_event_->describe()
-                               << "; attempting automatic recovery";
-        }
-        VIAM_SDK_LOG(info) << "reconnect attempt " << reconnect_attempts_;
-    }
-
-    state.controller_->connect().get();
+    // establish_connections_() handles both initial connect and reconnect — on reconnect it
+    // tears down the stale session and replaces tcp_socket_ before establishing.
+    state.controller_->establish_connections_();
     if (!state.controller_->checkGroupIndex()) {
         throw std::runtime_error("group index check failed after connecting");
     }

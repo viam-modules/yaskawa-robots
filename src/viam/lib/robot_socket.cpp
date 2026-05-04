@@ -422,7 +422,7 @@ std::future<void> TcpRobotSocket::connect() {
         [this, promise]() mutable -> awaitable<void> {
             try {
                 ip::tcp::resolver resolver(io_context_);
-                LOGGING(info) << "connecting to " << host_ << ":" << port_;
+                LOGGING(debug) << "connecting to " << host_ << ":" << port_;
                 auto endpoints = co_await resolver.async_resolve(host_, std::to_string(port_), use_awaitable);
                 co_await async_connect(session_->socket_, endpoints, use_awaitable);
 
@@ -581,7 +581,7 @@ void UdpRobotSocket::disconnect() {
 
 void UdpRobotSocket::get_status(std::promise<Message> promise) {
     if (!connected_) {
-        throw std::runtime_error("socket is disconnected");
+        throw std::runtime_error("UDP socket is disconnected");
     }
     const std::unique_lock lock(session_->status_mutex_);
 
@@ -604,7 +604,7 @@ void UdpRobotSocket::get_status(std::promise<Message> promise) {
 
 void UdpRobotSocket::get_robot_status(std::promise<Message> promise) {
     if (!connected_) {
-        throw std::runtime_error("socket is disconnected");
+        throw std::runtime_error("UDP socket is disconnected");
     }
     const std::unique_lock lock(session_->status_mutex_);
 
@@ -823,6 +823,13 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     tcp_port_ = tcp_port ? static_cast<uint16_t>(*tcp_port) : static_cast<uint16_t>(TCP_PORT);
     tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_, tcp_port_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
+    // Diagnostic listener: independent of TCP/UDP control sockets, runs for controller lifetime.
+    broadcast_listener_->start();
+
+    // Spin up the FSM. It runs asynchronously: tries to connect in the background and keeps
+    // retrying on failure. The resource stands up immediately; API calls fail until the FSM
+    // reaches a connected state.
+    fsm_ = state_::create(this);
 }
 
 void YaskawaController::set_trajectory_loggers(std::string robot_model,
@@ -832,6 +839,17 @@ void YaskawaController::set_trajectory_loggers(std::string robot_model,
 }
 
 void YaskawaController::establish_connections_() {
+    // Tear down any stale connection. No-op on the first call (sockets have not connected yet).
+    // On reconnect, this drops the dead session before we replace tcp_socket_, since
+    // TcpRobotSocket can't be reused after disconnect.
+    if (udp_socket_) {
+        udp_socket_->disconnect();
+    }
+    if (tcp_socket_ && tcp_socket_->is_connected()) {
+        tcp_socket_->disconnect();
+        tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_, tcp_port_);
+    }
+
     try {
         auto tcp_future = tcp_socket_->connect();
         if (tcp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
@@ -858,75 +876,21 @@ void YaskawaController::establish_connections_() {
 }
 
 std::future<void> YaskawaController::connect() {
+    // The constructor already spins up the FSM, which owns connection lifecycle and reconnects
+    // asynchronously. This method is a backwards-compat shim for callers (example/test) that
+    // expect a `connect()` entry point; in production it is a no-op. The fallback below would
+    // only fire if `fsm_` had been reset (e.g., by a prior `disconnect()`).
     return std::async(std::launch::async, [this]() {
-        try {
-            establish_connections_();
-
-            running_ = true;
-
-            // Heartbeat thread: sends periodic heartbeats and retries reconnection indefinitely
-            // on failure. Exits when the controller is destroyed (weak_ptr expires) or
-            // disconnect() is called (running_ set to false).
-            heartbeat_thread_ = std::thread([self = weak_from_this()]() {
-                constexpr auto k_heartbeat_interval = std::chrono::milliseconds(100);
-                constexpr auto k_reconnect_delay = std::chrono::seconds(1);
-                constexpr uint32_t k_log_every_n_failures = 30;
-                uint32_t consecutive_failures = 0;
-
-                while (auto shared = self.lock()) {
-                    if (!shared->running_) {
-                        return;
-                    }
-                    try {
-                        shared->send_heartbeat();
-                        consecutive_failures = 0;
-                        shared.reset();
-                        std::this_thread::sleep_for(k_heartbeat_interval);
-                    } catch (const std::exception& e) {
-                        ++consecutive_failures;
-                        const bool should_log = consecutive_failures == 1 || consecutive_failures % k_log_every_n_failures == 0;
-                        const auto log_level = should_log ? viam::yaskawa::LogLevel::WARNING : viam::yaskawa::LogLevel::DEBUG;
-                        viam::yaskawa::get_global_logger()->log(log_level) << "heartbeat failed: " << e.what();
-                        if (!shared->running_) {
-                            return;
-                        }
-                        // reconnect_() replaces the sockets in-place. Any in-progress
-                        // move will fail when it next tries to communicate with the
-                        // controller (goal status / chunk sends), which is the expected
-                        // behavior when the connection drops mid-move.
-                        try {
-                            shared->reconnect_();
-                            LOGGING(info) << "reconnected successfully";
-                            consecutive_failures = 0;
-                            shared.reset();
-                            std::this_thread::sleep_for(k_heartbeat_interval);
-                        } catch (const std::exception& re) {
-                            viam::yaskawa::get_global_logger()->log(log_level) << std::format("reconnect failed: {}", re.what());
-                            shared.reset();
-                            std::this_thread::sleep_for(k_reconnect_delay);
-                        }
-                    }
-                }
-            });
-
-            // Start listening for broadcast messages from robot
-            broadcast_listener_->start();
-
-        } catch (const std::exception& e) {
-            // Clean up on connection failure
-            broadcast_listener_.reset();
-            udp_socket_.reset();
-            throw;
+        if (!fsm_) {
+            fsm_ = state_::create(this);
         }
     });
 }
 
 void YaskawaController::disconnect() {
     LOGGING(info) << "Yaskawa Controller disconnecting";
-    running_ = false;
-    if (heartbeat_thread_.joinable()) {
-        heartbeat_thread_.join();
-    }
+    // Reset FSM first so its worker thread joins before we tear down the sockets it talks to.
+    fsm_.reset();
     if (udp_socket_) {
         udp_socket_->disconnect();
     }
@@ -936,36 +900,6 @@ void YaskawaController::disconnect() {
     if (broadcast_listener_) {
         broadcast_listener_->stop();
     }
-}
-
-void YaskawaController::reconnect_() {
-    LOGGING(info) << "tearing down existing connections for reconnect";
-
-    udp_socket_->disconnect();
-    tcp_socket_->disconnect();
-    // broadcast_listener_ is not restarted here: it is diagnostic-only and its UDP
-    // socket is not affected by TCP/control-plane disconnects.
-
-    // Wait for any in-progress move to notice the disconnection and clear the flag.
-    // The move thread polls at 100Hz so this normally resolves within milliseconds.
-    // We proceed after the timeout regardless — the move will fail on its next
-    // communication attempt.
-    constexpr auto k_move_drain_timeout = std::chrono::milliseconds(500);
-    const auto deadline = std::chrono::steady_clock::now() + k_move_drain_timeout;
-    while (move_in_progress_ && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    if (move_in_progress_) {
-        LOGGING(warning) << "reconnect: move still in progress after drain, proceeding anyway";
-    }
-
-    // Replace TCP socket without going through null: disconnect() above sets connected_=false
-    // atomically, so concurrent callers get "Not connected" rather than a null deref.
-    // establish_connections_() will create a fresh UDP socket.
-    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_, tcp_port_);
-
-    establish_connections_();
-    LOGGING(info) << "reconnect complete";
 }
 
 uint32_t YaskawaController::get_group_index() const {
@@ -1079,8 +1013,11 @@ void YaskawaController::get_error_info() {
 }
 
 StatusMessage YaskawaController::get_robot_position_velocity_torque() {
-    if (!udp_socket_) {
-        throw std::runtime_error("UDP socket not connected");
+    // Check both the pointer and the socket-level connected_ flag: disconnect() leaves the
+    // unique_ptr in place but flips connected_ to false, so a null check alone misses the
+    // post-disconnect case and the inner "UDP socket is disconnected" fires without FSM context.
+    if (!udp_socket_ || !udp_socket_->is_connected()) {
+        throw std::runtime_error(std::format("arm is {}", describe_state()));
     }
 
     std::promise<Message> promise;
@@ -1090,8 +1027,10 @@ StatusMessage YaskawaController::get_robot_position_velocity_torque() {
 }
 
 RobotStatusMessage YaskawaController::get_robot_status() {
-    if (!udp_socket_) {
-        throw std::runtime_error("UDP socket not connected");
+    // See note in get_robot_position_velocity_torque: both the pointer and the connected_
+    // flag must be checked to surface a post-disconnect call with FSM context.
+    if (!udp_socket_ || !udp_socket_->is_connected()) {
+        throw std::runtime_error(std::format("arm is {}", describe_state()));
     }
 
     // TODO(RSDK-12470) account for group_id_ in request

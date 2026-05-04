@@ -2,10 +2,7 @@
 
 #include <format>
 
-#include <viam/sdk/log/logging.hpp>
-
 using namespace robot;
-using namespace viam::sdk;
 
 // ---------------------------------------------------------------
 // state_independent_ constructor
@@ -96,7 +93,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
             try {
                 req.handle->cancel();
             } catch (...) {
-                VIAM_SDK_LOG(warn) << "exception while cancelling move request on entering independent state";
+                LOGGING(warning) << "[fsm] exception while cancelling move request on entering independent state";
             }
         }
         req.complete_error(
@@ -111,8 +108,8 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 
 // NOLINTBEGIN(readability-convert-member-functions-to-static)
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_independent_::handle_event(
-    state_& state, event_connection_lost_ event) {
-    state.controller_->disconnect();
+    state_&, event_connection_lost_ event) {
+    // state_disconnected_::connect_() tears down stale sockets before reconnecting.
     return state_disconnected_{std::move(event)};
 }
 
@@ -124,7 +121,7 @@ std::optional<YaskawaController::state_::state_variant_> YaskawaController::stat
 
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_independent_::handle_event(
     state_&, event_ready_detected_) {
-    VIAM_SDK_LOG(info) << "all not-ready conditions cleared, entering ready state";
+    LOGGING(info) << "[fsm] all not-ready conditions cleared, entering ready state";
     return state_ready_{};
 }
 // NOLINTEND(readability-convert-member-functions-to-static)

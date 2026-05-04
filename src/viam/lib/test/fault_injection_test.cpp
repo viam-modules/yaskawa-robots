@@ -132,6 +132,11 @@ BOOST_FIXTURE_TEST_CASE(server_unresponsive_during_move, FaultFixture, *boost::u
 BOOST_FIXTURE_TEST_CASE(server_unresponsive, FaultFixture, *boost::unit_test::timeout(15)) {
     connect();
 
+    // FSM's auto-recovery may have already turned servo power on during the transition into
+    // ready state. Reset the baseline so we can observe whether the fault below intercepts
+    // the command.
+    server.robot().servo_power_on = 0;
+
     server.inject_unresponsive_on(MSG_TURN_SERVO_POWER_ON);
 
     auto start = std::chrono::steady_clock::now();

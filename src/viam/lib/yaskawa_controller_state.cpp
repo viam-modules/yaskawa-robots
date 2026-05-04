@@ -3,10 +3,7 @@
 #include <format>
 #include <stdexcept>
 
-#include <viam/sdk/log/logging.hpp>
-
 using namespace robot;
-using namespace viam::sdk;
 
 // ---------------------------------------------------------------
 // state_::constructor / destructor / create / shutdown
@@ -41,22 +38,21 @@ void YaskawaController::state_::shutdown() {
 // ---------------------------------------------------------------
 
 void YaskawaController::state_::run_() {
-    while (true) {
-        std::unique_lock lock{mutex_};
-        worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] { return shutdown_requested_; });
-        if (shutdown_requested_) {
-            break;
-        }
+    std::unique_lock lock{mutex_};
+    while (!shutdown_requested_) {
         try {
             recv_robot_data_();
             upgrade_downgrade_();
             handle_move_request_();
             send_heartbeat_();
         } catch (const std::exception& ex) {
-            VIAM_SDK_LOG(warn) << controller_->host() << ": exception in worker thread: " << ex.what();
+            LOGGING(warning) << "[fsm] " << controller_->host() << ": exception in worker thread: " << ex.what();
         } catch (...) {
-            VIAM_SDK_LOG(warn) << controller_->host() << ": unknown exception in worker thread";
+            LOGGING(warning) << "[fsm] " << controller_->host() << ": unknown exception in worker thread";
         }
+        // No predicate: any notify (e.g., from enqueue_move_request) returns control to the
+        // loop, the cycle re-runs, and shutdown is observed at the top of the next iteration.
+        worker_wakeup_cv_.wait_for(lock, get_timeout_());
     }
 }
 
@@ -71,7 +67,8 @@ void YaskawaController::state_::emit_event_(event_variant_&& event) {
             auto next =
                 std::visit([&](auto&& ev) { return current_state.handle_event(*this, std::forward<decltype(ev)>(ev)); }, std::move(event));
             if (next) {
-                VIAM_SDK_LOG(info) << controller_->host() << ": state transition `" << pre << "` -> `" << describe_state_(*next) << "`";
+                LOGGING(info) << "[fsm] " << controller_->host() << ": state transition `" << pre << "` -> `" << describe_state_(*next)
+                              << "`";
             }
             return next;
         },
@@ -230,14 +227,28 @@ std::chrono::milliseconds YaskawaController::state_::state_connected_::get_timeo
 }
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_connected_::recv_robot_data(state_&) {
-    return std::nullopt;
-}
-
-std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_connected_::send_heartbeat(state_&) {
-    // TODO(PR 2): implement — controller disconnects the module if heartbeat stops.
+    // Intentionally a no-op. Robot status is delivered continuously by `UdpRobotSocket`'s receive
+    // coroutine, which updates `cached_robot_status_` as packets arrive; the FSM cycle reads from
+    // that cache via `get_robot_status()` in `upgrade_downgrade`. The server (yaskawa-controller's
+    // comm_server.c) pushes position/torque at 100Hz and robot status at 10Hz, so cache staleness
+    // is bounded by the pump rate, not by our 100ms FSM cycle.
+    //
+    // If we later bump the FSM cycle above the status pump rate (e.g. to react to not-ready
+    // conditions faster), this is the right hook to fold in: drain incoming packets and/or check
+    // last-message-timestamp to detect a dead UDP pump while the TCP heartbeat stays alive.
     return std::nullopt;
 }
 // NOLINTEND(readability-convert-member-functions-to-static)
+
+std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_connected_::send_heartbeat(state_& state) {
+    try {
+        state.controller_->send_heartbeat();
+    } catch (const std::exception& ex) {
+        LOGGING(warning) << "[fsm] heartbeat failed: " << ex.what();
+        return event_connection_lost_::heartbeat_failure();
+    }
+    return std::nullopt;
+}
 
 // ---------------------------------------------------------------
 // move_request

@@ -261,29 +261,8 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
         return std::make_optional(res);
     });
 
-    constexpr int k_max_connection_try = 5;
-    int connection_try = 0;
-
-    // Attempt connection with retry logic
-    while (connection_try < k_max_connection_try) {
-        try {
-            ++connection_try;
-            robot_->connect().get();
-            VIAM_SDK_LOG(info) << "Successfully connected to robot on attempt " << connection_try;
-            break;  // Exit on successful connection
-        } catch (std::exception& ex) {
-            VIAM_SDK_LOG(error) << std::format(
-                "connection {} out of {} failed because {}", connection_try, k_max_connection_try, ex.what());
-            if (k_max_connection_try == connection_try) {
-                throw;
-            }
-        }
-    }
-    if (!robot_->checkGroupIndex()) {
-        std::ostringstream buffer;
-        buffer << std::format("group_index {} is not available on the arm controller", robot_->get_group_index());
-        throw std::invalid_argument(buffer.str());
-    }
+    // YaskawaController spins up its FSM in the constructor; the resource is up immediately,
+    // and the FSM connects (and reconnects) in the background.
 }
 
 void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {

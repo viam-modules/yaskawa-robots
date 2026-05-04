@@ -483,10 +483,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // Move locking: prevents concurrent moves
     std::atomic<bool> move_in_progress_{false};
 
-    // Connection lifecycle: true between connect() and disconnect()
-    std::atomic<bool> running_{false};
-    std::thread heartbeat_thread_;
-
     bool use_new_trajectory_planner_{false};
     double path_tolerance_rad_{0.1};
     std::optional<double> collinearization_ratio_;
@@ -495,7 +491,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn_;
 
     void establish_connections_();
-    void reconnect_();
 
     std::unique_ptr<state_> fsm_;
 
@@ -589,18 +584,14 @@ class YaskawaController::state_ {
     };
 
     struct event_connection_lost_ {
-        static event_connection_lost_ socket_failure();
         static event_connection_lost_ heartbeat_failure();
-        static event_connection_lost_ module_shutdown();
 
         static std::string_view name();
         std::string_view describe() const;
 
        private:
         enum class reason : uint8_t {
-            k_socket_failure,
             k_heartbeat_failure,
-            k_module_shutdown,
         };
         explicit event_connection_lost_(reason r);
         reason reason_code_;
