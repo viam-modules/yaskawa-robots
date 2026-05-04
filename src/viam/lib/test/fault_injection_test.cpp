@@ -10,6 +10,7 @@
 #include <memory>
 #include <thread>
 
+#include <viam/sdk/common/instance.hpp>
 #include <viam/sdk/config/resource.hpp>
 
 // Ignore SIGPIPE — writes to closed sockets return EPIPE instead of killing the process
@@ -19,6 +20,14 @@ struct SigpipeIgnorer {
     }
 };
 static SigpipeIgnorer s_ignore_sigpipe;
+
+// The FSM uses VIAM_SDK_LOG, which throws if no SDK instance exists.
+struct SdkInstanceFixture {
+    SdkInstanceFixture() {
+        (void)viam::sdk::Instance::current(viam::sdk::Instance::Creation::if_needed);
+    }
+};
+BOOST_TEST_GLOBAL_FIXTURE(SdkInstanceFixture);
 
 #include "../robot_socket.hpp"
 #include "fake_server.hpp"
@@ -70,8 +79,10 @@ struct FaultFixture {
         server.robot().mode = ROBOT_MODE_REMOTE;
         server.start_udp_status_pump(10);
         controller->connect().get();
-        // Wait for at least one UDP status to arrive and update State
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        // Wait for UDP status messages to refresh the legacy `State` view. The FSM is spawned
+        // in the controller's constructor (before this fixture configures server state), so
+        // `robot_state_` is initially populated from the default server state.
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
     void make_new_controller() {
@@ -131,6 +142,11 @@ BOOST_FIXTURE_TEST_CASE(server_unresponsive_during_move, FaultFixture, *boost::u
 // delay is observable.
 BOOST_FIXTURE_TEST_CASE(server_unresponsive, FaultFixture, *boost::unit_test::timeout(15)) {
     connect();
+
+    // FSM's auto-recovery may have already turned servo power on during the transition into
+    // ready state. Reset the baseline so we can observe whether the fault below intercepts
+    // the command.
+    server.robot().servo_power_on = 0;
 
     server.inject_unresponsive_on(MSG_TURN_SERVO_POWER_ON);
 

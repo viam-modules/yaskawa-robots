@@ -84,14 +84,14 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 // ---------------------------------------------------------------
 
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_ready_::handle_event(
-    state_& state, event_connection_lost_ event) {
-    state.controller_->disconnect();
+    state_&, event_connection_lost_ event) {
+    // state_disconnected_::connect_() tears down stale sockets before reconnecting.
     return state_disconnected_{std::move(event)};
 }
 
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_ready_::handle_event(
     state_&, event_not_ready_detected_ event) {
-    VIAM_SDK_LOG(warn) << "not-ready condition detected in ready state, entering independent state";
+    VIAM_SDK_LOG(warn) << "[fsm] not-ready condition detected in ready state, entering independent state";
     // In-flight move_requests_ are not cancelled here. They are cancelled on the next
     // handle_move_request_() call, which runs after upgrade_downgrade_() in the same cycle.
     return state_independent_{event.mask};

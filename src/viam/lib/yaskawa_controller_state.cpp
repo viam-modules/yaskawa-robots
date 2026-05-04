@@ -41,22 +41,19 @@ void YaskawaController::state_::shutdown() {
 // ---------------------------------------------------------------
 
 void YaskawaController::state_::run_() {
-    while (true) {
-        std::unique_lock lock{mutex_};
-        worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] { return shutdown_requested_; });
-        if (shutdown_requested_) {
-            break;
-        }
+    std::unique_lock lock{mutex_};
+    while (!shutdown_requested_) {
         try {
             recv_robot_data_();
             upgrade_downgrade_();
             handle_move_request_();
             send_heartbeat_();
         } catch (const std::exception& ex) {
-            VIAM_SDK_LOG(warn) << controller_->host() << ": exception in worker thread: " << ex.what();
+            VIAM_SDK_LOG(warn) << "[fsm] " << controller_->host() << ": exception in worker thread: " << ex.what();
         } catch (...) {
-            VIAM_SDK_LOG(warn) << controller_->host() << ": unknown exception in worker thread";
+            VIAM_SDK_LOG(warn) << "[fsm] " << controller_->host() << ": unknown exception in worker thread";
         }
+        worker_wakeup_cv_.wait_for(lock, get_timeout_(), [this] { return shutdown_requested_; });
     }
 }
 
@@ -71,7 +68,8 @@ void YaskawaController::state_::emit_event_(event_variant_&& event) {
             auto next =
                 std::visit([&](auto&& ev) { return current_state.handle_event(*this, std::forward<decltype(ev)>(ev)); }, std::move(event));
             if (next) {
-                VIAM_SDK_LOG(info) << controller_->host() << ": state transition `" << pre << "` -> `" << describe_state_(*next) << "`";
+                VIAM_SDK_LOG(info) << "[fsm] " << controller_->host() << ": state transition `" << pre << "` -> `" << describe_state_(*next)
+                                   << "`";
             }
             return next;
         },
@@ -232,12 +230,17 @@ std::chrono::milliseconds YaskawaController::state_::state_connected_::get_timeo
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_connected_::recv_robot_data(state_&) {
     return std::nullopt;
 }
+// NOLINTEND(readability-convert-member-functions-to-static)
 
-std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_connected_::send_heartbeat(state_&) {
-    // TODO(PR 2): implement — controller disconnects the module if heartbeat stops.
+std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_connected_::send_heartbeat(state_& state) {
+    try {
+        state.controller_->send_heartbeat();
+    } catch (const std::exception& ex) {
+        VIAM_SDK_LOG(warn) << "[fsm] heartbeat failed: " << ex.what();
+        return event_connection_lost_::heartbeat_failure();
+    }
     return std::nullopt;
 }
-// NOLINTEND(readability-convert-member-functions-to-static)
 
 // ---------------------------------------------------------------
 // move_request
