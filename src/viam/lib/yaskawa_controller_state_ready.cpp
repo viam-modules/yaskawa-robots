@@ -52,29 +52,13 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 }
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_ready_::handle_move_request(state_& state) {
-    // TODO(PR #54): pass req.group_index to move() once the API accepts it.
+    // TODO: integrate with execute_trajectory() once the state machine is wired into the arm.
+    // move() was replaced by execute_trajectory() which takes pre-computed trajectory samples.
+    // The arm now owns trajectory generation and calls execute_trajectory() directly.
     for (auto it = state.move_requests_.begin(); it != state.move_requests_.end();) {
         auto& req = *it;
-        if (!req.handle) {
-            try {
-                req.handle = state.controller_->move(std::move(req.waypoints), req.unix_time, req.velocity, req.acceleration);
-            } catch (const std::exception& ex) {
-                req.complete_error(ex.what());
-                it = state.move_requests_.erase(it);
-                continue;
-            }
-            ++it;
-        } else if (req.handle->is_done()) {
-            try {
-                std::ignore = req.handle->wait_for(std::chrono::milliseconds(0));  // only care if it throws
-                req.complete_success();
-            } catch (const std::exception& ex) {
-                req.complete_error(ex.what());
-            }
-            it = state.move_requests_.erase(it);
-        } else {
-            ++it;
-        }
+        req.complete_error("move() is not available; use execute_trajectory() via the arm component");
+        it = state.move_requests_.erase(it);
     }
     return std::nullopt;
 }

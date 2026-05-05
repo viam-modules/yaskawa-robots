@@ -35,30 +35,27 @@ Json::Value waypoints_to_json(const std::list<Eigen::VectorXd>& waypoints) {
     return arr;
 }
 
-// Convert trajectory_point_t array to JSON with 6-joint positions/velocities/accelerations
-Json::Value trajectory_array_to_json(const std::vector<trajectory_point_t>& trajectory_points) {
+// Convert trajectory_point_t array to JSON with per-joint positions/velocities/accelerations.
+// num_axes controls how many elements are serialized from each fixed-size array in the struct.
+Json::Value trajectory_array_to_json(const std::vector<trajectory_point_t>& trajectory_points, int num_axes) {
     Json::Value arr(Json::arrayValue);
     for (const auto& point : trajectory_points) {
         Json::Value point_obj(Json::objectValue);
 
-        // TODO(npm) don't use NUMBER_OF_DOF
-        // Positions
         Json::Value positions(Json::arrayValue);
-        for (int i = 0; i < NUMBER_OF_DOF; ++i) {
+        for (int i = 0; i < num_axes; ++i) {
             positions.append(point.positions[i]);
         }
         point_obj["positions_rad"] = positions;
 
-        // Velocities
         Json::Value velocities(Json::arrayValue);
-        for (int i = 0; i < NUMBER_OF_DOF; ++i) {
+        for (int i = 0; i < num_axes; ++i) {
             velocities.append(point.velocities[i]);
         }
         point_obj["velocities_rad_per_sec"] = velocities;
 
-        // Accelerations
         Json::Value accelerations(Json::arrayValue);
-        for (int i = 0; i < NUMBER_OF_DOF; ++i) {
+        for (int i = 0; i < num_axes; ++i) {
             accelerations.append(point.accelerations[i]);
         }
         point_obj["accelerations_rad_per_sec2"] = accelerations;
@@ -215,8 +212,8 @@ void RealtimeTrajectoryLogger::set_waypoints(const std::list<Eigen::VectorXd>& w
     root_["waypoints_rad"] = waypoints_to_json(waypoints_rad);
 }
 
-void RealtimeTrajectoryLogger::set_planned_trajectory(const std::vector<trajectory_point_t>& planned_trajectory_points) {
-    root_["planned_trajectory"] = trajectory_array_to_json(planned_trajectory_points);
+void RealtimeTrajectoryLogger::set_planned_trajectory(const std::vector<trajectory_point_t>& planned_trajectory_points, int num_axes) {
+    root_["planned_trajectory"] = trajectory_array_to_json(planned_trajectory_points, num_axes);
 }
 
 RealtimeTrajectoryLogger::RealtimeTrajectoryLogger(RealtimeTrajectoryLogger&& other) noexcept

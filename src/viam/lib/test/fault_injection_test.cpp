@@ -57,6 +57,7 @@ struct FaultFixture {
             try {
                 controller->disconnect();
             } catch (...) {
+                LOGGING(debug) << "caught unknown exception";
             }
         }
         controller.reset();
@@ -67,11 +68,8 @@ struct FaultFixture {
     }
 
     void connect() {
-        server.robot().mode = ROBOT_MODE_REMOTE;
         server.start_udp_status_pump(10);
         controller->connect().get();
-        // Wait for at least one UDP status to arrive and update State
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
     void make_new_controller() {
@@ -200,7 +198,7 @@ BOOST_FIXTURE_TEST_CASE(client_disconnect_during_active_goal, FaultFixture, *boo
     controller->turn_servo_power_on();
 
     controller->send_test_trajectory();
-    BOOST_CHECK(server.robot().in_motion);
+    BOOST_CHECK(server.robot().groups[0].in_motion);
 
     // Client-initiated disconnect
     controller->disconnect();

@@ -35,18 +35,18 @@ install: build
 	ninja -C build install
 
 test: configure
-	cmake --build build --target broadcast_log_parser_test realtime_trajectory_logger_test move_limit_test fault_injection_test viam-trajex-totg-test viam-trajex-totg-tools-test viam-trajex-types-test viam-trajex-service-test
+	cmake --build build --target broadcast_log_parser_test realtime_trajectory_logger_test move_limit_test fault_injection_test controller_integration_test viam-trajex-totg-test viam-trajex-totg-tools-test viam-trajex-types-test viam-trajex-service-test
 	cmake --build build --target test
 
 module.tar.gz: format-check install
 	ninja -C build package
 
 run-clang-tidy:
-	clang-tidy-19 \
+	run-clang-tidy-19 \
         -p build \
-        --config-file ./.clang-tidy \
-        --header-filter=".*/src/viam/(lib|module)/.*" \
-        --extra-arg=-D_Bool=bool \
+        -config-file ./.clang-tidy \
+        -header-filter=".*/src/viam/(lib|module)/.*" \
+        -extra-arg=-D_Bool=bool \
 	./src/viam/*/*.cpp
 
 run-clang-check:

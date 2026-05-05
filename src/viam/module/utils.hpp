@@ -116,3 +116,14 @@ size_t validate_joint_limit_attribute(const viam::sdk::ResourceConfig& cfg, cons
 // Scalar: fills all joints uniformly. Throws if value <= 0.
 // Vector: sets per-joint limits. Requires matching DOF, all non-negative.
 void apply_move_limit(Eigen::VectorXd& limits, const boost::variant<double, std::vector<double>>& value);
+
+// Default DOF when both velocity and acceleration are scalars.
+constexpr Eigen::Index k_default_dof = 6;
+
+// Determines the configured number of DOF from two config attributes (velocity and acceleration).
+// If both are scalars, returns k_default_dof. If one is an array, returns its size.
+Eigen::Index number_of_dof_configured(const viam::sdk::ResourceConfig& config, const std::string& attr_a, const std::string& attr_b);
+
+// Reads a validated config attribute (scalar or array of doubles) into an Eigen::VectorXd.
+// Scalars are broadcast to target_dof elements. Arrays must match target_dof exactly.
+Eigen::VectorXd read_limit_vector(const viam::sdk::ResourceConfig& config, const std::string& attribute, Eigen::Index target_dof);
