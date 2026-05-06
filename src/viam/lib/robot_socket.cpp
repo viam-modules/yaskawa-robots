@@ -1029,19 +1029,14 @@ void YaskawaController::get_error_info() {
 // query through a higher-level API passing group_index, instead of reaching into the UDP socket
 // here. Bundles with the FSM-dispatched-reads question (option 3 from PR 2a's discussion items).
 StatusMessage YaskawaController::get_group_position_velocity_torque(uint8_t group_index) {
-    // Check both the pointer and the socket-level connected_ flag: disconnect() leaves the
-    // unique_ptr in place but flips connected_ to false, so a null check alone misses the
-    // post-disconnect case and the inner "UDP socket is disconnected" fires without FSM context.
-    if (!udp_socket_ || !udp_socket_->is_connected()) {
+    if (!udp_socket_) {
         throw std::runtime_error(std::format("arm is {}", describe_state()));
     }
     return StatusMessage(udp_socket_->get_group_status(group_index).get());
 }
 
 RobotStatusMessage YaskawaController::get_robot_status() {
-    // See note in get_group_position_velocity_torque: both the pointer and the connected_
-    // flag must be checked to surface a post-disconnect call with FSM context.
-    if (!udp_socket_ || !udp_socket_->is_connected()) {
+    if (!udp_socket_) {
         throw std::runtime_error(std::format("arm is {}", describe_state()));
     }
     return RobotStatusMessage(udp_socket_->get_robot_status().get());
