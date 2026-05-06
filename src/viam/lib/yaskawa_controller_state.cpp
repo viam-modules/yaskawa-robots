@@ -41,7 +41,6 @@ void YaskawaController::state_::run_() {
     std::unique_lock lock{mutex_};
     while (!shutdown_requested_) {
         try {
-            recv_robot_data_();
             upgrade_downgrade_();
             handle_move_request_();
             send_heartbeat_();
@@ -117,13 +116,6 @@ std::string YaskawaController::state_::describe_not_ready_mask_(not_ready_mask m
 // ---------------------------------------------------------------
 // Cycle dispatch (called from run_() under mutex_)
 // ---------------------------------------------------------------
-
-void YaskawaController::state_::recv_robot_data_() {
-    auto ev = std::visit([this](auto& s) { return s.recv_robot_data(*this); }, current_state_);
-    if (ev) {
-        emit_event_(std::move(*ev));
-    }
-}
 
 void YaskawaController::state_::upgrade_downgrade_() {
     auto ev = std::visit([this](auto& s) { return s.upgrade_downgrade(*this); }, current_state_);
@@ -215,39 +207,6 @@ std::future<void> YaskawaController::enqueue_move_request(uint32_t group_index,
     }
     return fsm_->enqueue_move_request(
         group_index, std::move(waypoints), std::move(unix_time), std::move(velocity), std::move(acceleration));
-}
-
-// ---------------------------------------------------------------
-// state_connected_
-// ---------------------------------------------------------------
-
-// NOLINTBEGIN(readability-convert-member-functions-to-static)
-std::chrono::milliseconds YaskawaController::state_::state_connected_::get_timeout() const {
-    return std::chrono::milliseconds{100};
-}
-
-std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_connected_::recv_robot_data(state_&) {
-    // Intentionally a no-op. Robot status is delivered continuously by `UdpRobotSocket`'s receive
-    // coroutine, which updates `cached_robot_status_` as packets arrive; the FSM cycle reads from
-    // that cache via `get_robot_status()` in `upgrade_downgrade`. The server (yaskawa-controller's
-    // comm_server.c) pushes position/torque at 100Hz and robot status at 10Hz, so cache staleness
-    // is bounded by the pump rate, not by our 100ms FSM cycle.
-    //
-    // If we later bump the FSM cycle above the status pump rate (e.g. to react to not-ready
-    // conditions faster), this is the right hook to fold in: drain incoming packets and/or check
-    // last-message-timestamp to detect a dead UDP pump while the TCP heartbeat stays alive.
-    return std::nullopt;
-}
-// NOLINTEND(readability-convert-member-functions-to-static)
-
-std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_connected_::send_heartbeat(state_& state) {
-    try {
-        state.controller_->send_heartbeat();
-    } catch (const std::exception& ex) {
-        LOGGING(warning) << "[fsm] heartbeat failed: " << ex.what();
-        return event_connection_lost_::heartbeat_failure();
-    }
-    return std::nullopt;
 }
 
 // ---------------------------------------------------------------

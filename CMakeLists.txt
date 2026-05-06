@@ -173,6 +173,7 @@ target_sources(viam-yaskawa
     src/viam/lib/yaskawa_controller_state.cpp
     src/viam/lib/yaskawa_controller_state_events.cpp
     src/viam/lib/yaskawa_controller_state_disconnected.cpp
+    src/viam/lib/yaskawa_controller_state_connected.cpp
     src/viam/lib/yaskawa_controller_state_independent.cpp
     src/viam/lib/yaskawa_controller_state_ready.cpp
 )

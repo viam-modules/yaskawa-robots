@@ -39,10 +39,6 @@ std::chrono::milliseconds YaskawaController::state_::state_disconnected_::get_ti
 // state_disconnected_ cycle
 // ---------------------------------------------------------------
 
-std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_disconnected_::recv_robot_data(state_&) {
-    return std::nullopt;
-}
-
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_disconnected_::upgrade_downgrade(state_& state) {
     if (!pending_connection_.valid()) {
         pending_connection_ = std::async(std::launch::async, [this, &state] { connect_(state); });
@@ -83,8 +79,10 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
         if (req.handle && !req.handle->is_done()) {
             try {
                 req.handle->cancel();
+            } catch (const std::exception& ex) {
+                LOGGING(warning) << "[fsm] exception while cancelling move request on disconnect: " << ex.what();
             } catch (...) {
-                LOGGING(warning) << "[fsm] exception while cancelling move request on disconnect";
+                LOGGING(warning) << "[fsm] unknown exception while cancelling move request on disconnect";
             }
         }
         req.complete_error("arm is disconnected");

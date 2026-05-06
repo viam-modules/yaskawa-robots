@@ -92,8 +92,10 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
         if (req.handle && !req.handle->is_done()) {
             try {
                 req.handle->cancel();
+            } catch (const std::exception& ex) {
+                LOGGING(warning) << "[fsm] exception while cancelling move request on entering independent state: " << ex.what();
             } catch (...) {
-                LOGGING(warning) << "[fsm] exception while cancelling move request on entering independent state";
+                LOGGING(warning) << "[fsm] unknown exception while cancelling move request on entering independent state";
             }
         }
         req.complete_error(
