@@ -61,6 +61,12 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
     }
 
     // Auto-recovery: skip if any human-required condition is present.
+    //
+    // Only `in_error` is recovered automatically — `reset_errors` clears software state on the
+    // controller without physically energizing anything. `servo_off` and `motion_blocked` are
+    // left for explicit user action (a move request) to wake the arm. Auto-toggling servo power
+    // would fight an operator who deliberately powered the arm down (panel button, idle timeout
+    // after `stop()`, etc.).
     if (mask & ~k_auto_recoverable_mask) {
         return std::nullopt;
     }
@@ -72,13 +78,6 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
             ++recovery_attempts_;
         } else {
             return event_not_ready_detected_{static_cast<not_ready_mask>((mask & ~k_in_error) | k_major_alarm)};
-        }
-    } else {
-        if (mask & k_servo_off) {
-            state.controller_->turn_servo_power_on();
-        }
-        if (mask & k_motion_blocked) {
-            state.controller_->setMotionMode(1);
         }
     }
 
