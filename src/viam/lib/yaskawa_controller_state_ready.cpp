@@ -67,7 +67,6 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_ready_::handle_event(
     state_&, event_connection_lost_ event) {
-    // state_disconnected_::connect_() tears down stale sockets before reconnecting.
     return state_disconnected_{std::move(event)};
 }
 

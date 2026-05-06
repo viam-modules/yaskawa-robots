@@ -81,7 +81,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     }
 
    public:
-    explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)){};
+    explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)) {};
     static auto create(boost::asio::any_io_executor exec) {
         return std::make_shared<AsyncQueue<T>>(private_{}, std::move(exec));
     };
@@ -732,7 +732,6 @@ class YaskawaController::state_ {
 
         static std::string_view name();
         std::string describe() const;
-        // get_timeout + send_heartbeat are inherited unchanged from state_connected_.
         using state_connected_::get_timeout;
         using state_connected_::send_heartbeat;
 
@@ -756,7 +755,6 @@ class YaskawaController::state_ {
 
         static std::string_view name();
         std::string describe() const;
-        // get_timeout + send_heartbeat are inherited unchanged from state_connected_.
         using state_connected_::get_timeout;
         using state_connected_::send_heartbeat;
 

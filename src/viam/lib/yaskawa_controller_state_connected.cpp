@@ -2,10 +2,7 @@
 
 using namespace robot;
 
-// `state_connected_` is *not* a state the FSM ever holds in `current_state_`. It's a shared
-// base for the two connected sub-states (state_independent_ and state_ready_), holding logic
-// that's identical across them: heartbeat cadence and the heartbeat handler. Each sub-state
-// inherits via `using state_connected_::foo;` and overrides only what differs.
+// See robot_socket.hpp for state_connected_'s role (shared base for the connected sub-states).
 
 // ---------------------------------------------------------------
 // state_connected_ cycle

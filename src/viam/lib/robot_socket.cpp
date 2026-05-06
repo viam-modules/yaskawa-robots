@@ -801,9 +801,8 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     // Diagnostic listener: independent of TCP/UDP control sockets, runs for controller lifetime.
     broadcast_listener_->start();
 
-    // Spin up the FSM. It runs asynchronously: tries to connect in the background and keeps
-    // retrying on failure. The resource stands up immediately; API calls fail until the FSM
-    // reaches a connected state.
+    // FSM connects asynchronously and retries indefinitely; the resource stands up immediately,
+    // API calls fail until the FSM reaches a connected state.
     fsm_ = state_::create(this);
 }
 
