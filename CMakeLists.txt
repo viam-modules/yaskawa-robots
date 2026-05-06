@@ -268,6 +268,8 @@ target_link_libraries(yaskawa-robots
   PRIVATE
   viam-yaskawa
   viam-cpp-sdk::viamsdk
+  viam::trajex::totg
+  viam::trajex::totg::tools
 )
 target_compile_options( yaskawa-robots PRIVATE -O0)
 

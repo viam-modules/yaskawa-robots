@@ -68,8 +68,13 @@ struct FaultFixture {
     }
 
     void connect() {
+        server.robot().mode = ROBOT_MODE_REMOTE;
         server.start_udp_status_pump(10);
         controller->connect().get();
+        // Wait for at least one UDP status to arrive and update the legacy `State` view —
+        // turn_servo_power_on() and friends still gate on robot_state_->IsReady() until
+        // direct controller methods route through the FSM.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
     void make_new_controller() {

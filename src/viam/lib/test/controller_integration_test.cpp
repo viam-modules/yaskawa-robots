@@ -14,6 +14,10 @@
 #include "../robot_socket.hpp"
 #include "fake_server.hpp"
 
+extern "C" {
+#include "protocol.h"
+}
+
 constexpr int k_dof = 6;
 
 viam::sdk::ResourceConfig make_config(uint16_t tcp_port) {
@@ -59,14 +63,19 @@ struct TestFixture {
     }
 
     void connect() {
+        server.robot().mode = ROBOT_MODE_REMOTE;
         server.start_udp_status_pump(10);
         controller->connect().get();
+        // Wait for at least one UDP status to arrive and update the legacy `State` view —
+        // turn_servo_power_on() and friends still gate on robot_state_->IsReady() until
+        // direct controller methods route through the FSM.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
     void reconnect() {
         controller->disconnect();
         controller = std::make_shared<robot::YaskawaController>(io_ctx, make_config(ports.tcp_port));
-        controller->connect().get();
+        connect();
     }
 
     // Helper: build a waypoint list with a single target offset from zero.
@@ -186,8 +195,10 @@ BOOST_FIXTURE_TEST_CASE(check_group_index, ControllerFixture,
 BOOST_FIXTURE_TEST_CASE(get_robot_status, ControllerFixture,
                         *boost::unit_test::timeout(15)) {
     connect();
+    // Override the fixture's mode=REMOTE so we can observe the mock's default.
+    server.robot().mode = 1;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     auto status = controller->get_robot_status();
-    // Default mock state: mode=1, not e-stopped
     BOOST_CHECK_EQUAL(status.mode, 1);
     BOOST_CHECK(!status.e_stopped);
 }
@@ -305,7 +316,12 @@ BOOST_AUTO_TEST_CASE(connection_refused, *boost::unit_test::timeout(15)) {
     });
 
     auto ctrl = std::make_shared<robot::YaskawaController>(io_ctx, make_config(ports.tcp_port));
-    BOOST_CHECK_THROW(ctrl->connect().get(), std::exception);
+    // The FSM connects asynchronously and retries indefinitely; with no server on the
+    // configured port, it stays in state_disconnected_. Give it a few cycles to attempt
+    // and fail at least once, then verify we never left disconnected.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    BOOST_CHECK(ctrl->describe_state().starts_with("disconnected"));
+    ctrl->disconnect();
 
     io_ctx.stop();
     if (io_thread.joinable()) {
@@ -433,6 +449,9 @@ BOOST_FIXTURE_TEST_CASE(multi_group_status_positions, GantryFixture,
 BOOST_FIXTURE_TEST_CASE(multi_group_robot_status, GantryFixture,
                         *boost::unit_test::timeout(15)) {
     connect();
+    // Override the fixture's mode=REMOTE so we can observe the mock's default.
+    server.robot().mode = 1;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     auto status = controller->get_robot_status();
     // Controller-wide robot status (not per-group)
     BOOST_CHECK_EQUAL(status.mode, 1);
