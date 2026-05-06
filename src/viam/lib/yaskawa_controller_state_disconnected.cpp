@@ -116,8 +116,5 @@ void YaskawaController::state_::state_disconnected_::connect_(state_& state) {
     // establish_connections_() handles both initial connect and reconnect — on reconnect it
     // tears down the stale session and replaces tcp_socket_ before establishing.
     state.controller_->establish_connections_();
-    if (!state.controller_->checkGroupIndex()) {
-        throw std::runtime_error("group index check failed after connecting");
-    }
 }
 // NOLINTEND(readability-convert-member-functions-to-static)

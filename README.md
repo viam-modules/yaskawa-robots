@@ -35,16 +35,50 @@ The following attributes are available for `viam:yaskawa-robots` arms:
 | `collinearization_ratio` | float | Optional | Waypoint collinearization parameter for trajectory smoothing. (range: 0.0 - 2.0) |
 | `enable_new_trajectory_planner` | bool | Optional | Enables the new trajectory planning algorithm. **Default true** |
 | `telemetry_output_path` | string | Optional | Path for writing telemetry data files. **Default: VIAM_MODULE_DATA environment variable** |
-| `group_index` | int | Optional | Define which control group this arm represents. **Default 0** |
+| `group_index` | int | Optional | Control group index on the Yaskawa controller that this arm represents (see below). **Default 0** |
+
+#### Control Groups (`group_index`)
+
+A Yaskawa controller can manage multiple robot arms simultaneously. Each arm is assigned to a **control group** identified by a sequential index (0, 1, 2, ...). The `group_index` attribute tells the driver which control group this arm component controls.
+
+When multiple arm components point to the same controller host, they share a single TCP connection and can move independently or concurrently. Each arm must specify a different `group_index`.
+
+The available groups and their axis counts are discovered automatically via the capabilities handshake at connection time. You can find the group layout for your controller in the module logs at startup.
+
+All configuration attributes (speed, acceleration, trajectory planner settings, telemetry path, etc.) are per-arm. Each arm component has its own config; only the underlying controller connection is shared.
 
 ### Example configurations:
 
-#### Basic configuration with wired ethernet connection
+#### Basic configuration (single arm)
 ```json
 {
     "host": "10.1.10.84",
     "speed_rad_per_sec": 2.09,
     "acceleration_rad_per_sec2": 0.14
+}
+```
+
+#### Dual-arm configuration
+
+Configure two arm components pointing to the same controller host with different `group_index` values:
+
+**Arm 1 (R1):**
+```json
+{
+    "host": "10.1.10.84",
+    "speed_rad_per_sec": 2.09,
+    "acceleration_rad_per_sec2": 0.14,
+    "group_index": 0
+}
+```
+
+**Arm 2 (R2):**
+```json
+{
+    "host": "10.1.10.84",
+    "speed_rad_per_sec": 1.57,
+    "acceleration_rad_per_sec2": 0.10,
+    "group_index": 1
 }
 ```
 
