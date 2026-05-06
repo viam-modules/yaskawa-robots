@@ -849,10 +849,10 @@ void YaskawaController::establish_connections_() {
     // On reconnect, this drops the dead session before we replace tcp_socket_, since
     // TcpRobotSocket can't be reused after disconnect.
     if (udp_socket_) {
-        udp_socket_->disconnect();
+        std::exchange(udp_socket_, {})->disconnect();
     }
     if (tcp_socket_ && tcp_socket_->is_connected()) {
-        tcp_socket_->disconnect();
+        std::exchange(tcp_socket_, {})->disconnect();
         tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_, tcp_port_);
     }
 

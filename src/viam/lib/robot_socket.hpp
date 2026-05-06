@@ -554,13 +554,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // while allowing parallel moves on different groups.
     std::array<std::atomic<bool>, MAX_GROUPS> group_move_in_progress_{};
 
-    bool use_new_trajectory_planner_{false};
-    double path_tolerance_rad_{0.1};
-    std::optional<double> collinearization_ratio_;
-    double segmentation_threshold_rad_;
-    std::string robot_model_;
-    std::optional<std::function<std::optional<std::string>()>> telemetry_path_fn_;
-
     void establish_connections_();
 
     std::unique_ptr<state_> fsm_;

@@ -23,6 +23,8 @@ static SigpipeIgnorer s_ignore_sigpipe;
 #include "../robot_socket.hpp"
 #include "fake_server.hpp"
 
+// TODO: drop the `extern "C"` wrapper once we consume a viam-yaskawa-libs that has the C++
+// guards inside `protocol.h` itself.
 extern "C" {
 #include "protocol.h"
 }
