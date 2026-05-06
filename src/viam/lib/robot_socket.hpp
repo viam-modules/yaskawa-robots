@@ -778,6 +778,10 @@ class YaskawaController::state_ {
     // ---------------------------------------------------------------
     // Move request (orthogonal to FSM state)
     // ---------------------------------------------------------------
+    // TODO(RSDK-13929) reshape this payload to match execute_trajectory: drop waypoints/velocity/
+    // acceleration, add `dof` + `std::vector<trajectory_point_t> samples` + `timeout_secs`. The
+    // arm pre-computes samples and enqueues; state_ready_::handle_move_request feeds them to
+    // controller_->execute_trajectory().
     struct move_request {
         uint32_t group_index{0};
         std::list<Eigen::VectorXd> waypoints;

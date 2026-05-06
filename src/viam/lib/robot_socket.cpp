@@ -881,6 +881,13 @@ void YaskawaController::establish_connections_() {
 
         register_udp_port(udp_socket_->get_local_port());
         get_robot_status();
+
+        // Force-restart the broadcast listener. It runs continuously since construction, but if
+        // the OS closed its socket (e.g., network interface drop) the coroutine dies while
+        // `started_` stays true — `start()` alone would no-op. A network failure that killed
+        // broadcast would also have killed the control sockets, so we piggyback on reconnect.
+        broadcast_listener_->stop();
+        broadcast_listener_->start();
     } catch (...) {
         tcp_socket_->disconnect();
         if (udp_socket_) {
@@ -1019,6 +1026,9 @@ void YaskawaController::get_error_info() {
     LOGGING(debug) << "MSG_GET_ERROR_INFO: " << msg;
 }
 
+// TODO(RSDK-13931) cache group status (pos/vel/torque) on the controller and have the arm
+// query through a higher-level API passing group_index, instead of reaching into the UDP socket
+// here. Bundles with the FSM-dispatched-reads question (option 3 from PR 2a's discussion items).
 StatusMessage YaskawaController::get_group_position_velocity_torque(uint8_t group_index) {
     // Check both the pointer and the socket-level connected_ flag: disconnect() leaves the
     // unique_ptr in place but flips connected_ to false, so a null check alone misses the
@@ -1331,6 +1341,10 @@ bool YaskawaController::is_status_command(message_type_t type) {
     return type == MSG_ROBOT_POSITION_VELOCITY_TORQUE || type == MSG_ROBOT_STATUS;
 }
 
+// TODO(RSDK-13930) wrap this in a per-controller cache (positive set + negative set, cleared on
+// disconnect). First call validates against the server and primes the cache; subsequent calls
+// hit the cache. Today we don't call this at configure time at all; misconfigured arms only
+// fail on first group-keyed API call (server returns VIAM_ERROR_INVALID_PAYLOAD).
 bool YaskawaController::checkGroupIndex(uint32_t group_index) {
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());

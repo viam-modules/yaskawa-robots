@@ -49,9 +49,10 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 }
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_ready_::handle_move_request(state_& state) {
-    // TODO: integrate with execute_trajectory() once the state machine is wired into the arm.
-    // move() was replaced by execute_trajectory() which takes pre-computed trajectory samples.
-    // The arm now owns trajectory generation and calls execute_trajectory() directly.
+    // TODO(RSDK-13929) call controller_->execute_trajectory(group_index, dof, samples, ...) here,
+    // once move_request carries the new payload shape and YaskawaArm routes through enqueue_move_request.
+    // Also the place to fold in the wake-up step (turn_servo_power_on / setMotionMode), now that
+    // the FSM no longer auto-toggles them in state_independent_::upgrade_downgrade.
     for (auto it = state.move_requests_.begin(); it != state.move_requests_.end();) {
         auto& req = *it;
         req.complete_error("move() is not available; use execute_trajectory() via the arm component");
