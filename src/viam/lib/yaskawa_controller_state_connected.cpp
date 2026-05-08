@@ -12,7 +12,6 @@ using namespace robot;
 std::chrono::milliseconds YaskawaController::state_::state_connected_::get_timeout() const {
     return std::chrono::milliseconds{100};
 }
-// NOLINTEND(readability-convert-member-functions-to-static)
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_connected_::send_heartbeat(state_& state) {
     try {
@@ -23,3 +22,4 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
     }
     return std::nullopt;
 }
+// NOLINTEND(readability-convert-member-functions-to-static)
