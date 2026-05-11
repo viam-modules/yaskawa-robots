@@ -354,27 +354,8 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     segmentation_threshold_rad_ =
         find_config_attribute<double>(config, "segmentation_threshold_rad").value_or(k_default_segmentation_threshold);
 
-    constexpr int k_max_connection_try = 5;
-    int connection_try = 0;
-
-    // Attempt connection with retry logic
-    while (connection_try < k_max_connection_try) {
-        try {
-            ++connection_try;
-            robot_->connect().get();
-            VIAM_SDK_LOG(info) << "Successfully connected to robot on attempt " << connection_try;
-            break;  // Exit on successful connection
-        } catch (std::exception& ex) {
-            VIAM_SDK_LOG(error) << std::format(
-                "connection {} out of {} failed because {}", connection_try, k_max_connection_try, ex.what());
-            if (k_max_connection_try == connection_try) {
-                throw;
-            }
-        }
-    }
-    if (!robot_->checkGroupIndex(group_index_)) {
-        throw std::invalid_argument(std::format("group_index {} is not available on the arm controller", group_index_));
-    }
+    // YaskawaController spins up its FSM in the constructor; the resource is up immediately,
+    // and the FSM connects (and reconnects) in the background.
 }
 
 void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
@@ -441,6 +422,8 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
         return;
     }
 
+    // TODO(RSDK-13929) route through controller_->enqueue_move_request(...) so the FSM gates
+    // execution by state and folds in the wake-up step. Today this call bypasses the FSM.
     robot_
         ->execute_trajectory(group_index_,
                              static_cast<uint32_t>(velocity.size()),
@@ -474,6 +457,7 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
         return;
     }
 
+    // TODO(RSDK-13929) route through controller_->enqueue_move_request(...) — see above.
     robot_
         ->execute_trajectory(group_index_,
                              static_cast<uint32_t>(velocity_limits_.size()),

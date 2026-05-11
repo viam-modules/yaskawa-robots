@@ -2,10 +2,7 @@
 
 #include <format>
 
-#include <viam/sdk/log/logging.hpp>
-
 using namespace robot;
-using namespace viam::sdk;
 
 // ---------------------------------------------------------------
 // state_independent_ constructor
@@ -64,6 +61,12 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
     }
 
     // Auto-recovery: skip if any human-required condition is present.
+    //
+    // Only `in_error` is recovered automatically — `reset_errors` clears software state on the
+    // controller without physically energizing anything. `servo_off` and `motion_blocked` are
+    // left for explicit user action (a move request) to wake the arm. Auto-toggling servo power
+    // would fight an operator who deliberately powered the arm down (panel button, idle timeout
+    // after `stop()`, etc.).
     if (mask & ~k_auto_recoverable_mask) {
         return std::nullopt;
     }
@@ -75,13 +78,6 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
             ++recovery_attempts_;
         } else {
             return event_not_ready_detected_{static_cast<not_ready_mask>((mask & ~k_in_error) | k_major_alarm)};
-        }
-    } else {
-        if (mask & k_servo_off) {
-            state.controller_->turn_servo_power_on();
-        }
-        if (mask & k_motion_blocked) {
-            state.controller_->setMotionMode(1);
         }
     }
 
@@ -95,8 +91,10 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
         if (req.handle && !req.handle->is_done()) {
             try {
                 req.handle->cancel();
+            } catch (const std::exception& ex) {
+                LOGGING(warning) << "[fsm] exception while cancelling move request on entering independent state: " << ex.what();
             } catch (...) {
-                VIAM_SDK_LOG(warn) << "exception while cancelling move request on entering independent state";
+                LOGGING(warning) << "[fsm] unknown exception while cancelling move request on entering independent state";
             }
         }
         req.complete_error(
@@ -111,8 +109,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 
 // NOLINTBEGIN(readability-convert-member-functions-to-static)
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_independent_::handle_event(
-    state_& state, event_connection_lost_ event) {
-    state.controller_->disconnect();
+    state_&, event_connection_lost_ event) {
     return state_disconnected_{std::move(event)};
 }
 
@@ -124,7 +121,7 @@ std::optional<YaskawaController::state_::state_variant_> YaskawaController::stat
 
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_independent_::handle_event(
     state_&, event_ready_detected_) {
-    VIAM_SDK_LOG(info) << "all not-ready conditions cleared, entering ready state";
+    LOGGING(info) << "[fsm] all not-ready conditions cleared, entering ready state";
     return state_ready_{};
 }
 // NOLINTEND(readability-convert-member-functions-to-static)

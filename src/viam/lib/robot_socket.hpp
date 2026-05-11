@@ -506,7 +506,6 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
                                            std::string unix_time,
                                            Eigen::VectorXd velocity,
                                            Eigen::VectorXd acceleration);
-    double get_waypoint_deduplication_tolerance_rad() const;
 
     void send_test_trajectory();
     void turn_servo_power_on();
@@ -555,12 +554,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // while allowing parallel moves on different groups.
     std::array<std::atomic<bool>, MAX_GROUPS> group_move_in_progress_{};
 
-    // Connection lifecycle: true between connect() and disconnect()
-    std::atomic<bool> running_{false};
-    std::thread heartbeat_thread_;
-
     void establish_connections_();
-    void reconnect_();
 
     std::unique_ptr<state_> fsm_;
 
@@ -649,18 +643,14 @@ class YaskawaController::state_ {
     };
 
     struct event_connection_lost_ {
-        static event_connection_lost_ socket_failure();
         static event_connection_lost_ heartbeat_failure();
-        static event_connection_lost_ module_shutdown();
 
         static std::string_view name();
         std::string_view describe() const;
 
        private:
         enum class reason : uint8_t {
-            k_socket_failure,
             k_heartbeat_failure,
-            k_module_shutdown,
         };
         explicit event_connection_lost_(reason r);
         reason reason_code_;
@@ -695,11 +685,15 @@ class YaskawaController::state_ {
     };
 
     // ---------------------------------------------------------------
-    // Shared base for connected states (no controller pointer — use state.controller_)
+    // state_connected_ is *not* a state the FSM ever holds in `current_state_` — only
+    // disconnected/independent/ready appear in `state_variant_`. It exists solely as a
+    // shared base for the two connected sub-states (independent, ready), holding logic
+    // that's identical across them. Each sub-state inherits via `using state_connected_::foo;`
+    // and overrides only what differs. Implementations live in
+    // `yaskawa_controller_state_connected.cpp`.
     // ---------------------------------------------------------------
     struct state_connected_ {
         std::chrono::milliseconds get_timeout() const;
-        std::optional<event_variant_> recv_robot_data(state_&);
         std::optional<event_variant_> send_heartbeat(state_&);
     };
 
@@ -714,7 +708,6 @@ class YaskawaController::state_ {
         std::string describe() const;
         std::chrono::milliseconds get_timeout() const;
 
-        std::optional<event_variant_> recv_robot_data(state_&);
         std::optional<event_variant_> upgrade_downgrade(state_&);
         std::optional<event_variant_> handle_move_request(state_&) const;
         std::optional<event_variant_> send_heartbeat(state_&);
@@ -740,11 +733,10 @@ class YaskawaController::state_ {
         static std::string_view name();
         std::string describe() const;
         using state_connected_::get_timeout;
+        using state_connected_::send_heartbeat;
 
-        using state_connected_::recv_robot_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
         std::optional<event_variant_> handle_move_request(state_&) const;
-        using state_connected_::send_heartbeat;
 
         std::optional<state_variant_> handle_event(state_&, event_connection_lost_);
         std::optional<state_variant_> handle_event(state_&, event_not_ready_detected_);
@@ -764,11 +756,10 @@ class YaskawaController::state_ {
         static std::string_view name();
         std::string describe() const;
         using state_connected_::get_timeout;
+        using state_connected_::send_heartbeat;
 
-        using state_connected_::recv_robot_data;
         std::optional<event_variant_> upgrade_downgrade(state_&);
         std::optional<event_variant_> handle_move_request(state_&);
-        using state_connected_::send_heartbeat;
 
         std::optional<state_variant_> handle_event(state_&, event_connection_lost_);
         std::optional<state_variant_> handle_event(state_&, event_not_ready_detected_);
@@ -778,6 +769,10 @@ class YaskawaController::state_ {
     // ---------------------------------------------------------------
     // Move request (orthogonal to FSM state)
     // ---------------------------------------------------------------
+    // TODO(RSDK-13929) reshape this payload to match execute_trajectory: drop waypoints/velocity/
+    // acceleration, add `dof` + `std::vector<trajectory_point_t> samples` + `timeout_secs`. The
+    // arm pre-computes samples and enqueues; state_ready_::handle_move_request feeds them to
+    // controller_->execute_trajectory().
     struct move_request {
         uint32_t group_index{0};
         std::list<Eigen::VectorXd> waypoints;
@@ -803,7 +798,6 @@ class YaskawaController::state_ {
     static std::string describe_state_(const state_variant_& sv);
 
     void upgrade_downgrade_();
-    void recv_robot_data_();
     void handle_move_request_();
     void send_heartbeat_();
 

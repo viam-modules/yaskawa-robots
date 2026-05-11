@@ -173,6 +173,7 @@ target_sources(viam-yaskawa
     src/viam/lib/yaskawa_controller_state.cpp
     src/viam/lib/yaskawa_controller_state_events.cpp
     src/viam/lib/yaskawa_controller_state_disconnected.cpp
+    src/viam/lib/yaskawa_controller_state_connected.cpp
     src/viam/lib/yaskawa_controller_state_independent.cpp
     src/viam/lib/yaskawa_controller_state_ready.cpp
 )
@@ -268,6 +269,8 @@ target_link_libraries(yaskawa-robots
   PRIVATE
   viam-yaskawa
   viam-cpp-sdk::viamsdk
+  viam::trajex::totg
+  viam::trajex::totg::tools
 )
 target_compile_options( yaskawa-robots PRIVATE -O0)
 

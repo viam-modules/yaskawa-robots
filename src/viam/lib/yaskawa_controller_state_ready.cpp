@@ -1,9 +1,6 @@
 #include "robot_socket.hpp"
 
-#include <viam/sdk/log/logging.hpp>
-
 using namespace robot;
-using namespace viam::sdk;
 
 // ---------------------------------------------------------------
 // state_ready_ identity
@@ -52,9 +49,10 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 }
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_ready_::handle_move_request(state_& state) {
-    // TODO: integrate with execute_trajectory() once the state machine is wired into the arm.
-    // move() was replaced by execute_trajectory() which takes pre-computed trajectory samples.
-    // The arm now owns trajectory generation and calls execute_trajectory() directly.
+    // TODO(RSDK-13929) call controller_->execute_trajectory(group_index, dof, samples, ...) here,
+    // once move_request carries the new payload shape and YaskawaArm routes through enqueue_move_request.
+    // Also the place to fold in the wake-up step (turn_servo_power_on / setMotionMode), now that
+    // the FSM no longer auto-toggles them in state_independent_::upgrade_downgrade.
     for (auto it = state.move_requests_.begin(); it != state.move_requests_.end();) {
         auto& req = *it;
         req.complete_error("move() is not available; use execute_trajectory() via the arm component");
@@ -68,14 +66,13 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 // ---------------------------------------------------------------
 
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_ready_::handle_event(
-    state_& state, event_connection_lost_ event) {
-    state.controller_->disconnect();
+    state_&, event_connection_lost_ event) {
     return state_disconnected_{std::move(event)};
 }
 
 std::optional<YaskawaController::state_::state_variant_> YaskawaController::state_::state_ready_::handle_event(
     state_&, event_not_ready_detected_ event) {
-    VIAM_SDK_LOG(warn) << "not-ready condition detected in ready state, entering independent state";
+    LOGGING(warning) << "[fsm] not-ready condition detected in ready state, entering independent state";
     // In-flight move_requests_ are not cancelled here. They are cancelled on the next
     // handle_move_request_() call, which runs after upgrade_downgrade_() in the same cycle.
     return state_independent_{event.mask};

@@ -23,6 +23,8 @@ static SigpipeIgnorer s_ignore_sigpipe;
 #include "../robot_socket.hpp"
 #include "fake_server.hpp"
 
+// TODO: drop the `extern "C"` wrapper once we consume a viam-yaskawa-libs that has the C++
+// guards inside `protocol.h` itself.
 extern "C" {
 #include "protocol.h"
 }
@@ -68,8 +70,13 @@ struct FaultFixture {
     }
 
     void connect() {
+        server.robot().mode = ROBOT_MODE_REMOTE;
         server.start_udp_status_pump(10);
         controller->connect().get();
+        // Wait for at least one UDP status to arrive and refresh `State` — turn_servo_power_on()
+        // and friends still gate on robot_state_->IsReady() until RSDK-13931 reshapes direct
+        // controller reads through the FSM.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
     void make_new_controller() {
