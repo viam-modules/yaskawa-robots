@@ -34,6 +34,7 @@ The following attributes are available for `viam:yaskawa-robots` arms:
 | `segmentation_threshold_rad` | float | Optional | Threshold for detecting direction reversals in waypoint paths. Lower values detect only sharp reversals; higher values are more sensitive. **Default 0.005 rad** (range: > 0, <= 0.1) |
 | `collinearization_ratio` | float | Optional | Waypoint collinearization parameter for trajectory smoothing. (range: 0.0 - 2.0) |
 | `enable_new_trajectory_planner` | bool | Optional | Enables the new trajectory planning algorithm. **Default true** |
+| `enable_auto_error_recovery` | bool | Optional | When true, the driver automatically calls `reset_errors` to clear software errors so the arm can recover without operator intervention. Set to false if you want errors to remain visible on the pendant for inspection before they're cleared. (Move requests will still trigger error recovery as part of waking the arm — this only gates the passive background path.) **Default true** |
 | `telemetry_output_path` | string | Optional | Path for writing telemetry data files. **Default: VIAM_MODULE_DATA environment variable** |
 | `group_index` | int | Optional | Control group index on the Yaskawa controller that this arm represents (see below). **Default 0** |
 
