@@ -41,6 +41,9 @@ std::chrono::milliseconds YaskawaController::state_::state_disconnected_::get_ti
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_disconnected_::upgrade_downgrade(state_& state) {
     if (!pending_connection_.valid()) {
+        // TODO(RSDK-13945) make this task cancellable so destruction doesn't have to wait for it.
+        // Bounded today by the per-op timeouts inside establish_connections_, but the destructor
+        // still blocks until the in-flight op (if any) finishes or times out.
         pending_connection_ = std::async(std::launch::async, [this, &state] { connect_(state); });
         return std::nullopt;
     }

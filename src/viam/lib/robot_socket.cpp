@@ -1039,7 +1039,11 @@ RobotStatusMessage YaskawaController::get_robot_status() {
     if (!udp_socket_) {
         throw std::runtime_error(std::format("arm is {}", describe_state()));
     }
-    return RobotStatusMessage(udp_socket_->get_robot_status().get());
+    auto future = udp_socket_->get_robot_status();
+    if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
+        throw std::runtime_error(std::format("get_robot_status timed out; arm is {}", describe_state()));
+    }
+    return RobotStatusMessage(future.get());
 }
 
 void YaskawaController::register_udp_port(uint16_t port) {
@@ -1048,7 +1052,11 @@ void YaskawaController::register_udp_port(uint16_t port) {
     port_payload->udp_port = port;
     port_payload->protocol_version = PROTOCOL_VERSION;
 
-    auto msg = tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload))).get();
+    auto future = tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload)));
+    if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
+        throw std::runtime_error("register_udp_port timed out");
+    }
+    auto msg = future.get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
         throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_REGISTER_UDP_PORT), err));
@@ -1347,7 +1355,11 @@ bool YaskawaController::checkGroupIndex(uint32_t group_index) {
 }
 
 CapabilitiesMessage YaskawaController::get_capabilities() {
-    auto msg = tcp_socket_->send_request(Message(MSG_GET_CAPABILITIES)).get();
+    auto future = tcp_socket_->send_request(Message(MSG_GET_CAPABILITIES));
+    if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
+        throw std::runtime_error("get_capabilities timed out");
+    }
+    auto msg = future.get();
     const auto err = msg.get_error(MSG_CAPABILITIES);
     if (!err.empty()) {
         throw std::runtime_error(std::format("MSG_GET_CAPABILITIES failed: {}", err));
