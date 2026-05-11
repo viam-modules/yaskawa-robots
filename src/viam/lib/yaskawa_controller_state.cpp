@@ -154,22 +154,30 @@ bool YaskawaController::state_::is_any_moving() const {
 }
 
 std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group_index,
-                                                                  std::list<Eigen::VectorXd>&& waypoints,
-                                                                  std::string unix_time,
-                                                                  Eigen::VectorXd velocity,
-                                                                  Eigen::VectorXd acceleration) {
+                                                                  uint32_t axes_controlled,
+                                                                  std::vector<trajectory_point_t> samples,
+                                                                  std::vector<tolerance_t> tolerance,
+                                                                  double trajectory_sampling_freq,
+                                                                  std::optional<RealtimeTrajectoryLogger> logger) {
     std::future<void> future;
     {
         const std::lock_guard lock{mutex_};
-        if (!std::holds_alternative<state_ready_>(current_state_)) {
+        // Accept from ready (immediate dispatch) and from independent if all set reasons are
+        // auto-recoverable (state_independent_::handle_move_request will wake the arm). Reject
+        // from disconnected, or from independent with human-required bits set.
+        if (std::holds_alternative<state_disconnected_>(current_state_)) {
+            throw std::runtime_error(std::format("cannot move: arm is in state `{}`", describe_state_(current_state_)));
+        }
+        if (const auto* indep = std::get_if<state_independent_>(&current_state_); indep && (indep->reasons_ & ~k_auto_recoverable_mask)) {
             throw std::runtime_error(std::format("cannot move: arm is in state `{}`", describe_state_(current_state_)));
         }
         auto& req = move_requests_.emplace_back(move_request{
             .group_index = group_index,
-            .waypoints = std::move(waypoints),
-            .unix_time = std::move(unix_time),
-            .velocity = std::move(velocity),
-            .acceleration = std::move(acceleration),
+            .axes_controlled = axes_controlled,
+            .samples = std::move(samples),
+            .tolerance = std::move(tolerance),
+            .trajectory_sampling_freq = trajectory_sampling_freq,
+            .logger = std::move(logger),
             .handle = {},
             .completion = {},
         });
@@ -198,15 +206,16 @@ bool YaskawaController::is_any_moving() const {
 }
 
 std::future<void> YaskawaController::enqueue_move_request(uint32_t group_index,
-                                                          std::list<Eigen::VectorXd>&& waypoints,
-                                                          std::string unix_time,
-                                                          Eigen::VectorXd velocity,
-                                                          Eigen::VectorXd acceleration) {
+                                                          uint32_t axes_controlled,
+                                                          std::vector<trajectory_point_t> samples,
+                                                          std::vector<tolerance_t> tolerance,
+                                                          double trajectory_sampling_freq,
+                                                          std::optional<RealtimeTrajectoryLogger> logger) {
     if (!fsm_) {
         throw std::runtime_error("controller FSM not initialized");
     }
     return fsm_->enqueue_move_request(
-        group_index, std::move(waypoints), std::move(unix_time), std::move(velocity), std::move(acceleration));
+        group_index, axes_controlled, std::move(samples), std::move(tolerance), trajectory_sampling_freq, std::move(logger));
 }
 
 // ---------------------------------------------------------------

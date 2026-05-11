@@ -49,14 +49,33 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 }
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_ready_::handle_move_request(state_& state) {
-    // TODO(RSDK-13929) call controller_->execute_trajectory(group_index, dof, samples, ...) here,
-    // once move_request carries the new payload shape and YaskawaArm routes through enqueue_move_request.
-    // Also the place to fold in the wake-up step (turn_servo_power_on / setMotionMode), now that
-    // the FSM no longer auto-toggles them in state_independent_::upgrade_downgrade.
     for (auto it = state.move_requests_.begin(); it != state.move_requests_.end();) {
         auto& req = *it;
-        req.complete_error("move() is not available; use execute_trajectory() via the arm component");
-        it = state.move_requests_.erase(it);
+        if (!req.handle) {
+            try {
+                req.handle = state.controller_->execute_trajectory(req.group_index,
+                                                                   req.axes_controlled,
+                                                                   std::move(req.samples),
+                                                                   req.tolerance,
+                                                                   req.trajectory_sampling_freq,
+                                                                   std::move(req.logger));
+            } catch (const std::exception& ex) {
+                req.complete_error(ex.what());
+                it = state.move_requests_.erase(it);
+                continue;
+            }
+            ++it;
+        } else if (req.handle->is_done()) {
+            try {
+                std::ignore = req.handle->wait_for(std::chrono::milliseconds(0));  // only care if it throws
+                req.complete_success();
+            } catch (const std::exception& ex) {
+                req.complete_error(ex.what());
+            }
+            it = state.move_requests_.erase(it);
+        } else {
+            ++it;
+        }
     }
     return std::nullopt;
 }

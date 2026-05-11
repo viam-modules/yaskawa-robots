@@ -422,16 +422,14 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
         return;
     }
 
-    // TODO(RSDK-13929) route through controller_->enqueue_move_request(...) so the FSM gates
-    // execution by state and folds in the wake-up step. Today this call bypasses the FSM.
     robot_
-        ->execute_trajectory(group_index_,
-                             static_cast<uint32_t>(velocity.size()),
-                             std::move(traj_result->samples),
-                             traj_result->tolerance,
-                             trajectory_sampling_freq_,
-                             std::move(logger))
-        ->wait();
+        ->enqueue_move_request(group_index_,
+                               static_cast<uint32_t>(velocity.size()),
+                               std::move(traj_result->samples),
+                               traj_result->tolerance,
+                               trajectory_sampling_freq_,
+                               std::move(logger))
+        .get();
 }
 
 void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
@@ -457,15 +455,14 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
         return;
     }
 
-    // TODO(RSDK-13929) route through controller_->enqueue_move_request(...) — see above.
     robot_
-        ->execute_trajectory(group_index_,
-                             static_cast<uint32_t>(velocity_limits_.size()),
-                             std::move(traj_result->samples),
-                             traj_result->tolerance,
-                             trajectory_sampling_freq_,
-                             std::move(logger))
-        ->wait();
+        ->enqueue_move_request(group_index_,
+                               static_cast<uint32_t>(velocity_limits_.size()),
+                               std::move(traj_result->samples),
+                               traj_result->tolerance,
+                               trajectory_sampling_freq_,
+                               std::move(logger))
+        .get();
 }
 
 ::viam::sdk::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {

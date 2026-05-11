@@ -81,7 +81,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     }
 
    public:
-    explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)) {};
+    explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)){};
     static auto create(boost::asio::any_io_executor exec) {
         return std::make_shared<AsyncQueue<T>>(private_{}, std::move(exec));
     };
@@ -502,10 +502,11 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::string describe_state() const;
     bool is_any_moving() const;
     std::future<void> enqueue_move_request(uint32_t group_index,
-                                           std::list<Eigen::VectorXd>&& waypoints,
-                                           std::string unix_time,
-                                           Eigen::VectorXd velocity,
-                                           Eigen::VectorXd acceleration);
+                                           uint32_t axes_controlled,
+                                           std::vector<trajectory_point_t> samples,
+                                           std::vector<tolerance_t> tolerance,
+                                           double trajectory_sampling_freq,
+                                           std::optional<RealtimeTrajectoryLogger> logger = std::nullopt);
 
     void send_test_trajectory();
     void turn_servo_power_on();
@@ -554,6 +555,11 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // while allowing parallel moves on different groups.
     std::array<std::atomic<bool>, MAX_GROUPS> group_move_in_progress_{};
 
+    // When true (default), state_independent_::upgrade_downgrade auto-calls reset_errors() on
+    // the in_error bit. Opt-out lets operators inspect a pendant error before it's cleared. The
+    // active wake-up path (a queued move request) always resets regardless.
+    bool enable_auto_error_recovery_{true};
+
     void establish_connections_();
 
     std::unique_ptr<state_> fsm_;
@@ -599,10 +605,11 @@ class YaskawaController::state_ {
     bool is_any_moving() const;
 
     std::future<void> enqueue_move_request(uint32_t group_index,
-                                           std::list<Eigen::VectorXd>&& waypoints,
-                                           std::string unix_time,
-                                           Eigen::VectorXd velocity,
-                                           Eigen::VectorXd acceleration);
+                                           uint32_t axes_controlled,
+                                           std::vector<trajectory_point_t> samples,
+                                           std::vector<tolerance_t> tolerance,
+                                           double trajectory_sampling_freq,
+                                           std::optional<RealtimeTrajectoryLogger> logger = std::nullopt);
 
    private:
     // ---------------------------------------------------------------
@@ -767,18 +774,16 @@ class YaskawaController::state_ {
     };
 
     // ---------------------------------------------------------------
-    // Move request (orthogonal to FSM state)
+    // Move request (orthogonal to FSM state). Fields match execute_trajectory's parameters —
+    // state_ready_::handle_move_request forwards them onto the controller.
     // ---------------------------------------------------------------
-    // TODO(RSDK-13929) reshape this payload to match execute_trajectory: drop waypoints/velocity/
-    // acceleration, add `dof` + `std::vector<trajectory_point_t> samples` + `timeout_secs`. The
-    // arm pre-computes samples and enqueues; state_ready_::handle_move_request feeds them to
-    // controller_->execute_trajectory().
     struct move_request {
         uint32_t group_index{0};
-        std::list<Eigen::VectorXd> waypoints;
-        std::string unix_time;
-        Eigen::VectorXd velocity;
-        Eigen::VectorXd acceleration;
+        uint32_t axes_controlled{0};
+        std::vector<trajectory_point_t> samples;
+        std::vector<tolerance_t> tolerance;
+        double trajectory_sampling_freq{0.0};
+        std::optional<RealtimeTrajectoryLogger> logger;
         std::unique_ptr<GoalRequestHandle> handle;
         std::promise<void> completion;
 

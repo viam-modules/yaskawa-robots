@@ -71,7 +71,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
         return std::nullopt;
     }
 
-    if (mask & k_in_error) {
+    if (mask & k_in_error && state.controller_->enable_auto_error_recovery_) {
         constexpr int k_max_reset_attempts = 3;
         if (recovery_attempts_ < k_max_reset_attempts) {
             state.controller_->reset_errors();
@@ -86,9 +86,16 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_independent_::handle_move_request(
     state_& state) const {
-    auto requests = std::exchange(state.move_requests_, {});
-    for (auto& req : requests) {
-        if (req.handle && !req.handle->is_done()) {
+    // Any in-flight handle was started when we were in state_ready_ and got interrupted by the
+    // transition into independent. Cancel and complete-error each one regardless of `reasons_`
+    // — the move can't survive the transition either way.
+    for (auto it = state.move_requests_.begin(); it != state.move_requests_.end();) {
+        auto& req = *it;
+        if (!req.handle) {
+            ++it;
+            continue;
+        }
+        if (!req.handle->is_done()) {
             try {
                 req.handle->cancel();
             } catch (const std::exception& ex) {
@@ -97,8 +104,39 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
                 LOGGING(warning) << "[fsm] unknown exception while cancelling move request on entering independent state";
             }
         }
-        req.complete_error(
-            std::format("cannot move: arm is independent({})", YaskawaController::state_::describe_not_ready_mask_(reasons_)));
+        req.complete_error(std::format("move interrupted: arm transitioned to independent({})",
+                                       YaskawaController::state_::describe_not_ready_mask_(reasons_)));
+        it = state.move_requests_.erase(it);
+    }
+
+    // Any pending (un-dispatched) requests with human-required bits set cannot be recovered
+    // here — fail them. (enqueue_move_request rejects up-front, but reasons_ can have gained a
+    // human-required bit between enqueue and dispatch.)
+    if (reasons_ & ~k_auto_recoverable_mask) {
+        auto requests = std::exchange(state.move_requests_, {});
+        for (auto& req : requests) {
+            req.complete_error(
+                std::format("cannot move: arm is independent({})", YaskawaController::state_::describe_not_ready_mask_(reasons_)));
+        }
+        return std::nullopt;
+    }
+
+    // Pending requests with only auto-recoverable bits remaining — wake the arm. A move request
+    // is explicit user intent, so we run the recovery steps regardless of the controller's
+    // `enable_auto_error_recovery` config (which only gates the passive path in upgrade_downgrade).
+    // Bits clear asynchronously via UDP status updates; on the next cycle, upgrade_downgrade
+    // transitions to ready and state_ready_::handle_move_request dispatches the move.
+    if (state.move_requests_.empty()) {
+        return std::nullopt;
+    }
+    if (reasons_ & k_in_error) {
+        state.controller_->reset_errors();
+    }
+    if (reasons_ & k_servo_off) {
+        state.controller_->turn_servo_power_on();
+    }
+    if (reasons_ & k_motion_blocked) {
+        state.controller_->setMotionMode(1);
     }
     return std::nullopt;
 }

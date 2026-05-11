@@ -801,6 +801,8 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     // Diagnostic listener: independent of TCP/UDP control sockets, runs for controller lifetime.
     broadcast_listener_->start();
 
+    enable_auto_error_recovery_ = find_config_attribute<bool>(config, "enable_auto_error_recovery").value_or(true);
+
     // FSM connects asynchronously and retries indefinitely; the resource stands up immediately,
     // API calls fail until the FSM reaches a connected state.
     fsm_ = state_::create(this);
