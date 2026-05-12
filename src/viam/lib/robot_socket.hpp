@@ -143,7 +143,12 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
             [weak = this->weak_from_this()](auto&& handler) mutable {
                 auto self = weak.lock();
                 if (!self) {
-                    // Queue destroyed before init completed; no executor to post on, complete inline.
+                    // Queue destroyed before init completed. We can't post on the executor
+                    // (it lived inside the queue, now gone), so the handler runs inline on
+                    // whichever thread is initiating the async op. Safe here because the
+                    // caller is awaiting via `co_await`, no locks are held at this point,
+                    // and inline resumption of the coroutine is acceptable for an error
+                    // completion.
                     handler(std::nullopt, boost::asio::error::operation_aborted);
                     return;
                 }

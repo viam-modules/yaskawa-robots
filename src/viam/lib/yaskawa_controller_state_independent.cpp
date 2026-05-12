@@ -140,6 +140,13 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
     // can't be set). The wake-up state resets in upgrade_downgrade when `reasons_` changes.
     constexpr int k_wakeup_grace_cycles = 10;  // ~1s at the 100ms FSM tick
     if (!wakeup_attempted_) {
+        // Set attempted BEFORE the calls so a throw partway through (e.g. turn_servo_power_on
+        // failing its IsReady gate while in_error is still propagating over UDP) doesn't cause
+        // earlier successful calls to re-fire on the next tick. The FSM run loop catches the
+        // exception; the next cycle then enters the grace-wait branch and either the bits
+        // clear or we fail the move cleanly.
+        wakeup_attempted_ = true;
+        wakeup_grace_cycles_remaining_ = k_wakeup_grace_cycles;
         if (reasons_ & k_in_error) {
             state.controller_->reset_errors();
         }
@@ -149,8 +156,6 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
         if (reasons_ & k_motion_blocked) {
             state.controller_->setMotionMode(1);
         }
-        wakeup_attempted_ = true;
-        wakeup_grace_cycles_remaining_ = k_wakeup_grace_cycles;
     } else if (wakeup_grace_cycles_remaining_ > 0) {
         --wakeup_grace_cycles_remaining_;
     } else {

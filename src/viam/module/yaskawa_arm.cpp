@@ -312,7 +312,11 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     // disconnect+reconstruct on every reconfigure wastes a TCP/UDP cycle (and breaks any
     // sibling arm sharing the same controller via the registry) when the user is only
     // tweaking unrelated attributes like speed limits.
-    auto new_host = find_config_attribute<std::string>(config, "host").value();
+    auto new_host_attr = find_config_attribute<std::string>(config, "host");
+    if (!new_host_attr) {
+        throw std::runtime_error("host attribute is required");
+    }
+    const auto& new_host = *new_host_attr;
     auto new_tcp_port_attr = find_config_attribute<double>(config, "tcp_port");
     auto new_tcp_port = new_tcp_port_attr ? static_cast<uint16_t>(*new_tcp_port_attr) : static_cast<uint16_t>(TCP_PORT);
     if (robot_ && (robot_->host() != new_host || robot_->tcp_port() != new_tcp_port)) {
