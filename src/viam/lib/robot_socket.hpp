@@ -134,19 +134,25 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
 
     template <typename CompletionToken>
     auto async_pop(CompletionToken&& token) {
-        if (closed_) {
-            throw std::runtime_error("cannot pop on closed queue");
-        }
-
+        // Closed/destroyed states are reported via the completion handler with
+        // `operation_aborted`, never via synchronous throw or silent handler drop. Dropping
+        // the handler hangs the awaiting coroutine forever; throwing surfaces in callers as
+        // `unexpected error: cannot pop on closed queue` even though it's a normal shutdown
+        // race during reconnect.
         return boost::asio::async_initiate<CompletionToken, void(std::optional<T>, boost::system::error_code ec)>(
             [weak = this->weak_from_this()](auto&& handler) mutable {
                 auto self = weak.lock();
                 if (!self) {
+                    // Queue destroyed before init completed; no executor to post on, complete inline.
+                    handler(std::nullopt, boost::asio::error::operation_aborted);
                     return;
                 }
                 const std::scoped_lock lock{self->mutex_};
                 if (self->closed_) {
-                    LOGGING(debug) << "AsyncQueue is closed, cannot pop on closed queue";
+                    boost::asio::post(self->executor_,
+                                      [h = std::forward<decltype(handler)>(handler)]() mutable {
+                                          h(std::nullopt, boost::asio::error::operation_aborted);
+                                      });
                     return;
                 }
                 if (!self->queue_.empty()) {
@@ -497,6 +503,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     const std::string& host() const {
         return host_;
     }
+    uint16_t tcp_port() const {
+        return tcp_port_;
+    }
 
     // FSM state accessors
     std::string describe_state() const;
@@ -727,6 +736,10 @@ class YaskawaController::state_ {
         void connect_(state_&);
 
         int reconnect_attempts_{0};
+        // Last error message we logged. Reconnect failures are deduped against this so the
+        // log stays quiet when the same failure repeats, but surfaces any new failure mode
+        // (e.g., "TCP connect timed out" → "protocol version mismatch") on the next attempt.
+        std::string last_logged_error_;
         std::future<void> pending_connection_;
         std::optional<event_connection_lost_> triggering_event_;
     };
@@ -752,13 +765,14 @@ class YaskawaController::state_ {
 
         not_ready_mask reasons_;
         int recovery_attempts_{0};
-        // Tracks the move-request wake-up's single reset_errors attempt. The wake-up path tries
-        // reset_errors exactly once and then waits a fixed grace period (counted in FSM cycles)
-        // for the controller's status to reflect the cleared error over UDP. If the grace
-        // period elapses with `in_error` still set, the pending moves are failed. Both fields
-        // reset whenever `reasons_` changes (see upgrade_downgrade) so a fresh in_error gets a
-        // fresh attempt.
-        bool wakeup_reset_attempted_{false};
+        // Tracks the move-request wake-up. Each auto-recoverable bit set in `reasons_` triggers
+        // its corresponding recovery call (reset_errors / turn_servo_power_on / setMotionMode)
+        // exactly once; we then wait up to `wakeup_grace_cycles_remaining_` FSM cycles for the
+        // controller's status to reflect the cleared bits over UDP. If the grace period elapses
+        // with any auto-recoverable bit still set, the pending moves are failed. All three
+        // fields reset whenever `reasons_` changes (see upgrade_downgrade) so a fresh
+        // not-ready condition gets a fresh attempt.
+        bool wakeup_attempted_{false};
         int wakeup_grace_cycles_remaining_{0};
     };
 

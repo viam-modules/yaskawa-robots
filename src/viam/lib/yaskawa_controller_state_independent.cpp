@@ -56,8 +56,10 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
     }
 
     if (mask != reasons_) {
+        LOGGING(info) << "[fsm] not-ready mask changed: `" << describe() << "` -> `independent("
+                      << YaskawaController::state_::describe_not_ready_mask_(mask) << ")`";
         recovery_attempts_ = 0;
-        wakeup_reset_attempted_ = false;
+        wakeup_attempted_ = false;
         wakeup_grace_cycles_remaining_ = 0;
         return event_not_ready_detected_{mask};
     }
@@ -130,35 +132,35 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
     if (state.move_requests_.empty()) {
         return std::nullopt;
     }
-    if (reasons_ & k_in_error) {
-        // Call reset_errors once, then wait up to `k_wakeup_grace_cycles` FSM cycles for the
-        // controller's status to reflect the cleared error (it propagates over UDP, so the
-        // updated mask may not arrive on the very next cycle). If the grace period elapses
-        // with `in_error` still set, fail the pending requests instead of retrying — callers
-        // shouldn't hang on a permanently-errored arm. State resets when `reasons_` changes.
-        constexpr int k_wakeup_grace_cycles = 10;  // ~1s at the 100ms FSM tick
-        if (!wakeup_reset_attempted_) {
+    // Fire each recovery call exactly once, then wait up to `k_wakeup_grace_cycles` FSM cycles
+    // for the controller's status to reflect the cleared bits (propagation is over UDP, so the
+    // updated mask may not arrive on the very next cycle). If the grace period elapses with any
+    // auto-recoverable bit still set, fail the pending requests instead of retrying — callers
+    // shouldn't hang on an arm that won't recover (e.g. servo refuses to stay on, motion mode
+    // can't be set). The wake-up state resets in upgrade_downgrade when `reasons_` changes.
+    constexpr int k_wakeup_grace_cycles = 10;  // ~1s at the 100ms FSM tick
+    if (!wakeup_attempted_) {
+        if (reasons_ & k_in_error) {
             state.controller_->reset_errors();
-            wakeup_reset_attempted_ = true;
-            wakeup_grace_cycles_remaining_ = k_wakeup_grace_cycles;
-        } else if (wakeup_grace_cycles_remaining_ > 0) {
-            --wakeup_grace_cycles_remaining_;
-        } else {
-            auto requests = std::exchange(state.move_requests_, {});
-            for (auto& req : requests) {
-                req.complete_error(
-                    std::format("wake-up failed: reset_errors did not clear `in_error` within grace period; "
-                                "arm is independent({})",
-                                YaskawaController::state_::describe_not_ready_mask_(reasons_)));
-            }
-            return std::nullopt;
         }
-    }
-    if (reasons_ & k_servo_off) {
-        state.controller_->turn_servo_power_on();
-    }
-    if (reasons_ & k_motion_blocked) {
-        state.controller_->setMotionMode(1);
+        if (reasons_ & k_servo_off) {
+            state.controller_->turn_servo_power_on();
+        }
+        if (reasons_ & k_motion_blocked) {
+            state.controller_->setMotionMode(1);
+        }
+        wakeup_attempted_ = true;
+        wakeup_grace_cycles_remaining_ = k_wakeup_grace_cycles;
+    } else if (wakeup_grace_cycles_remaining_ > 0) {
+        --wakeup_grace_cycles_remaining_;
+    } else {
+        auto requests = std::exchange(state.move_requests_, {});
+        for (auto& req : requests) {
+            req.complete_error(std::format("wake-up failed: not-ready bits did not clear within grace period; "
+                                           "arm is independent({})",
+                                           YaskawaController::state_::describe_not_ready_mask_(reasons_)));
+        }
+        return std::nullopt;
     }
     return std::nullopt;
 }
