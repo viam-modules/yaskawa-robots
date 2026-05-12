@@ -57,6 +57,8 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
 
     if (mask != reasons_) {
         recovery_attempts_ = 0;
+        wakeup_reset_attempted_ = false;
+        wakeup_grace_cycles_remaining_ = 0;
         return event_not_ready_detected_{mask};
     }
 
@@ -84,8 +86,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
     return std::nullopt;
 }
 
-std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_independent_::handle_move_request(
-    state_& state) const {
+std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_independent_::handle_move_request(state_& state) {
     // Any in-flight handle was started when we were in state_ready_ and got interrupted by the
     // transition into independent. Cancel and complete-error each one regardless of `reasons_`
     // — the move can't survive the transition either way.
@@ -130,7 +131,28 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
         return std::nullopt;
     }
     if (reasons_ & k_in_error) {
-        state.controller_->reset_errors();
+        // Call reset_errors once, then wait up to `k_wakeup_grace_cycles` FSM cycles for the
+        // controller's status to reflect the cleared error (it propagates over UDP, so the
+        // updated mask may not arrive on the very next cycle). If the grace period elapses
+        // with `in_error` still set, fail the pending requests instead of retrying — callers
+        // shouldn't hang on a permanently-errored arm. State resets when `reasons_` changes.
+        constexpr int k_wakeup_grace_cycles = 10;  // ~1s at the 100ms FSM tick
+        if (!wakeup_reset_attempted_) {
+            state.controller_->reset_errors();
+            wakeup_reset_attempted_ = true;
+            wakeup_grace_cycles_remaining_ = k_wakeup_grace_cycles;
+        } else if (wakeup_grace_cycles_remaining_ > 0) {
+            --wakeup_grace_cycles_remaining_;
+        } else {
+            auto requests = std::exchange(state.move_requests_, {});
+            for (auto& req : requests) {
+                req.complete_error(
+                    std::format("wake-up failed: reset_errors did not clear `in_error` within grace period; "
+                                "arm is independent({})",
+                                YaskawaController::state_::describe_not_ready_mask_(reasons_)));
+            }
+            return std::nullopt;
+        }
     }
     if (reasons_ & k_servo_off) {
         state.controller_->turn_servo_power_on();

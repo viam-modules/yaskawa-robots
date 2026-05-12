@@ -743,7 +743,7 @@ class YaskawaController::state_ {
         using state_connected_::send_heartbeat;
 
         std::optional<event_variant_> upgrade_downgrade(state_&);
-        std::optional<event_variant_> handle_move_request(state_&) const;
+        std::optional<event_variant_> handle_move_request(state_&);
 
         std::optional<state_variant_> handle_event(state_&, event_connection_lost_);
         std::optional<state_variant_> handle_event(state_&, event_not_ready_detected_);
@@ -752,6 +752,14 @@ class YaskawaController::state_ {
 
         not_ready_mask reasons_;
         int recovery_attempts_{0};
+        // Tracks the move-request wake-up's single reset_errors attempt. The wake-up path tries
+        // reset_errors exactly once and then waits a fixed grace period (counted in FSM cycles)
+        // for the controller's status to reflect the cleared error over UDP. If the grace
+        // period elapses with `in_error` still set, the pending moves are failed. Both fields
+        // reset whenever `reasons_` changes (see upgrade_downgrade) so a fresh in_error gets a
+        // fresh attempt.
+        bool wakeup_reset_attempted_{false};
+        int wakeup_grace_cycles_remaining_{0};
     };
 
     // ---------------------------------------------------------------
