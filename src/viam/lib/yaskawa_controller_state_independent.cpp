@@ -161,9 +161,10 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
     } else {
         auto requests = std::exchange(state.move_requests_, {});
         for (auto& req : requests) {
-            req.complete_error(std::format("wake-up failed: not-ready bits did not clear within grace period; "
-                                           "arm is independent({})",
-                                           YaskawaController::state_::describe_not_ready_mask_(reasons_)));
+            req.complete_error(
+                std::format("wake-up failed: not-ready bits did not clear within grace period; "
+                            "arm is independent({})",
+                            YaskawaController::state_::describe_not_ready_mask_(reasons_)));
         }
         return std::nullopt;
     }

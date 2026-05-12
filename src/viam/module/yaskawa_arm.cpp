@@ -320,8 +320,8 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     auto new_tcp_port_attr = find_config_attribute<double>(config, "tcp_port");
     auto new_tcp_port = new_tcp_port_attr ? static_cast<uint16_t>(*new_tcp_port_attr) : static_cast<uint16_t>(TCP_PORT);
     if (robot_ && (robot_->host() != new_host || robot_->tcp_port() != new_tcp_port)) {
-        VIAM_SDK_LOG(info) << "connection target changed (" << robot_->host() << ":" << robot_->tcp_port() << " -> " << new_host
-                           << ":" << new_tcp_port << "), resetting connection";
+        VIAM_SDK_LOG(info) << "connection target changed (" << robot_->host() << ":" << robot_->tcp_port() << " -> " << new_host << ":"
+                           << new_tcp_port << "), resetting connection";
         robot_->disconnect();
         robot_.reset();
     }

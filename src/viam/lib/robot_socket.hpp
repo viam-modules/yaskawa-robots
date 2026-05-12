@@ -154,10 +154,9 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
                 }
                 const std::scoped_lock lock{self->mutex_};
                 if (self->closed_) {
-                    boost::asio::post(self->executor_,
-                                      [h = std::forward<decltype(handler)>(handler)]() mutable {
-                                          h(std::nullopt, boost::asio::error::operation_aborted);
-                                      });
+                    boost::asio::post(self->executor_, [h = std::forward<decltype(handler)>(handler)]() mutable {
+                        h(std::nullopt, boost::asio::error::operation_aborted);
+                    });
                     return;
                 }
                 if (!self->queue_.empty()) {
