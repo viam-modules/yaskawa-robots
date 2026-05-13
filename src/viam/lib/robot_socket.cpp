@@ -1,5 +1,6 @@
 #include "robot_socket.hpp"
 #include <algorithm>
+#include <limits>
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/buffer.hpp>
@@ -872,6 +873,14 @@ void YaskawaController::establish_connections_() {
             LOGGING(info) << "  group " << static_cast<int>(grp.group_id) << ": type=" << static_cast<int>(grp.group_type)
                           << " axes=" << static_cast<int>(grp.num_axes) << " interpolation_us=" << grp.interpolation_period_us;
         }
+        {
+            const std::unique_lock lock{known_groups_mutex_};
+            known_groups_.clear();
+            known_groups_.reserve(caps.groups.size());
+            for (const auto& grp : caps.groups) {
+                known_groups_.push_back(grp.group_id);
+            }
+        }
 
         udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
         auto udp_future = udp_socket_->connect();
@@ -922,6 +931,10 @@ void YaskawaController::disconnect() {
     }
     if (broadcast_listener_) {
         broadcast_listener_->stop();
+    }
+    {
+        const std::unique_lock lock{known_groups_mutex_};
+        known_groups_.clear();
     }
 }
 
@@ -1031,6 +1044,7 @@ void YaskawaController::get_error_info() {
 // query through a higher-level API passing group_index, instead of reaching into the UDP socket
 // here. Bundles with the FSM-dispatched-reads question (option 3 from PR 2a's discussion items).
 StatusMessage YaskawaController::get_group_position_velocity_torque(uint8_t group_index) {
+    validate_group_(group_index);
     if (!udp_socket_) {
         throw std::runtime_error(std::format("arm is {}", describe_state()));
     }
@@ -1109,6 +1123,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                                                                          std::optional<RealtimeTrajectoryLogger> logger) {
     LOGGING(debug) << "execute_trajectory: group=" << group_index << " samples=" << samples.size();
 
+    validate_group_(group_index);
     if (group_index >= MAX_GROUPS) {
         throw std::runtime_error(std::format("group_index {} exceeds MAX_GROUPS ({})", group_index, MAX_GROUPS));
     }
@@ -1271,6 +1286,7 @@ std::future<Message> YaskawaController::echo_trajectory() {
     return tcp_socket_->send_request(Message(MSG_ECHO_TRAJECTORY));
 }
 bool YaskawaController::stop(uint32_t group_index) {
+    validate_group_(group_index);
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
     id->group_id = static_cast<int32_t>(group_index);
@@ -1295,12 +1311,14 @@ bool YaskawaController::stop(uint32_t group_index) {
     return is_stopped->value;
 }
 CartesianPosition YaskawaController::getCartPosition(uint32_t group_index) {
+    validate_group_(group_index);
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
     id->group_id = static_cast<int32_t>(group_index);
     return CartesianPosition(tcp_socket_->send_request(Message(MSG_GET_CART, std::move(payload))).get());
 }
 AnglePosition YaskawaController::cartPosToAngle(uint32_t group_index, CartesianPosition& pos) {
+    validate_group_(group_index);
     std::vector<uint8_t> payload(sizeof(cartesian_payload_t));
     cartesian_payload_t* cid = reinterpret_cast<cartesian_payload_t*>(payload.data());
     cid->group_id = static_cast<int32_t>(group_index);
@@ -1313,6 +1331,7 @@ AnglePosition YaskawaController::cartPosToAngle(uint32_t group_index, CartesianP
     return AnglePosition(tcp_socket_->send_request(Message(MSG_FROM_CART_TO_JOINT, std::move(payload))).get());
 }
 CartesianPosition YaskawaController::angleToCartPos(uint32_t group_index, AnglePosition& pos) {
+    validate_group_(group_index);
     std::vector<uint8_t> payload(sizeof(position_angle_degree_payload_t));
     position_angle_degree_payload_t* pid = reinterpret_cast<position_angle_degree_payload_t*>(payload.data());
     pid->group_id = static_cast<int32_t>(group_index);
@@ -1329,15 +1348,46 @@ bool YaskawaController::is_status_command(message_type_t type) {
     return type == MSG_ROBOT_POSITION_VELOCITY_TORQUE || type == MSG_ROBOT_STATUS;
 }
 
-// TODO(RSDK-13930) wrap this in a per-controller cache (positive set + negative set, cleared on
-// disconnect). First call validates against the server and primes the cache; subsequent calls
-// hit the cache. Today we don't call this at configure time at all; misconfigured arms only
-// fail on first group-keyed API call (server returns VIAM_ERROR_INVALID_PAYLOAD).
+// Shim around the cache for any external callers still on the deprecated API. Returns the
+// cached answer; never makes a server roundtrip. `false` means either "the group is not in
+// the cache" or "the cache is empty because we haven't completed a connect yet" — callers
+// can't distinguish the two cases via this API. Group-keyed methods on the controller go
+// through `validate_group_` instead, which throws a structured error that does distinguish.
 bool YaskawaController::checkGroupIndex(uint32_t group_index) {
-    std::vector<uint8_t> payload(sizeof(group_id_t));
-    group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
-    id->group_id = static_cast<int32_t>(group_index);
-    return CheckGroupMessage(tcp_socket_->send_request(Message(MSG_CHECK_GROUP, std::move(payload))).get()).is_known_group;
+    if (group_index > std::numeric_limits<uint8_t>::max()) {
+        return false;
+    }
+    const std::shared_lock lock{known_groups_mutex_};
+    return std::find(known_groups_.begin(), known_groups_.end(), static_cast<uint8_t>(group_index)) != known_groups_.end();
+}
+
+void YaskawaController::validate_group_(uint32_t group_index) const {
+    const std::shared_lock lock{known_groups_mutex_};
+    // Protocol stores group_id as uint8_t, so anything outside that range can't possibly
+    // match a cached entry. Check explicitly so a wide value (e.g. 256 with the same low byte
+    // as a real group) doesn't silently wrap to a false positive.
+    if (group_index <= std::numeric_limits<uint8_t>::max() &&
+        std::find(known_groups_.begin(), known_groups_.end(), static_cast<uint8_t>(group_index)) != known_groups_.end()) {
+        return;
+    }
+    // Build "[0, 1]" style summary of what *is* configured. When the cache is empty, the
+    // wording reflects that we haven't yet reached a state where caps are known — typically
+    // the controller hasn't completed its first connection. Once RSDK-13931 routes direct
+    // reads through the FSM, this case will be handled at the FSM gate before we ever land
+    // here; until then the explicit message is still better than the server's opaque error.
+    std::string known;
+    if (known_groups_.empty()) {
+        known = "controller capabilities not yet available";
+    } else {
+        known = "known groups: ";
+        for (size_t i = 0; i < known_groups_.size(); ++i) {
+            if (i > 0) {
+                known += ", ";
+            }
+            known += std::to_string(static_cast<int>(known_groups_[i]));
+        }
+    }
+    throw std::runtime_error(std::format("group_index {} is not configured on this controller ({})", group_index, known));
 }
 
 CapabilitiesMessage YaskawaController::get_capabilities() {
