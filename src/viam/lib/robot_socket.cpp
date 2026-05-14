@@ -1,6 +1,5 @@
 #include "robot_socket.hpp"
 #include <algorithm>
-#include <limits>
 #include <boost/asio/any_io_executor.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/buffer.hpp>
@@ -31,6 +30,7 @@
 #include <future>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
