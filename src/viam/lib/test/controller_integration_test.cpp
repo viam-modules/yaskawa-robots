@@ -14,11 +14,7 @@
 #include "../robot_socket.hpp"
 #include "fake_server.hpp"
 
-// TODO: drop the `extern "C"` wrapper once we consume a viam-yaskawa-libs that has the C++
-// guards inside `protocol.h` itself.
-extern "C" {
 #include "protocol.h"
-}
 
 constexpr int k_dof = 6;
 
@@ -392,6 +388,96 @@ BOOST_FIXTURE_TEST_CASE(move_rejects_when_e_stopped, ControllerFixture,
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     BOOST_CHECK_THROW(do_move(), std::runtime_error);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ==================== Suite 5b: FSM Wake-Up ====================
+
+BOOST_AUTO_TEST_SUITE(fsm_wake_up)
+
+// Force the FSM into state_independent_(k_in_error) and verify that enqueueing
+// a move triggers the wake-up path: handle_move_request calls reset_errors,
+// the mock clears in_error, upgrade_downgrade transitions to ready on the next
+// tick, and the move dispatches and completes successfully.
+//
+// `enable_auto_error_recovery` is disabled so we exercise the move-triggered
+// wake-up path in isolation rather than the passive 3-strikes reset path in
+// upgrade_downgrade.
+BOOST_AUTO_TEST_CASE(move_wakes_arm_from_in_error, *boost::unit_test::timeout(15)) {
+    auto ports = test::FakeServer::allocate_ports();
+    test::FakeServer server(ports);
+
+    boost::asio::io_context io_ctx;
+    auto io_thread = std::thread([&io_ctx]() {
+        auto guard = boost::asio::make_work_guard(io_ctx);
+        io_ctx.run();
+    });
+
+    viam::sdk::ProtoStruct attrs;
+    attrs["host"] = viam::sdk::ProtoValue(std::string("127.0.0.1"));
+    attrs["speed_rad_per_sec"] = viam::sdk::ProtoValue(1.0);
+    attrs["acceleration_rad_per_sec2"] = viam::sdk::ProtoValue(1.0);
+    attrs["tcp_port"] = viam::sdk::ProtoValue(static_cast<double>(ports.tcp_port));
+    attrs["enable_auto_error_recovery"] = viam::sdk::ProtoValue(false);
+    viam::sdk::ResourceConfig config(
+        "arm", "test-arm", "", std::move(attrs), "rdk:component:arm", viam::sdk::Model("test", "test", "test"));
+
+    server.robot().mode = ROBOT_MODE_REMOTE;
+    server.start_udp_status_pump(10);
+    auto controller = std::make_shared<robot::YaskawaController>(io_ctx, config);
+    controller->connect().get();
+    // Wait for at least one UDP status to refresh robot_state so turn_servo_power_on's
+    // IsReady() check sees mode=REMOTE.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Drive the mock into a state the FSM will see as ready (mock starts with
+    // drives_powered=0, motion_possible=0, so the FSM would otherwise stick in
+    // independent(servo_off, motion_blocked)).
+    controller->turn_servo_power_on();
+    controller->setMotionMode(1);
+
+    auto wait_for_state = [&](std::string_view prefix, std::chrono::milliseconds timeout) {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline && !controller->describe_state().starts_with(prefix)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    };
+
+    wait_for_state("ready", std::chrono::seconds(3));
+    BOOST_REQUIRE_EQUAL(controller->describe_state(), "ready");
+
+    // Drop the arm into in_error and wait for the FSM to land in independent(in_error).
+    server.robot().in_error = true;
+    server.robot().error_count = 1;
+    server.robot().error_codes[0] = 42;
+    wait_for_state("independent(in_error", std::chrono::seconds(3));
+    BOOST_TEST_INFO("state before move: " << controller->describe_state());
+    BOOST_REQUIRE(controller->describe_state().starts_with("independent(in_error"));
+
+    // Enqueue a move via the FSM. The wake-up path should fire, clear in_error
+    // via reset_errors, transition to ready, and dispatch.
+    std::vector<trajectory_point_t> samples;
+    {
+        trajectory_point_t start{};
+        start.time_from_start = {0, 0};
+        samples.push_back(start);
+        trajectory_point_t end{};
+        for (int i = 0; i < k_dof; ++i) {
+            end.positions[i] = 0.1;
+        }
+        end.time_from_start = {1, 0};
+        samples.push_back(end);
+    }
+    auto fut = controller->enqueue_move_request(0, k_dof, std::move(samples), {}, 3.0);
+    BOOST_REQUIRE(fut.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+    BOOST_CHECK_NO_THROW(fut.get());
+    BOOST_CHECK_EQUAL(server.robot().in_error, false);
+
+    controller->disconnect();
+    io_ctx.stop();
+    if (io_thread.joinable()) {
+        io_thread.join();
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -53,12 +53,19 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
             try {
                 pending_connection_.get();
             } catch (const std::exception& ex) {
-                // Reconnect failed; log deduped to avoid spamming when the controller is unreachable.
-                // The next worker cycle will spawn a fresh attempt (future is now invalid).
-                constexpr int k_log_at_n_attempts = 100;
+                // Reconnect failed; log on attempt 1, whenever the failure message changes
+                // (so new failure modes surface immediately), and every Nth attempt as a
+                // heartbeat for long outages. The next worker cycle will spawn a fresh
+                // attempt (future is now invalid).
+                constexpr int k_heartbeat_attempts = 10;
                 ++reconnect_attempts_;
-                if (reconnect_attempts_ == 1 || reconnect_attempts_ % k_log_at_n_attempts == 0) {
-                    LOGGING(warning) << "[fsm] reconnect attempt " << reconnect_attempts_ << " failed: " << ex.what();
+                const std::string current_error = ex.what();
+                const bool first_attempt = (reconnect_attempts_ == 1);
+                const bool message_changed = (current_error != last_logged_error_);
+                const bool heartbeat = (reconnect_attempts_ % k_heartbeat_attempts == 0);
+                if (first_attempt || message_changed || heartbeat) {
+                    LOGGING(warning) << "[fsm] reconnect attempt " << reconnect_attempts_ << " failed: " << current_error;
+                    last_logged_error_ = current_error;
                 }
                 return std::nullopt;
             }

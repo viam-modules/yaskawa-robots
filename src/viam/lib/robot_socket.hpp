@@ -134,19 +134,29 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
 
     template <typename CompletionToken>
     auto async_pop(CompletionToken&& token) {
-        if (closed_) {
-            throw std::runtime_error("cannot pop on closed queue");
-        }
-
+        // Closed/destroyed states are reported via the completion handler with
+        // `operation_aborted`, never via synchronous throw or silent handler drop. Dropping
+        // the handler hangs the awaiting coroutine forever; throwing surfaces in callers as
+        // `unexpected error: cannot pop on closed queue` even though it's a normal shutdown
+        // race during reconnect.
         return boost::asio::async_initiate<CompletionToken, void(std::optional<T>, boost::system::error_code ec)>(
             [weak = this->weak_from_this()](auto&& handler) mutable {
                 auto self = weak.lock();
                 if (!self) {
+                    // Queue destroyed before init completed. We can't post on the executor
+                    // (it lived inside the queue, now gone), so the handler runs inline on
+                    // whichever thread is initiating the async op. Safe here because the
+                    // caller is awaiting via `co_await`, no locks are held at this point,
+                    // and inline resumption of the coroutine is acceptable for an error
+                    // completion.
+                    handler(std::nullopt, boost::asio::error::operation_aborted);
                     return;
                 }
                 const std::scoped_lock lock{self->mutex_};
                 if (self->closed_) {
-                    LOGGING(debug) << "AsyncQueue is closed, cannot pop on closed queue";
+                    boost::asio::post(self->executor_, [h = std::forward<decltype(handler)>(handler)]() mutable {
+                        h(std::nullopt, boost::asio::error::operation_aborted);
+                    });
                     return;
                 }
                 if (!self->queue_.empty()) {
@@ -497,15 +507,19 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     const std::string& host() const {
         return host_;
     }
+    uint16_t tcp_port() const {
+        return tcp_port_;
+    }
 
     // FSM state accessors
     std::string describe_state() const;
     bool is_any_moving() const;
     std::future<void> enqueue_move_request(uint32_t group_index,
-                                           std::list<Eigen::VectorXd>&& waypoints,
-                                           std::string unix_time,
-                                           Eigen::VectorXd velocity,
-                                           Eigen::VectorXd acceleration);
+                                           uint32_t axes_controlled,
+                                           std::vector<trajectory_point_t> samples,
+                                           std::vector<tolerance_t> tolerance,
+                                           double trajectory_sampling_freq,
+                                           std::optional<RealtimeTrajectoryLogger> logger = std::nullopt);
 
     void send_test_trajectory();
     void turn_servo_power_on();
@@ -554,6 +568,11 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // while allowing parallel moves on different groups.
     std::array<std::atomic<bool>, MAX_GROUPS> group_move_in_progress_{};
 
+    // When true (default), state_independent_::upgrade_downgrade auto-calls reset_errors() on
+    // the in_error bit. Opt-out lets operators inspect a pendant error before it's cleared. The
+    // active wake-up path (a queued move request) always resets regardless.
+    bool enable_auto_error_recovery_{true};
+
     void establish_connections_();
 
     std::unique_ptr<state_> fsm_;
@@ -599,10 +618,11 @@ class YaskawaController::state_ {
     bool is_any_moving() const;
 
     std::future<void> enqueue_move_request(uint32_t group_index,
-                                           std::list<Eigen::VectorXd>&& waypoints,
-                                           std::string unix_time,
-                                           Eigen::VectorXd velocity,
-                                           Eigen::VectorXd acceleration);
+                                           uint32_t axes_controlled,
+                                           std::vector<trajectory_point_t> samples,
+                                           std::vector<tolerance_t> tolerance,
+                                           double trajectory_sampling_freq,
+                                           std::optional<RealtimeTrajectoryLogger> logger = std::nullopt);
 
    private:
     // ---------------------------------------------------------------
@@ -720,6 +740,10 @@ class YaskawaController::state_ {
         void connect_(state_&);
 
         int reconnect_attempts_{0};
+        // Last error message we logged. Reconnect failures are deduped against this so the
+        // log stays quiet when the same failure repeats, but surfaces any new failure mode
+        // (e.g., "TCP connect timed out" → "protocol version mismatch") on the next attempt.
+        std::string last_logged_error_;
         std::future<void> pending_connection_;
         std::optional<event_connection_lost_> triggering_event_;
     };
@@ -736,7 +760,7 @@ class YaskawaController::state_ {
         using state_connected_::send_heartbeat;
 
         std::optional<event_variant_> upgrade_downgrade(state_&);
-        std::optional<event_variant_> handle_move_request(state_&) const;
+        std::optional<event_variant_> handle_move_request(state_&);
 
         std::optional<state_variant_> handle_event(state_&, event_connection_lost_);
         std::optional<state_variant_> handle_event(state_&, event_not_ready_detected_);
@@ -745,6 +769,15 @@ class YaskawaController::state_ {
 
         not_ready_mask reasons_;
         int recovery_attempts_{0};
+        // Tracks the move-request wake-up. Each auto-recoverable bit set in `reasons_` triggers
+        // its corresponding recovery call (reset_errors / turn_servo_power_on / setMotionMode)
+        // exactly once; we then wait up to `wakeup_grace_cycles_remaining_` FSM cycles for the
+        // controller's status to reflect the cleared bits over UDP. If the grace period elapses
+        // with any auto-recoverable bit still set, the pending moves are failed. All three
+        // fields reset whenever `reasons_` changes (see upgrade_downgrade) so a fresh
+        // not-ready condition gets a fresh attempt.
+        bool wakeup_attempted_{false};
+        int wakeup_grace_cycles_remaining_{0};
     };
 
     // ---------------------------------------------------------------
@@ -767,18 +800,16 @@ class YaskawaController::state_ {
     };
 
     // ---------------------------------------------------------------
-    // Move request (orthogonal to FSM state)
+    // Move request (orthogonal to FSM state). Fields match execute_trajectory's parameters —
+    // state_ready_::handle_move_request forwards them onto the controller.
     // ---------------------------------------------------------------
-    // TODO(RSDK-13929) reshape this payload to match execute_trajectory: drop waypoints/velocity/
-    // acceleration, add `dof` + `std::vector<trajectory_point_t> samples` + `timeout_secs`. The
-    // arm pre-computes samples and enqueues; state_ready_::handle_move_request feeds them to
-    // controller_->execute_trajectory().
     struct move_request {
         uint32_t group_index{0};
-        std::list<Eigen::VectorXd> waypoints;
-        std::string unix_time;
-        Eigen::VectorXd velocity;
-        Eigen::VectorXd acceleration;
+        uint32_t axes_controlled{0};
+        std::vector<trajectory_point_t> samples;
+        std::vector<tolerance_t> tolerance;
+        double trajectory_sampling_freq{0.0};
+        std::optional<RealtimeTrajectoryLogger> logger;
         std::unique_ptr<GoalRequestHandle> handle;
         std::promise<void> completion;
 

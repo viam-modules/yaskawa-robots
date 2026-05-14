@@ -801,6 +801,8 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
     // Diagnostic listener: independent of TCP/UDP control sockets, runs for controller lifetime.
     broadcast_listener_->start();
 
+    enable_auto_error_recovery_ = find_config_attribute<bool>(config, "enable_auto_error_recovery").value_or(true);
+
     // FSM connects asynchronously and retries indefinitely; the resource stands up immediately,
     // API calls fail until the FSM reaches a connected state.
     fsm_ = state_::create(this);
@@ -1095,6 +1097,10 @@ GoalAcceptedMessage YaskawaController::send_goal_(uint32_t group_index,
     return GoalAcceptedMessage(tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload))).get());
 }
 
+// Precondition: the arm must already be motion-ready (servos powered, trajectory mode set,
+// no alarms). The FSM's state_ready_::handle_move_request is the canonical caller and
+// guarantees this; direct callers (example program, integration tests) must perform their
+// own reset_errors/turn_servo_power_on/setMotionMode sequence before invoking this.
 std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_t group_index,
                                                                          uint32_t axes_controlled,
                                                                          std::vector<trajectory_point_t> samples,
@@ -1117,26 +1123,6 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
     // Scope guard clears the per-group lock on any exit path.
     // Dismissed after the monitoring thread is successfully created (which takes over cleanup responsibility).
     ScopeGuard cleanup{[this, group_index]() { group_move_in_progress_[group_index] = false; }};
-
-    // Check if any other group is currently moving. Both reset_errors() and setMotionMode()
-    // are global operations that would interfere with in-progress motion on other groups.
-    bool any_other_group_moving = false;
-    for (uint32_t i = 0; i < MAX_GROUPS; ++i) {
-        if (i != group_index && group_move_in_progress_[i].load()) {
-            any_other_group_moving = true;
-            break;
-        }
-    }
-    if (!any_other_group_moving) {
-        LOGGING(debug) << "execute_trajectory: first mover, performing global setup";
-        if (!robot_state_->IsReady()) {
-            reset_errors();
-        }
-        turn_servo_power_on();
-        setMotionMode(1);
-    } else {
-        LOGGING(debug) << "execute_trajectory: another group is moving, skipping global setup";
-    }
 
     // Send the first chunk
     const auto first_end = std::min(k_chunk_size, samples.size());

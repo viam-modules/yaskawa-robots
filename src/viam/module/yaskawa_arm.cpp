@@ -308,9 +308,22 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     VIAM_SDK_LOG(info) << "Yaskawa robots module executable found in `" << module_executable_path << "; resources will be found in `"
                        << resource_root_ << "`";
 
-    if (robot_) {
-        VIAM_SDK_LOG(info) << "already connected to a Yaskawa arm, resetting connection";
+    // Only tear down the existing controller if the connection target actually changed. A
+    // disconnect+reconstruct on every reconfigure wastes a TCP/UDP cycle (and breaks any
+    // sibling arm sharing the same controller via the registry) when the user is only
+    // tweaking unrelated attributes like speed limits.
+    auto new_host_attr = find_config_attribute<std::string>(config, "host");
+    if (!new_host_attr) {
+        throw std::runtime_error("host attribute is required");
+    }
+    const auto& new_host = *new_host_attr;
+    auto new_tcp_port_attr = find_config_attribute<double>(config, "tcp_port");
+    auto new_tcp_port = new_tcp_port_attr ? static_cast<uint16_t>(*new_tcp_port_attr) : static_cast<uint16_t>(TCP_PORT);
+    if (robot_ && (robot_->host() != new_host || robot_->tcp_port() != new_tcp_port)) {
+        VIAM_SDK_LOG(info) << "connection target changed (" << robot_->host() << ":" << robot_->tcp_port() << " -> " << new_host << ":"
+                           << new_tcp_port << "), resetting connection";
         robot_->disconnect();
+        robot_.reset();
     }
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
@@ -332,7 +345,9 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
 
     VIAM_SDK_LOG(debug) << "telemetry output path set : " << telemetry_output_path_;
 
-    robot_ = YaskawaController::get_or_create(io_context_, config);
+    if (!robot_) {
+        robot_ = YaskawaController::get_or_create(io_context_, config);
+    }
     group_index_ = static_cast<uint32_t>(find_config_attribute<double>(config, "group_index").value_or(0));
 
     auto dof = number_of_dof_configured(config, "speed_rad_per_sec", "acceleration_rad_per_sec2");
@@ -422,16 +437,14 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
         return;
     }
 
-    // TODO(RSDK-13929) route through controller_->enqueue_move_request(...) so the FSM gates
-    // execution by state and folds in the wake-up step. Today this call bypasses the FSM.
     robot_
-        ->execute_trajectory(group_index_,
-                             static_cast<uint32_t>(velocity.size()),
-                             std::move(traj_result->samples),
-                             traj_result->tolerance,
-                             trajectory_sampling_freq_,
-                             std::move(logger))
-        ->wait();
+        ->enqueue_move_request(group_index_,
+                               static_cast<uint32_t>(velocity.size()),
+                               std::move(traj_result->samples),
+                               traj_result->tolerance,
+                               trajectory_sampling_freq_,
+                               std::move(logger))
+        .get();
 }
 
 void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
@@ -457,15 +470,14 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
         return;
     }
 
-    // TODO(RSDK-13929) route through controller_->enqueue_move_request(...) — see above.
     robot_
-        ->execute_trajectory(group_index_,
-                             static_cast<uint32_t>(velocity_limits_.size()),
-                             std::move(traj_result->samples),
-                             traj_result->tolerance,
-                             trajectory_sampling_freq_,
-                             std::move(logger))
-        ->wait();
+        ->enqueue_move_request(group_index_,
+                               static_cast<uint32_t>(velocity_limits_.size()),
+                               std::move(traj_result->samples),
+                               traj_result->tolerance,
+                               trajectory_sampling_freq_,
+                               std::move(logger))
+        .get();
 }
 
 ::viam::sdk::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
