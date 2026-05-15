@@ -64,10 +64,7 @@ struct TestFixture {
         server.robot().mode = ROBOT_MODE_REMOTE;
         server.start_udp_status_pump(10);
         controller->connect().get();
-        // Wait for at least one UDP status to arrive and refresh `State` — turn_servo_power_on()
-        // and friends still gate on robot_state_->IsReady() until RSDK-13931 reshapes direct
-        // controller reads through the FSM.
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        test::wait_for_connected(controller);
     }
 
     void reconnect() {
@@ -100,8 +97,7 @@ struct TestFixture {
             samples.push_back(end);
         }
 
-        controller->turn_servo_power_on();
-        controller->setMotionMode(1);
+        test::drive_mock_to_ready(controller);
         return controller->execute_trajectory(group_index, k_dof, std::move(samples), {}, 3.0);
     }
 };
@@ -382,12 +378,28 @@ BOOST_FIXTURE_TEST_CASE(error_reset_then_operate, ControllerFixture,
 BOOST_FIXTURE_TEST_CASE(move_rejects_when_e_stopped, ControllerFixture,
                         *boost::unit_test::timeout(15)) {
     connect();
-    // Simulate e-stop and let UDP propagate it. reset_errors() does not clear e_stopped,
-    // so turn_servo_power_on() inside move() will throw even after the reset attempt.
+    // Simulate e-stop and let UDP propagate so the FSM transitions to
+    // `independent(estop, ...)`. The FSM's enqueue_move_request rejects from
+    // any independent state with a human-required bit set (k_estop is one),
+    // which is the production path for e-stop rejection. The IsReady() gate
+    // inside turn_servo_power_on/setMotionMode was removed in this PR — the
+    // FSM is now the single authority on whether a move can be issued.
     server.robot().e_stopped = true;
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    BOOST_CHECK_THROW(do_move(), std::runtime_error);
+    std::vector<trajectory_point_t> samples;
+    {
+        trajectory_point_t start{};
+        start.time_from_start = {0, 0};
+        samples.push_back(start);
+        trajectory_point_t end{};
+        for (int i = 0; i < k_dof; ++i) {
+            end.positions[i] = 0.1;
+        }
+        end.time_from_start = {1, 0};
+        samples.push_back(end);
+    }
+    BOOST_CHECK_THROW(controller->enqueue_move_request(0, k_dof, std::move(samples), {}, 3.0), std::runtime_error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
@@ -427,30 +439,18 @@ BOOST_AUTO_TEST_CASE(move_wakes_arm_from_in_error, *boost::unit_test::timeout(15
     server.start_udp_status_pump(10);
     auto controller = std::make_shared<robot::YaskawaController>(io_ctx, config);
     controller->connect().get();
-    // Wait for at least one UDP status to refresh robot_state so turn_servo_power_on's
-    // IsReady() check sees mode=REMOTE.
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    test::wait_for_connected(controller);
     // Drive the mock into a state the FSM will see as ready (mock starts with
     // drives_powered=0, motion_possible=0, so the FSM would otherwise stick in
     // independent(servo_off, motion_blocked)).
-    controller->turn_servo_power_on();
-    controller->setMotionMode(1);
-
-    auto wait_for_state = [&](std::string_view prefix, std::chrono::milliseconds timeout) {
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        while (std::chrono::steady_clock::now() < deadline && !controller->describe_state().starts_with(prefix)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-    };
-
-    wait_for_state("ready", std::chrono::seconds(3));
+    test::drive_mock_to_ready(controller);
     BOOST_REQUIRE_EQUAL(controller->describe_state(), "ready");
 
     // Drop the arm into in_error and wait for the FSM to land in independent(in_error).
     server.robot().in_error = true;
     server.robot().error_count = 1;
     server.robot().error_codes[0] = 42;
-    wait_for_state("independent(in_error", std::chrono::seconds(3));
+    test::wait_for_state(controller, "independent(in_error");
     BOOST_TEST_INFO("state before move: " << controller->describe_state());
     BOOST_REQUIRE(controller->describe_state().starts_with("independent(in_error"));
 

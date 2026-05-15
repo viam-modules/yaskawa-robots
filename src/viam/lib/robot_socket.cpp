@@ -881,7 +881,10 @@ void YaskawaController::establish_connections_() {
         udp_future.get();
 
         register_udp_port(udp_socket_->get_local_port());
-        get_robot_status();
+        // Smoke test the UDP path via the gate-less helper — the public `get_robot_status()`
+        // would throw here because the FSM is still in `state_disconnected_` until this
+        // function returns.
+        (void) get_robot_status_blocking_();
 
         // Force-restart the broadcast listener. It runs continuously since construction, but if
         // the OS closed its socket (e.g., network interface drop) the coroutine dies while
@@ -950,6 +953,7 @@ void YaskawaController::cancel_goal(int32_t goal_id) {
 }
 
 void YaskawaController::setMotionMode(uint8_t mode) {
+    check_connected_();
     std::vector<uint8_t> payload(sizeof(motion_mode_payload_t));
     motion_mode_payload_t* req = reinterpret_cast<motion_mode_payload_t*>(payload.data());
     req->motion_mode = mode;
@@ -962,14 +966,16 @@ void YaskawaController::setMotionMode(uint8_t mode) {
     LOGGING(debug) << "MSG_SET_MOTION_MODE: " << msg;
 }
 
-void YaskawaController::send_test_trajectory() {
-    if (!robot_state_->IsReady()) {
-        throw std::runtime_error(
-            std::format("cannot send test trajectory the robot state is e_stopped {} in error "
-                        "{}",
-                        robot_state_->e_stopped.load(),
-                        robot_state_->in_error.load()));
+void YaskawaController::check_connected_() const {
+    // Fixed message rather than describe_state(): the lock-free is_disconnected() and the
+    // mutex-protected describe_state() can disagree across a transition.
+    if (is_disconnected()) {
+        throw std::runtime_error("arm is in state `disconnected`");
     }
+}
+
+void YaskawaController::send_test_trajectory() {
+    check_connected_();
     auto msg = tcp_socket_->send_request(Message(MSG_TEST_TRAJECTORY_COMMAND)).get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
@@ -979,11 +985,7 @@ void YaskawaController::send_test_trajectory() {
 }
 
 void YaskawaController::turn_servo_power_on() {
-    if (!robot_state_->IsReady()) {
-        throw std::runtime_error(std::format("cannot turn power on the robot state is e_stopped {} in error {}",
-                                             robot_state_->e_stopped.load(),
-                                             robot_state_->in_error.load()));
-    }
+    check_connected_();
     auto msg = tcp_socket_->send_request(Message(MSG_TURN_SERVO_POWER_ON)).get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
@@ -1027,25 +1029,26 @@ void YaskawaController::get_error_info() {
     LOGGING(debug) << "MSG_GET_ERROR_INFO: " << msg;
 }
 
-// TODO(RSDK-13931) cache group status (pos/vel/torque) on the controller and have the arm
-// query through a higher-level API passing group_index, instead of reaching into the UDP socket
-// here. Bundles with the FSM-dispatched-reads question (option 3 from PR 2a's discussion items).
 StatusMessage YaskawaController::get_group_position_velocity_torque(uint8_t group_index) {
-    if (!udp_socket_) {
-        throw std::runtime_error(std::format("arm is {}", describe_state()));
+    check_connected_();
+    auto future = udp_socket_->get_group_status(group_index);
+    if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
+        throw std::runtime_error(std::format("get_group_position_velocity_torque(group {}) timed out", group_index));
     }
-    return StatusMessage(udp_socket_->get_group_status(group_index).get());
+    return StatusMessage(future.get());
+}
+
+RobotStatusMessage YaskawaController::get_robot_status_blocking_() {
+    auto future = udp_socket_->get_robot_status();
+    if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
+        throw std::runtime_error("UDP status request timed out");
+    }
+    return RobotStatusMessage(future.get());
 }
 
 RobotStatusMessage YaskawaController::get_robot_status() {
-    if (!udp_socket_) {
-        throw std::runtime_error(std::format("arm is {}", describe_state()));
-    }
-    auto future = udp_socket_->get_robot_status();
-    if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
-        throw std::runtime_error(std::format("get_robot_status timed out; arm is {}", describe_state()));
-    }
-    return RobotStatusMessage(future.get());
+    check_connected_();
+    return get_robot_status_blocking_();
 }
 
 void YaskawaController::register_udp_port(uint16_t port) {
@@ -1067,6 +1070,7 @@ void YaskawaController::register_udp_port(uint16_t port) {
 }
 
 void YaskawaController::reset_errors() {
+    check_connected_();
     auto msg = tcp_socket_->send_request(Message(MSG_RESET_ERRORS)).get();
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
@@ -1271,6 +1275,7 @@ std::future<Message> YaskawaController::echo_trajectory() {
     return tcp_socket_->send_request(Message(MSG_ECHO_TRAJECTORY));
 }
 bool YaskawaController::stop(uint32_t group_index) {
+    check_connected_();
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
     id->group_id = static_cast<int32_t>(group_index);
@@ -1295,12 +1300,14 @@ bool YaskawaController::stop(uint32_t group_index) {
     return is_stopped->value;
 }
 CartesianPosition YaskawaController::getCartPosition(uint32_t group_index) {
+    check_connected_();
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
     id->group_id = static_cast<int32_t>(group_index);
     return CartesianPosition(tcp_socket_->send_request(Message(MSG_GET_CART, std::move(payload))).get());
 }
 AnglePosition YaskawaController::cartPosToAngle(uint32_t group_index, CartesianPosition& pos) {
+    check_connected_();
     std::vector<uint8_t> payload(sizeof(cartesian_payload_t));
     cartesian_payload_t* cid = reinterpret_cast<cartesian_payload_t*>(payload.data());
     cid->group_id = static_cast<int32_t>(group_index);
@@ -1313,6 +1320,7 @@ AnglePosition YaskawaController::cartPosToAngle(uint32_t group_index, CartesianP
     return AnglePosition(tcp_socket_->send_request(Message(MSG_FROM_CART_TO_JOINT, std::move(payload))).get());
 }
 CartesianPosition YaskawaController::angleToCartPos(uint32_t group_index, AnglePosition& pos) {
+    check_connected_();
     std::vector<uint8_t> payload(sizeof(position_angle_degree_payload_t));
     position_angle_degree_payload_t* pid = reinterpret_cast<position_angle_degree_payload_t*>(payload.data());
     pid->group_id = static_cast<int32_t>(group_index);
@@ -1459,12 +1467,5 @@ void State::UpdateState(const RobotStatusMessage& msg) {
                        << std::hex << static_cast<int>(prev_in_motion) << "->0x" << static_cast<int>(msg.in_motion) << std::dec << " mode "
                        << prev_mode << "->" << msg.mode;
     }
-}
-// TODO(future PR): revisit the state machine — IsReady() returning false due to mode !=
-// ROBOT_MODE_REMOTE is not recoverable by reset_errors(), but callers don't distinguish
-// between error-not-ready and mode-not-ready. The state machine should surface separate
-// reasons so callers can fail fast instead of attempting a pointless reset.
-bool State::IsReady() const {
-    return !e_stopped.load() && !in_error.load() && mode.load() == ROBOT_MODE_REMOTE;
 }
 }  // namespace robot
