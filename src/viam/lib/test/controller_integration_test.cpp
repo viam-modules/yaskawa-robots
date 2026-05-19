@@ -553,19 +553,21 @@ BOOST_FIXTURE_TEST_CASE(multi_group_cache, GantryFixture, *boost::unit_test::tim
     BOOST_CHECK_THROW(controller->stop(2), std::runtime_error);
 }
 
-// After disconnect, the cache is cleared. A subsequent group-keyed call before reconnect
-// fails with the "capabilities not yet available" wording, signaling that we don't yet have
-// authoritative information about which groups are valid.
-BOOST_FIXTURE_TEST_CASE(cache_cleared_on_disconnect, ControllerFixture, *boost::unit_test::timeout(15)) {
+// After disconnect, the FSM's `check_connected_()` gate fires first on any group-keyed call
+// and throws the FSM-shaped error. The cache *is* also cleared (an internal correctness
+// invariant — verified indirectly by `cache_repopulates_on_reconnect` below, which would
+// fail if disconnect left stale entries that masked a fresh group enumeration), but the
+// public-API manifestation post-disconnect is the connection gate, not the cache lookup.
+BOOST_FIXTURE_TEST_CASE(disconnect_blocks_group_keyed_calls, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     BOOST_CHECK_NO_THROW(controller->stop(0));
     controller->disconnect();
     try {
         controller->stop(0);
-        BOOST_FAIL("expected validate_group_ to throw post-disconnect");
+        BOOST_FAIL("expected check_connected_ to throw post-disconnect");
     } catch (const std::runtime_error& ex) {
         const std::string what = ex.what();
-        BOOST_CHECK(what.find("capabilities not yet available") != std::string::npos);
+        BOOST_CHECK(what.find("disconnected") != std::string::npos);
     }
 }
 
