@@ -884,7 +884,7 @@ void YaskawaController::establish_connections_() {
         // Smoke test the UDP path via the gate-less helper — the public `get_robot_status()`
         // would throw here because the FSM is still in `state_disconnected_` until this
         // function returns.
-        (void) get_robot_status_blocking_();
+        (void)get_robot_status_blocking_();
 
         // Force-restart the broadcast listener. It runs continuously since construction, but if
         // the OS closed its socket (e.g., network interface drop) the coroutine dies while

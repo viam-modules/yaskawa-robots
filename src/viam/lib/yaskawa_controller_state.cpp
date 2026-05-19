@@ -156,9 +156,9 @@ bool YaskawaController::state_::is_any_moving() const {
 
 bool YaskawaController::state_::is_disconnected() const {
     // Lock-free: the atomic mirror is updated under mutex_ in emit_event_ on every state
-    // transition, but reads don't need the lock. This is the load-bearing reason callers
-    // inside the FSM cycle (e.g. wake-up steps) can ask "are we disconnected?" without
-    // deadlocking against the worker thread that holds mutex_ for the whole cycle.
+    // transition, but reads don't need the lock. Callers inside the FSM cycle (e.g.
+    // wake-up steps) can ask "are we disconnected?" without re-entering mutex_, which the
+    // worker thread holds for the whole cycle.
     return is_disconnected_atomic_.load(std::memory_order_acquire);
 }
 
@@ -217,10 +217,7 @@ bool YaskawaController::is_any_moving() const {
 bool YaskawaController::is_disconnected() const {
     // No FSM means we've never finished constructing, which is functionally equivalent to
     // "disconnected" from the caller's perspective — we can't reach the controller.
-    if (!fsm_) {
-        return true;
-    }
-    return fsm_->is_disconnected();
+    return !fsm_ || fsm_->is_disconnected();
 }
 
 std::future<void> YaskawaController::enqueue_move_request(uint32_t group_index,

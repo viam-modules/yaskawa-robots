@@ -36,8 +36,7 @@ struct TestFixture {
     test::FakeServer server;
     std::shared_ptr<robot::YaskawaController> controller;
 
-    TestFixture()
-        : ports(test::FakeServer::allocate_ports()), server(ports, ServerConfig) {
+    TestFixture() : ports(test::FakeServer::allocate_ports()), server(ports, ServerConfig) {
         io_thread = std::thread([this]() {
             auto guard = boost::asio::make_work_guard(io_ctx);
             io_ctx.run();
@@ -110,8 +109,7 @@ using DualArmFixture = TestFixture<test::k_dual_arm>;
 
 BOOST_AUTO_TEST_SUITE(basic_communication)
 
-BOOST_FIXTURE_TEST_CASE(connect_disconnect, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(connect_disconnect, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     BOOST_CHECK_GE(server.robot().connection_count, 1U);
     controller->disconnect();
@@ -119,22 +117,19 @@ BOOST_FIXTURE_TEST_CASE(connect_disconnect, ControllerFixture,
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 }
 
-BOOST_FIXTURE_TEST_CASE(heartbeat_running, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(heartbeat_running, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     BOOST_CHECK_GT(server.robot().last_heartbeat, 0);
 }
 
-BOOST_FIXTURE_TEST_CASE(servo_power_on, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(servo_power_on, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     controller->turn_servo_power_on();
     BOOST_CHECK_EQUAL(server.robot().servo_power_on, 1);
 }
 
-BOOST_FIXTURE_TEST_CASE(reset_errors, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(reset_errors, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     // Put the mock into error state
     server.robot().in_error = true;
@@ -148,15 +143,13 @@ BOOST_FIXTURE_TEST_CASE(reset_errors, ControllerFixture,
     BOOST_CHECK_EQUAL(server.robot().error_count, 0);
 }
 
-BOOST_FIXTURE_TEST_CASE(set_motion_mode, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(set_motion_mode, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     controller->setMotionMode(1);
     BOOST_CHECK_EQUAL(server.robot().motion_mode, 1);
 }
 
-BOOST_FIXTURE_TEST_CASE(stop_motion, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(stop_motion, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     controller->turn_servo_power_on();
     controller->send_test_trajectory();
@@ -166,28 +159,24 @@ BOOST_FIXTURE_TEST_CASE(stop_motion, ControllerFixture,
     BOOST_CHECK(!server.robot().groups[0].in_motion);
 }
 
-BOOST_FIXTURE_TEST_CASE(test_trajectory_command, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(test_trajectory_command, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     controller->turn_servo_power_on();
     controller->send_test_trajectory();
     BOOST_CHECK_EQUAL(server.robot().groups[0].trajectory_active, 1);
 }
 
-BOOST_FIXTURE_TEST_CASE(test_error_command, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(test_error_command, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     BOOST_CHECK_THROW(controller->send_test_error_command(), std::runtime_error);
 }
 
-BOOST_FIXTURE_TEST_CASE(check_group_index, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(check_group_index, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     BOOST_CHECK(controller->checkGroupIndex(0));
 }
 
-BOOST_FIXTURE_TEST_CASE(get_robot_status, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(get_robot_status, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     // Override the fixture's mode=REMOTE so we can observe the mock's default.
     server.robot().mode = 1;
@@ -197,8 +186,7 @@ BOOST_FIXTURE_TEST_CASE(get_robot_status, ControllerFixture,
     BOOST_CHECK(!status.e_stopped);
 }
 
-BOOST_FIXTURE_TEST_CASE(get_position_velocity_torque, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(get_position_velocity_torque, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     // Set known positions on mock
     for (int i = 0; i < k_dof; ++i) {
@@ -219,16 +207,14 @@ BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_SUITE(goal_trajectory_lifecycle)
 
-BOOST_FIXTURE_TEST_CASE(move_simple, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(move_simple, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     auto handle = do_move();
     auto state = handle->wait();
     BOOST_CHECK_EQUAL(state, GOAL_STATE_SUCCEEDED);
 }
 
-BOOST_FIXTURE_TEST_CASE(move_get_status, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(move_get_status, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     auto handle = do_move();
     auto status = handle->get_status().get();
@@ -236,8 +222,7 @@ BOOST_FIXTURE_TEST_CASE(move_get_status, ControllerFixture,
     handle->wait();
 }
 
-BOOST_FIXTURE_TEST_CASE(move_cancel, ControllerFixture,
-                        *boost::unit_test::timeout(30)) {
+BOOST_FIXTURE_TEST_CASE(move_cancel, ControllerFixture, *boost::unit_test::timeout(30)) {
     connect();
     // Use a larger offset so the trajectory takes longer, giving us time to cancel
     auto handle = do_move(0, 1.0);
@@ -248,8 +233,7 @@ BOOST_FIXTURE_TEST_CASE(move_cancel, ControllerFixture,
     BOOST_CHECK(state == GOAL_STATE_CANCELLED || state == GOAL_STATE_ABORTED);
 }
 
-BOOST_FIXTURE_TEST_CASE(cancel_after_completion, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(cancel_after_completion, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     auto handle = do_move();
     auto state = handle->wait();
@@ -258,8 +242,7 @@ BOOST_FIXTURE_TEST_CASE(cancel_after_completion, ControllerFixture,
     BOOST_CHECK_NO_THROW(handle->cancel());
 }
 
-BOOST_FIXTURE_TEST_CASE(full_move_lifecycle, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(full_move_lifecycle, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     auto handle = do_move();
     BOOST_CHECK_EQUAL(handle->wait(), GOAL_STATE_SUCCEEDED);
@@ -271,23 +254,20 @@ BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_SUITE(trajectory_corner_cases)
 
-BOOST_FIXTURE_TEST_CASE(move_to_current_position, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(move_to_current_position, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     // Target is (near) current position — move() should detect this and succeed immediately
     auto handle = do_move(0, 0.0);
     BOOST_CHECK_EQUAL(handle->wait(), GOAL_STATE_SUCCEEDED);
 }
 
-BOOST_FIXTURE_TEST_CASE(move_small_offset, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(move_small_offset, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     auto handle = do_move(0, 0.05);
     BOOST_CHECK_EQUAL(handle->wait(), GOAL_STATE_SUCCEEDED);
 }
 
-BOOST_FIXTURE_TEST_CASE(move_large_offset, ControllerFixture,
-                        *boost::unit_test::timeout(30)) {
+BOOST_FIXTURE_TEST_CASE(move_large_offset, ControllerFixture, *boost::unit_test::timeout(30)) {
     connect();
     // Larger offset but still fits in one chunk (mock doesn't support streaming)
     auto handle = do_move(0, 0.5);
@@ -323,8 +303,7 @@ BOOST_AUTO_TEST_CASE(connection_refused, *boost::unit_test::timeout(15)) {
     }
 }
 
-BOOST_FIXTURE_TEST_CASE(client_disconnect_reconnect, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(client_disconnect_reconnect, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     controller->turn_servo_power_on();
     BOOST_CHECK_EQUAL(server.robot().servo_power_on, 1);
@@ -341,21 +320,18 @@ BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_SUITE(error_handling)
 
-BOOST_FIXTURE_TEST_CASE(error_propagation, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(error_propagation, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     try {
         controller->send_test_error_command();
         BOOST_FAIL("Expected exception");
     } catch (const std::runtime_error& e) {
         std::string msg = e.what();
-        BOOST_CHECK(msg.find("MSG_TEST_ERROR_COMMAND") != std::string::npos ||
-                    msg.find("error") != std::string::npos);
+        BOOST_CHECK(msg.find("MSG_TEST_ERROR_COMMAND") != std::string::npos || msg.find("error") != std::string::npos);
     }
 }
 
-BOOST_FIXTURE_TEST_CASE(error_reset_then_operate, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(error_reset_then_operate, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     // Trigger error
     BOOST_CHECK_THROW(controller->send_test_error_command(), std::runtime_error);
@@ -375,8 +351,7 @@ BOOST_FIXTURE_TEST_CASE(error_reset_then_operate, ControllerFixture,
     BOOST_CHECK_EQUAL(server.robot().groups[0].trajectory_active, 1);
 }
 
-BOOST_FIXTURE_TEST_CASE(move_rejects_when_e_stopped, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(move_rejects_when_e_stopped, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     // Simulate e-stop and let UDP propagate so the FSM transitions to
     // `independent(estop, ...)`. The FSM's enqueue_move_request rejects from
@@ -489,8 +464,7 @@ BOOST_AUTO_TEST_SUITE(multi_group_support)
 // Bumped from 5s because the fixture destructor waits on the FSM's in-flight async connect
 // attempt to finish (RSDK-13945); worst case is bounded by the per-op timeouts inside
 // establish_connections_ (~15s).
-BOOST_FIXTURE_TEST_CASE(multi_group_server_construction, GantryFixture,
-                        *boost::unit_test::timeout(30)) {
+BOOST_FIXTURE_TEST_CASE(multi_group_server_construction, GantryFixture, *boost::unit_test::timeout(30)) {
     // Verify multi-group FakeServer stores correct group configuration
     BOOST_CHECK_EQUAL(server.num_groups(), 2);
     BOOST_CHECK_EQUAL(server.group_config(0).num_axes, 6);
@@ -499,8 +473,7 @@ BOOST_FIXTURE_TEST_CASE(multi_group_server_construction, GantryFixture,
     BOOST_CHECK_EQUAL(server.group_config(1).group_type, GROUP_TYPE_BASE);
 }
 
-BOOST_FIXTURE_TEST_CASE(capabilities_single_group, ControllerFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(capabilities_single_group, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     auto caps = controller->get_capabilities();
     BOOST_CHECK_EQUAL(caps.protocol_version, PROTOCOL_VERSION);
@@ -509,8 +482,7 @@ BOOST_FIXTURE_TEST_CASE(capabilities_single_group, ControllerFixture,
     BOOST_CHECK_EQUAL(caps.groups[0].group_type, GROUP_TYPE_ROBOT);
 }
 
-BOOST_FIXTURE_TEST_CASE(capabilities_multi_group, GantryFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(capabilities_multi_group, GantryFixture, *boost::unit_test::timeout(15)) {
     connect();
     auto caps = controller->get_capabilities();
     BOOST_CHECK_EQUAL(caps.protocol_version, PROTOCOL_VERSION);
@@ -521,8 +493,7 @@ BOOST_FIXTURE_TEST_CASE(capabilities_multi_group, GantryFixture,
     BOOST_CHECK_EQUAL(caps.groups[1].group_type, GROUP_TYPE_BASE);
 }
 
-BOOST_FIXTURE_TEST_CASE(multi_group_status_positions, GantryFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(multi_group_status_positions, GantryFixture, *boost::unit_test::timeout(15)) {
     // Set distinguishable positions per group
     for (int i = 0; i < 6; ++i) {
         server.robot().groups[0].positions[i] = (i + 1) * 1.0;
@@ -537,8 +508,7 @@ BOOST_FIXTURE_TEST_CASE(multi_group_status_positions, GantryFixture,
     BOOST_CHECK_GT(pvt.num_axes, static_cast<uint8_t>(0));
 }
 
-BOOST_FIXTURE_TEST_CASE(multi_group_robot_status, GantryFixture,
-                        *boost::unit_test::timeout(15)) {
+BOOST_FIXTURE_TEST_CASE(multi_group_robot_status, GantryFixture, *boost::unit_test::timeout(15)) {
     connect();
     // Override the fixture's mode=REMOTE so we can observe the mock's default.
     server.robot().mode = 1;
@@ -556,8 +526,7 @@ BOOST_AUTO_TEST_SUITE_END()
 BOOST_AUTO_TEST_SUITE(dual_arm_motion)
 
 // Scenario 1: Sequential moves on two different groups
-BOOST_FIXTURE_TEST_CASE(sequential_dual_group_moves, DualArmFixture,
-                        *boost::unit_test::timeout(30)) {
+BOOST_FIXTURE_TEST_CASE(sequential_dual_group_moves, DualArmFixture, *boost::unit_test::timeout(30)) {
     connect();
 
     // Move group 0
@@ -570,8 +539,7 @@ BOOST_FIXTURE_TEST_CASE(sequential_dual_group_moves, DualArmFixture,
 }
 
 // Scenario 2: Parallel moves on two different groups (must NOT throw "move in progress")
-BOOST_FIXTURE_TEST_CASE(parallel_dual_group_moves, DualArmFixture,
-                        *boost::unit_test::timeout(30)) {
+BOOST_FIXTURE_TEST_CASE(parallel_dual_group_moves, DualArmFixture, *boost::unit_test::timeout(30)) {
     connect();
     controller->turn_servo_power_on();
     controller->setMotionMode(1);
@@ -584,8 +552,7 @@ BOOST_FIXTURE_TEST_CASE(parallel_dual_group_moves, DualArmFixture,
 }
 
 // Scenario 3: Partial cancel — cancel group 0, group 1 continues
-BOOST_FIXTURE_TEST_CASE(partial_cancel_dual_group, DualArmFixture,
-                        *boost::unit_test::timeout(30)) {
+BOOST_FIXTURE_TEST_CASE(partial_cancel_dual_group, DualArmFixture, *boost::unit_test::timeout(30)) {
     connect();
     controller->turn_servo_power_on();
     controller->setMotionMode(1);
@@ -606,8 +573,7 @@ BOOST_FIXTURE_TEST_CASE(partial_cancel_dual_group, DualArmFixture,
 }
 
 // Scenario 4: Full disconnect during dual-group motion
-BOOST_FIXTURE_TEST_CASE(disconnect_during_dual_group_motion, DualArmFixture,
-                        *boost::unit_test::timeout(30)) {
+BOOST_FIXTURE_TEST_CASE(disconnect_during_dual_group_motion, DualArmFixture, *boost::unit_test::timeout(30)) {
     connect();
     controller->turn_servo_power_on();
     controller->setMotionMode(1);

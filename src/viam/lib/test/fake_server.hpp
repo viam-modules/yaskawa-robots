@@ -80,8 +80,7 @@ class FakeServer {
     void init_server(uint32_t connection_timeout_ms);
 
     // C callback that checks fault rules before delegating to mock_robot_handle_command
-    static command_response_context_t* fault_injecting_handle_command(
-        protocol_header_t* header, void* payload, void* user_data);
+    static command_response_context_t* fault_injecting_handle_command(protocol_header_t* header, void* payload, void* user_data);
 
     ServerPorts ports_;
     mock_robot_t robot_;
