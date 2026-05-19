@@ -226,6 +226,7 @@ std::future<void> YaskawaController::enqueue_move_request(uint32_t group_index,
                                                           std::vector<tolerance_t> tolerance,
                                                           double trajectory_sampling_freq,
                                                           std::optional<RealtimeTrajectoryLogger> logger) {
+    validate_group_(group_index);
     if (!fsm_) {
         throw std::runtime_error("controller FSM not initialized");
     }

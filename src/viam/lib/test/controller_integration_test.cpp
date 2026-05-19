@@ -171,11 +171,6 @@ BOOST_FIXTURE_TEST_CASE(test_error_command, ControllerFixture, *boost::unit_test
     BOOST_CHECK_THROW(controller->send_test_error_command(), std::runtime_error);
 }
 
-BOOST_FIXTURE_TEST_CASE(check_group_index, ControllerFixture, *boost::unit_test::timeout(15)) {
-    connect();
-    BOOST_CHECK(controller->checkGroupIndex(0));
-}
-
 BOOST_FIXTURE_TEST_CASE(get_robot_status, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     // Override the fixture's mode=REMOTE so we can observe the mock's default.
@@ -517,6 +512,70 @@ BOOST_FIXTURE_TEST_CASE(multi_group_robot_status, GantryFixture, *boost::unit_te
     // Controller-wide robot status (not per-group)
     BOOST_CHECK_EQUAL(status.mode, 1);
     BOOST_CHECK(!status.e_stopped);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ==================== Suite 6.5: Group Validation Cache (RSDK-13930) ====================
+
+BOOST_AUTO_TEST_SUITE(group_validation_cache)
+
+// Known group_index passes validation: the cache was populated from the capabilities response
+// at connect time, and the lookup finds the entry without a roundtrip. `stop` is used as a
+// probe because it's the simplest group-keyed call the mock fully supports; the test only
+// cares that validate_group_ doesn't throw.
+BOOST_FIXTURE_TEST_CASE(known_group_passes, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    BOOST_CHECK_NO_THROW(controller->stop(0));
+}
+
+// Unknown group_index throws a structured error including the known-groups list. Critically
+// the message comes from the client-side validate_group_ before any TCP request fires — so
+// the server's generic VIAM_ERROR_INVALID_PAYLOAD doesn't surface.
+BOOST_FIXTURE_TEST_CASE(unknown_group_throws_structured, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    try {
+        controller->stop(99);
+        BOOST_FAIL("expected validate_group_ to throw on unknown group_index");
+    } catch (const std::runtime_error& ex) {
+        const std::string what = ex.what();
+        BOOST_CHECK(what.find("group_index 99 is not configured") != std::string::npos);
+        BOOST_CHECK(what.find("known groups: 0") != std::string::npos);
+    }
+}
+
+// Multi-group cache: gantry fixture advertises group 0 (robot) and group 1 (base track).
+// Both should pass validation; anything else should not.
+BOOST_FIXTURE_TEST_CASE(multi_group_cache, GantryFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    BOOST_CHECK_NO_THROW(controller->stop(0));
+    BOOST_CHECK_NO_THROW(controller->stop(1));
+    BOOST_CHECK_THROW(controller->stop(2), std::runtime_error);
+}
+
+// After disconnect, the cache is cleared. A subsequent group-keyed call before reconnect
+// fails with the "capabilities not yet available" wording, signaling that we don't yet have
+// authoritative information about which groups are valid.
+BOOST_FIXTURE_TEST_CASE(cache_cleared_on_disconnect, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    BOOST_CHECK_NO_THROW(controller->stop(0));
+    controller->disconnect();
+    try {
+        controller->stop(0);
+        BOOST_FAIL("expected validate_group_ to throw post-disconnect");
+    } catch (const std::runtime_error& ex) {
+        const std::string what = ex.what();
+        BOOST_CHECK(what.find("capabilities not yet available") != std::string::npos);
+    }
+}
+
+// Reconnect repopulates the cache. Verifies the populate path is wired into both the initial
+// connect and any subsequent reconnect (via establish_connections_).
+BOOST_FIXTURE_TEST_CASE(cache_repopulates_on_reconnect, ControllerFixture, *boost::unit_test::timeout(30)) {
+    connect();
+    BOOST_CHECK_NO_THROW(controller->stop(0));
+    reconnect();
+    BOOST_CHECK_NO_THROW(controller->stop(0));
 }
 
 BOOST_AUTO_TEST_SUITE_END()

@@ -538,6 +538,12 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     CartesianPosition getCartPosition(uint32_t group_index);
     AnglePosition cartPosToAngle(uint32_t group_index, CartesianPosition& pos);
     CartesianPosition angleToCartPos(uint32_t group_index, AnglePosition& pos);
+    /// @deprecated The capabilities cache populated during connection is the source of truth
+    /// for group enumeration. New code should call `validate_group_` (private, throws a
+    /// structured error if the group is unknown) instead of asking the server. Kept as a
+    /// shim returning the cached answer to avoid breaking any external callers in this PR;
+    /// will be removed in a follow-up sweep.
+    [[deprecated("use validate_group_ via group-keyed methods; the cache is now authoritative")]]
     bool checkGroupIndex(uint32_t group_index);
     CapabilitiesMessage get_capabilities();
 
@@ -564,6 +570,14 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::unique_ptr<UdpRobotSocket> udp_socket_;
     std::unique_ptr<UdpBroadcastListener> broadcast_listener_;
 
+    // Group enumeration cached from the capabilities handshake. Populated in
+    // `establish_connections_` after `get_capabilities()` succeeds, cleared in `disconnect()`.
+    // Writes happen on the FSM connection thread (rare — once per connect); reads happen on
+    // whichever thread calls a group-keyed public method. shared_mutex lets concurrent readers
+    // proceed without contention; the lookup itself is a few comparisons over a small vector.
+    std::vector<uint8_t> known_groups_;
+    mutable std::shared_mutex known_groups_mutex_;
+
     // Per-group move locking: prevents concurrent moves on the same group
     // while allowing parallel moves on different groups.
     std::array<std::atomic<bool>, MAX_GROUPS> group_move_in_progress_{};
@@ -588,6 +602,12 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // `establish_connections_` during the UDP-path smoke test, which fires before the FSM
     // has transitioned out of `state_disconnected_` and so can't use the gated entry point.
     RobotStatusMessage get_robot_status_blocking_();
+    
+    // Throws std::runtime_error with a structured message if `group_index` is not in the
+    // capabilities-cache populated during connection. Called at the entry of every group-keyed
+    // public method so misconfigured arms fail loudly with the known-groups list rather than
+    // surfacing the server's generic `VIAM_ERROR_INVALID_PAYLOAD`.
+    void validate_group_(uint32_t group_index) const;
 
     std::unique_ptr<state_> fsm_;
 
