@@ -25,6 +25,12 @@ void YaskawaController::state_::shutdown() {
     {
         const std::lock_guard lock{mutex_};
         shutdown_requested_ = true;
+        // Cancel any in-flight async connect before joining. Without this, ~state_disconnected_
+        // (running after worker_thread_ joins) would block on its jthread destructor for up to
+        // a full establish_connections_ pass.
+        if (auto* disc = std::get_if<state_disconnected_>(&current_state_)) {
+            disc->request_stop();
+        }
     }
     // TODO(RSDK-13808) try jthread and stop_token
     worker_wakeup_cv_.notify_all();
