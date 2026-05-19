@@ -602,7 +602,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // `establish_connections_` during the UDP-path smoke test, which fires before the FSM
     // has transitioned out of `state_disconnected_` and so can't use the gated entry point.
     RobotStatusMessage get_robot_status_blocking_();
-    
+
     // Throws std::runtime_error with a structured message if `group_index` is not in the
     // capabilities-cache populated during connection. Called at the entry of every group-keyed
     // public method so misconfigured arms fail loudly with the known-groups list rather than
