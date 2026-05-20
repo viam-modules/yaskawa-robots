@@ -25,18 +25,17 @@ void YaskawaController::state_::shutdown() {
     {
         const std::lock_guard lock{mutex_};
         shutdown_requested_ = true;
-        // Cancel any in-flight async connect before joining. Without this, ~state_disconnected_
-        // (running after worker_thread_ joins) would block on its jthread destructor for up to
-        // a full establish_connections_ pass.
-        if (auto* disc = std::get_if<state_disconnected_>(&current_state_)) {
-            disc->request_stop();
-        }
     }
     // TODO(RSDK-13808) try jthread and stop_token
     worker_wakeup_cv_.notify_all();
     if (worker_thread_.joinable()) {
         worker_thread_.join();
     }
+    // current_state_'s destructor (running after this function returns) cancels any in-flight
+    // connect: ~state_disconnected_ destroys its jthread, whose destructor request_stops and
+    // joins. The worker doesn't block on the connect (it polls), so triggering the cancel
+    // before vs. after the worker join makes no observable difference — the connect task only
+    // observes stop_requested() between blocking ops in establish_connections_.
 }
 
 // ---------------------------------------------------------------

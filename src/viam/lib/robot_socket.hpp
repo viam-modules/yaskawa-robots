@@ -757,24 +757,24 @@ class YaskawaController::state_ {
         std::optional<state_variant_> handle_event(state_&, event_connection_lost_);
         using state_event_handler_base_<state_disconnected_>::handle_event;
 
-        // Asks the in-flight connect (if any) to wind down. Called by state_::shutdown() under
-        // mutex_ so the destruction of `pending_thread_` is bounded by a single in-flight op.
-        void request_stop();
-
        private:
         void connect_(state_&, std::stop_token);
 
         int reconnect_attempts_{0};
+
         // Last error message we logged. Reconnect failures are deduped against this so the
         // log stays quiet when the same failure repeats, but surfaces any new failure mode
         // (e.g., "TCP connect timed out" → "protocol version mismatch") on the next attempt.
         std::string last_logged_error_;
+
         // `pending_connection_` is the future from a std::packaged_task that runs on
         // `pending_thread_`. We use packaged_task rather than std::async so the future's
-        // destructor does not block (only the jthread does); cancellation is cooperative via
-        // the jthread's stop_token, propagated through establish_connections_.
+        // destructor does not block (only the jthread does); on destruction the jthread
+        // request_stops and joins, which lets establish_connections_ short-circuit at its
+        // next check_cancel poll between blocking ops.
         std::future<void> pending_connection_;
         std::jthread pending_thread_;
+
         std::optional<event_connection_lost_> triggering_event_;
     };
 

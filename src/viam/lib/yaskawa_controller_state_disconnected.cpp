@@ -128,8 +128,4 @@ void YaskawaController::state_::state_disconnected_::connect_(state_& state, std
     // tears down the stale session and replaces tcp_socket_ before establishing.
     state.controller_->establish_connections_(std::move(token));
 }
-
-void YaskawaController::state_::state_disconnected_::request_stop() {
-    pending_thread_.request_stop();
-}
 // NOLINTEND(readability-convert-member-functions-to-static)
