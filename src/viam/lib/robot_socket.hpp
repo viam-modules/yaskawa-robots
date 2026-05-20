@@ -767,11 +767,9 @@ class YaskawaController::state_ {
         // (e.g., "TCP connect timed out" → "protocol version mismatch") on the next attempt.
         std::string last_logged_error_;
 
-        // `pending_connection_` is the future from a std::packaged_task that runs on
-        // `pending_thread_`. We use packaged_task rather than std::async so the future's
-        // destructor does not block (only the jthread does); on destruction the jthread
-        // request_stops and joins, which lets establish_connections_ short-circuit at its
-        // next check_cancel poll between blocking ops.
+        // Async connect: `pending_connection_` is from a packaged_task (non-blocking destructor,
+        // unlike std::async) running on `pending_thread_`, whose stop_token
+        // establish_connections_ polls for cancellation.
         std::future<void> pending_connection_;
         std::jthread pending_thread_;
 

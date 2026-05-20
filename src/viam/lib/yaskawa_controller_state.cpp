@@ -31,11 +31,6 @@ void YaskawaController::state_::shutdown() {
     if (worker_thread_.joinable()) {
         worker_thread_.join();
     }
-    // current_state_'s destructor (running after this function returns) cancels any in-flight
-    // connect: ~state_disconnected_ destroys its jthread, whose destructor request_stops and
-    // joins. The worker doesn't block on the connect (it polls), so triggering the cancel
-    // before vs. after the worker join makes no observable difference — the connect task only
-    // observes stop_requested() between blocking ops in establish_connections_.
 }
 
 // ---------------------------------------------------------------
