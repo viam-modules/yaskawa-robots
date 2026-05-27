@@ -890,9 +890,10 @@ void YaskawaController::establish_connections_() {
         udp_future.get();
 
         register_udp_port(udp_socket_->get_local_port());
-        // Smoke test the UDP path via the gate-less helper — the public `get_robot_status()`
-        // would throw here because the FSM is still in `state_disconnected_` until this
-        // function returns.
+        // Verify the UDP path works end-to-end by requesting one robot status frame and
+        // waiting for the response. Surfaces UDP connectivity failures here rather than on
+        // the first real read. Uses the gate-less helper because the FSM is still in
+        // state_disconnected_ at this point.
         (void)get_robot_status_blocking_();
 
         // Force-restart the broadcast listener. It runs continuously since construction, but if
