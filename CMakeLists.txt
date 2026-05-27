@@ -143,6 +143,7 @@ FetchContent_Declare(
   comms
   GIT_REPOSITORY https://github.com/viam-labs/viam-yaskawa-libs.git
   GIT_TAG 864c532e44c209ceb3671d93d7475d6148bfd5d8
+  GIT_SHALLOW TRUE
   SYSTEM
 )
 

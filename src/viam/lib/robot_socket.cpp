@@ -850,6 +850,9 @@ void YaskawaController::establish_connections_(std::stop_token token) {
     // Cancellation is cooperative: we can't abort an in-flight TCP/UDP op, so the worst-case
     // latency on shutdown is one per-op timeout (k_socket_timeout). Between ops we throw if
     // stop was requested so the caller (FSM) winds down quickly.
+    // TODO(RSDK-14029) replace polled stop_token with boost::asio cancellation — the blocking
+    // ops below are already asio coroutines, so a cancellation_signal could abort them in-flight
+    // instead of needing manual checks between each.
     const auto check_cancel = [&]() {
         if (token.stop_requested()) {
             throw std::runtime_error("connect cancelled");
