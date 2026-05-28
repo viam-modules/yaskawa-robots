@@ -11,13 +11,12 @@
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/registry/registry.hpp>
-#include <viam/sdk/resource/reconfigurable.hpp>
 #include "../lib/robot_socket.hpp"
 
 using namespace viam::sdk;
 using namespace robot;
 
-class YaskawaArm final : public Arm, public Reconfigurable, public std::enable_shared_from_this<YaskawaArm> {
+class YaskawaArm final : public Arm, public std::enable_shared_from_this<YaskawaArm> {
     using KinematicsData = ::viam::sdk::KinematicsData;
 
    public:
@@ -35,8 +34,6 @@ class YaskawaArm final : public Arm, public Reconfigurable, public std::enable_s
     ~YaskawaArm() override;
 
     void configure(const Dependencies& deps, const ResourceConfig& cfg);
-
-    void reconfigure(const Dependencies& deps, const ResourceConfig& cfg) override;
 
     /// @brief Get the joint positions of the arm (in degrees)
     /// @param extra Any additional arguments to the method.
@@ -79,6 +76,9 @@ class YaskawaArm final : public Arm, public Reconfigurable, public std::enable_s
     /// @param command Will contain a std::vector<std::vector<double>> called
     /// positions that will contain joint waypoints
     ProtoStruct do_command(const ProtoStruct& command) override;
+
+    /// @brief Get the status of the arm.
+    ProtoStruct get_status() override;
 
     // --------------- UNIMPLEMENTED FUNCTIONS ---------------
     void move_to_position(const pose&, const ProtoStruct&) override {

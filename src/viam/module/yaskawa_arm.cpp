@@ -373,13 +373,6 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     // and the FSM connects (and reconnects) in the background.
 }
 
-void YaskawaArm::reconfigure(const Dependencies& deps, const ResourceConfig& cfg) {
-    const std::unique_lock wlock{config_mutex_};
-    VIAM_SDK_LOG(warn) << "Reconfigure called: configuring new state";
-    configure_(deps, cfg);
-    VIAM_SDK_LOG(info) << "Reconfigure completed OK";
-}
-
 std::vector<double> YaskawaArm::get_joint_positions(const ProtoStruct&) {
     const std::shared_lock rlock{config_mutex_};
     auto joint_rads = robot_->get_group_position_velocity_torque(static_cast<uint8_t>(group_index_));
@@ -541,6 +534,10 @@ void YaskawaArm::stop(const ProtoStruct&) {
 ProtoStruct YaskawaArm::do_command(const ProtoStruct&) {
     ProtoStruct resp = ProtoStruct{};
     return resp;
+}
+
+ProtoStruct YaskawaArm::get_status() {
+    return ProtoStruct{};
 }
 
 std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(const std::list<Eigen::VectorXd>& waypoints,
