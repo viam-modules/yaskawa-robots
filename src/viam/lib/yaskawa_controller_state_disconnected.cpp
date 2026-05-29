@@ -41,10 +41,13 @@ std::chrono::milliseconds YaskawaController::state_::state_disconnected_::get_ti
 
 std::optional<YaskawaController::state_::event_variant_> YaskawaController::state_::state_disconnected_::upgrade_downgrade(state_& state) {
     if (!pending_connection_.valid()) {
-        // TODO(RSDK-13945) make this task cancellable so destruction doesn't have to wait for it.
-        // Bounded today by the per-op timeouts inside establish_connections_, but the destructor
-        // still blocks until the in-flight op (if any) finishes or times out.
-        pending_connection_ = std::async(std::launch::async, [this, &state] { connect_(state); });
+        // Run the connect on a jthread so state_::shutdown() can request cancellation and the
+        // future is fulfilled by a packaged_task (whose destructor doesn't block, unlike one
+        // returned from std::async). establish_connections_ polls the stop_token between
+        // blocking ops, so cancellation is bounded by one in-flight op (~k_socket_timeout).
+        std::packaged_task<void(std::stop_token)> task([this, &state](std::stop_token st) { connect_(state, std::move(st)); });
+        pending_connection_ = task.get_future();
+        pending_thread_ = std::jthread(std::move(task));
         return std::nullopt;
     }
 
@@ -120,9 +123,9 @@ std::optional<YaskawaController::state_::state_variant_> YaskawaController::stat
 // state_disconnected_ connect_
 // ---------------------------------------------------------------
 
-void YaskawaController::state_::state_disconnected_::connect_(state_& state) {
+void YaskawaController::state_::state_disconnected_::connect_(state_& state, std::stop_token token) {
     // establish_connections_() handles both initial connect and reconnect — on reconnect it
     // tears down the stale session and replaces tcp_socket_ before establishing.
-    state.controller_->establish_connections_();
+    state.controller_->establish_connections_(std::move(token));
 }
 // NOLINTEND(readability-convert-member-functions-to-static)
