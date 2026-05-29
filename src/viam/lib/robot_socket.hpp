@@ -22,6 +22,7 @@
 #include <queue>
 #include <shared_mutex>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <utility>
@@ -587,7 +588,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // active wake-up path (a queued move request) always resets regardless.
     bool enable_auto_error_recovery_{true};
 
-    void establish_connections_();
+    void establish_connections_(std::stop_token token);
 
     // Throws `std::runtime_error("arm is in state \`disconnected\`")` if the FSM is in
     // the disconnected state. Called at the entry of every public method that issues TCP/UDP
@@ -772,14 +773,21 @@ class YaskawaController::state_ {
         using state_event_handler_base_<state_disconnected_>::handle_event;
 
        private:
-        void connect_(state_&);
+        void connect_(state_&, std::stop_token);
 
         int reconnect_attempts_{0};
+
         // Last error message we logged. Reconnect failures are deduped against this so the
         // log stays quiet when the same failure repeats, but surfaces any new failure mode
         // (e.g., "TCP connect timed out" → "protocol version mismatch") on the next attempt.
         std::string last_logged_error_;
+
+        // Async connect: `pending_connection_` is from a packaged_task (non-blocking destructor,
+        // unlike std::async) running on `pending_thread_`, whose stop_token
+        // establish_connections_ polls for cancellation.
         std::future<void> pending_connection_;
+        std::jthread pending_thread_;
+
         std::optional<event_connection_lost_> triggering_event_;
     };
 

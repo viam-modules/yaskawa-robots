@@ -846,7 +846,19 @@ std::shared_ptr<YaskawaController> YaskawaController::get_or_create(boost::asio:
     return ctrl;
 }
 
-void YaskawaController::establish_connections_() {
+void YaskawaController::establish_connections_(std::stop_token token) {
+    // Cancellation is cooperative: we can't abort an in-flight TCP/UDP op, so the worst-case
+    // latency on shutdown is one per-op timeout (k_socket_timeout). Between ops we throw if
+    // stop was requested so the caller (FSM) winds down quickly.
+    // TODO(RSDK-14029) replace polled stop_token with boost::asio cancellation — the blocking
+    // ops below are already asio coroutines, so a cancellation_signal could abort them in-flight
+    // instead of needing manual checks between each.
+    const auto check_cancel = [&]() {
+        if (token.stop_requested()) {
+            throw std::runtime_error("connect cancelled");
+        }
+    };
+
     // Tear down any stale connection. No-op on the first call (sockets have not connected yet).
     // On reconnect, this drops the dead session before we replace tcp_socket_, since
     // TcpRobotSocket can't be reused after disconnect.
@@ -859,12 +871,14 @@ void YaskawaController::establish_connections_() {
     }
 
     try {
+        check_cancel();
         auto tcp_future = tcp_socket_->connect();
         if (tcp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
             throw std::runtime_error("TCP connect timed out");
         }
         tcp_future.get();
 
+        check_cancel();
         // Capabilities handshake: verify protocol version and discover controller groups
         auto caps = get_capabilities();
         LOGGING(info) << "controller capabilities: protocol_version=" << static_cast<int>(caps.protocol_version)
@@ -882,6 +896,7 @@ void YaskawaController::establish_connections_() {
             }
         }
 
+        check_cancel();
         udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
         auto udp_future = udp_socket_->connect();
         if (udp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
@@ -889,6 +904,7 @@ void YaskawaController::establish_connections_() {
         }
         udp_future.get();
 
+        check_cancel();
         register_udp_port(udp_socket_->get_local_port());
         // Verify the UDP path works end-to-end by requesting one robot status frame and
         // waiting for the response. Surfaces UDP connectivity failures here rather than on
@@ -896,6 +912,7 @@ void YaskawaController::establish_connections_() {
         // state_disconnected_ at this point.
         (void)get_robot_status_blocking_();
 
+        check_cancel();
         // Force-restart the broadcast listener. It runs continuously since construction, but if
         // the OS closed its socket (e.g., network interface drop) the coroutine dies while
         // `started_` stays true — `start()` alone would no-op. A network failure that killed

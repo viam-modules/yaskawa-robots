@@ -456,10 +456,8 @@ BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_SUITE(multi_group_support)
 
-// Bumped from 5s because the fixture destructor waits on the FSM's in-flight async connect
-// attempt to finish (RSDK-13945); worst case is bounded by the per-op timeouts inside
-// establish_connections_ (~15s).
-BOOST_FIXTURE_TEST_CASE(multi_group_server_construction, GantryFixture, *boost::unit_test::timeout(30)) {
+BOOST_FIXTURE_TEST_CASE(multi_group_server_construction, GantryFixture,
+                        *boost::unit_test::timeout(5)) {
     // Verify multi-group FakeServer stores correct group configuration
     BOOST_CHECK_EQUAL(server.num_groups(), 2);
     BOOST_CHECK_EQUAL(server.group_config(0).num_axes, 6);
