@@ -131,18 +131,17 @@ enable_testing()
 FetchContent_Declare(
   trajex
   GIT_REPOSITORY https://github.com/viam-modules/trajex.git
-  GIT_TAG v0.100.0-rc1
+  GIT_TAG v0.100.0
 )
 
 find_package(xtl CONFIG REQUIRED)
 find_package(xtensor CONFIG REQUIRED)
 
-# Don't let trajex's -Wall -Werror gate break our build on newer toolchains.
-# Its CMake adds -Wno-enum-constexpr-conversion unconditionally, which Apple
-# clang 21 (Xcode 26 / macos-26 runner) rejects as an unknown warning option
-# under -Werror. Enforcing trajex's warnings is trajex's own CI's job, not ours.
-# TODO(RSDK-11300): can drop once trajex removes that flag.
-set(VIAM_TRAJEX_USE_WALL_WERROR OFF CACHE BOOL "" FORCE)
+# trajex v0.100.0+ gates its TOTG tooling layer behind VIAM_TRAJEX_ENABLE_TOOLS,
+# which defaults OFF for FetchContent consumers. We use viam::trajex::totg::tools
+# (planner, etc.), so turn it on. (We do not use the MLModel service layer, so
+# VIAM_TRAJEX_ENABLE_SERVICE stays off.)
+set(VIAM_TRAJEX_ENABLE_TOOLS ON)
 
 FetchContent_MakeAvailable(trajex)
 
@@ -203,7 +202,7 @@ target_compile_definitions(viam-yaskawa
 
 target_link_libraries(viam-yaskawa
   PUBLIC
-    viam::trajex::service
+    viam::trajex::totg::tools
     Boost::regex
     Eigen3::Eigen
     jsoncpp_lib
