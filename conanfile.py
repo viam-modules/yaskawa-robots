@@ -51,7 +51,10 @@ class yaskawa_robots(ConanFile):
     def build(self):
         cmake = CMake(self)
         cmake.configure()
-        cmake.build()
+        # Only build the module binary for the packaged artifact; the test
+        # executables aren't needed here (they run in the Build/Test/Lint jobs)
+        # and pull in third-party C that newer toolchains reject under -Werror.
+        cmake.build(target="yaskawa-robots")
 
     def layout(self):
         cmake_layout(self, src_folder=".")

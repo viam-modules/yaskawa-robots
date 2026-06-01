@@ -410,11 +410,22 @@ target_link_libraries(fault_injection_test
 )
 
 
-# Suppress warnings on third-party C sources compiled into this target.
+# fake_server.cpp is first-party; just relax the conversion warnings (existing behavior).
 set_source_files_properties(
-  ${INTEGRATION_TEST_SOURCES}
-  ${comms_SOURCE_DIR}/tests/protocol/fault_inject.c
+  src/viam/lib/test/fake_server.cpp
   PROPERTIES COMPILE_OPTIONS "-Wno-conversion"
+)
+
+# mock_robot.c and fault_inject.c are third-party comms test helpers we don't control
+# (viam-yaskawa-libs has no CI of its own). Compiled into our test targets, they inherit
+# viam-yaskawa's PUBLIC -Wall -Werror -pedantic. Downgrade -Werror so the build doesn't
+# fail on per-compiler diagnostics while keeping the warnings visible: newer Clang (e.g.
+# Apple clang 21 on macos-26) flags -Wstrict-prototypes and
+# -Wgnu-statement-expression-from-macro-expansion that GCC never emits.
+set_source_files_properties(
+  ${comms_SOURCE_DIR}/tests/protocol/mock_robot.c
+  ${comms_SOURCE_DIR}/tests/protocol/fault_inject.c
+  PROPERTIES COMPILE_OPTIONS "-Wno-error"
 )
 
 add_test(NAME fault_injection_test COMMAND fault_injection_test)
