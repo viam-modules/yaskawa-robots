@@ -51,10 +51,11 @@ class yaskawa_robots(ConanFile):
     def build(self):
         cmake = CMake(self)
         cmake.configure()
-        # Only build the module binary for the packaged artifact; the test
-        # executables aren't needed here (they run in the Build/Test/Lint jobs)
-        # and pull in third-party C that newer toolchains reject under -Werror.
-        cmake.build(target="yaskawa-robots")
+        # Build the default `all` target: the module plus the installable trajex
+        # targets that package() installs. The yaskawa test executables are all
+        # EXCLUDE_FROM_ALL, so they (and the third-party comms C they pull in) are
+        # not compiled here; they run in the Build/Test/Lint jobs via `make test`.
+        cmake.build()
 
     def layout(self):
         cmake_layout(self, src_folder=".")

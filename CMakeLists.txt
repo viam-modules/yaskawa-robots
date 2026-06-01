@@ -431,7 +431,9 @@ set_source_files_properties(
 add_test(NAME fault_injection_test COMMAND fault_injection_test)
 
 # Integration tests for YaskawaController against FakeServer (multi-group, dual-arm, goal lifecycle)
-add_executable(controller_integration_test)
+# EXCLUDE_FROM_ALL (like the other test targets) so the release `conan create` build of
+# `all` doesn't compile it — `make test` still builds it explicitly via --target.
+add_executable(controller_integration_test EXCLUDE_FROM_ALL)
 
 target_sources(controller_integration_test
   PRIVATE
