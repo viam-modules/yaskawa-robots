@@ -137,6 +137,13 @@ FetchContent_Declare(
 find_package(xtl CONFIG REQUIRED)
 find_package(xtensor CONFIG REQUIRED)
 
+# Don't let trajex's -Wall -Werror gate break our build on newer toolchains.
+# Its CMake adds -Wno-enum-constexpr-conversion unconditionally, which Apple
+# clang 21 (Xcode 26 / macos-26 runner) rejects as an unknown warning option
+# under -Werror. Enforcing trajex's warnings is trajex's own CI's job, not ours.
+# TODO(RSDK-11300): can drop once trajex removes that flag.
+set(VIAM_TRAJEX_USE_WALL_WERROR OFF CACHE BOOL "" FORCE)
+
 FetchContent_MakeAvailable(trajex)
 
 FetchContent_Declare(
