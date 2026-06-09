@@ -39,15 +39,17 @@ jobs:
   build-test-lint:
     name: Build, Test, and Lint
     runs-on: ${{ matrix.runner }}
-    container: ghcr.io/viam-modules/yaskawa-robots:${{ matrix.arch }}
+    container: ghcr.io/viam-modules/yaskawa-robots:${{ matrix.arch }}@${{ matrix.digest }}
     strategy:
       fail-fast: false
       matrix:
         include:
         - arch: amd64
           runner: ubuntu-latest
+          digest: sha256:60fe0f62969bd8fe01d2617809f3f7845c2246d71b3c4fb9f64b0af56867c789
         - arch: arm64
           runner: ubuntu-4cpu-arm
+          digest: sha256:f5c330afbeb8a9e64c5cba0cafc570bdcd03f94ca1c74d0a093072828bfd2a44
     steps:
       - name: Checkout
         uses: actions/checkout@v4
