@@ -22,6 +22,7 @@
 #include <queue>
 #include <shared_mutex>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <utility>
@@ -302,7 +303,6 @@ struct State {
     std::atomic<robot_mode_t> mode;  // robot_mode_t (0=unknown, 1=teach, 2=play, 3=remote)
     explicit State();
     void UpdateState(const RobotStatusMessage& msg);
-    bool IsReady() const;
 };
 
 struct GoalStatusMessage {
@@ -514,6 +514,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // FSM state accessors
     std::string describe_state() const;
     bool is_any_moving() const;
+    bool is_disconnected() const;
     std::future<void> enqueue_move_request(uint32_t group_index,
                                            uint32_t axes_controlled,
                                            std::vector<trajectory_point_t> samples,
@@ -587,7 +588,21 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // active wake-up path (a queued move request) always resets regardless.
     bool enable_auto_error_recovery_{true};
 
-    void establish_connections_();
+    void establish_connections_(std::stop_token token);
+
+    // Throws `std::runtime_error("arm is in state \`disconnected\`")` if the FSM is in
+    // the disconnected state. Called at the entry of every public method that issues TCP/UDP
+    // traffic, so user-facing errors are FSM-shaped instead of leaking socket-level failures.
+    // The FSM's wake-up path (which calls `turn_servo_power_on` / `setMotionMode` from
+    // `state_independent_`) is unaffected because by definition the FSM isn't in
+    // `state_disconnected_` when it dispatches those.
+    void check_connected_() const;
+
+    // Internal-only: fetch the robot status with a fixed timeout, no FSM gate. Used by both
+    // the public `get_robot_status()` (which wraps this with `check_connected_()`) and by
+    // `establish_connections_` during the UDP-path smoke test, which fires before the FSM
+    // has transitioned out of `state_disconnected_` and so can't use the gated entry point.
+    RobotStatusMessage get_robot_status_blocking_();
 
     // Throws std::runtime_error with a structured message if `group_index` is not in the
     // capabilities-cache populated during connection. Called at the entry of every group-keyed
@@ -636,6 +651,7 @@ class YaskawaController::state_ {
 
     std::string describe() const;
     bool is_any_moving() const;
+    bool is_disconnected() const;
 
     std::future<void> enqueue_move_request(uint32_t group_index,
                                            uint32_t axes_controlled,
@@ -757,14 +773,21 @@ class YaskawaController::state_ {
         using state_event_handler_base_<state_disconnected_>::handle_event;
 
        private:
-        void connect_(state_&);
+        void connect_(state_&, std::stop_token);
 
         int reconnect_attempts_{0};
+
         // Last error message we logged. Reconnect failures are deduped against this so the
         // log stays quiet when the same failure repeats, but surfaces any new failure mode
         // (e.g., "TCP connect timed out" → "protocol version mismatch") on the next attempt.
         std::string last_logged_error_;
+
+        // Async connect: `pending_connection_` is from a packaged_task (non-blocking destructor,
+        // unlike std::async) running on `pending_thread_`, whose stop_token
+        // establish_connections_ polls for cancellation.
         std::future<void> pending_connection_;
+        std::jthread pending_thread_;
+
         std::optional<event_connection_lost_> triggering_event_;
     };
 
@@ -861,6 +884,12 @@ class YaskawaController::state_ {
 
     mutable std::mutex mutex_;
     state_variant_ current_state_{state_disconnected_{}};
+    // Mirror of "is current_state_ a state_disconnected_?" — updated under mutex_ on every
+    // transition in emit_event_, but readable without locking. Lets methods that the FSM
+    // itself calls (turn_servo_power_on, setMotionMode, etc. during wake-up) gate on
+    // connection state without re-entering mutex_, which would deadlock since the FSM
+    // worker thread holds it for the whole cycle.
+    std::atomic<bool> is_disconnected_atomic_{true};
     std::thread worker_thread_;
     std::condition_variable worker_wakeup_cv_;
     bool shutdown_requested_{false};

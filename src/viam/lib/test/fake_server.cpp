@@ -2,7 +2,10 @@
 
 #include <chrono>
 #include <stdexcept>
+#include <thread>
 #include <vector>
+
+#include "../robot_socket.hpp"
 
 extern "C" {
 #include "logging.h"
@@ -177,6 +180,29 @@ void FakeServer::stop_udp_status_pump() {
     if (pumping_.exchange(false) && pump_thread_.joinable()) {
         pump_thread_.join();
     }
+}
+
+void wait_for_connected(const std::shared_ptr<robot::YaskawaController>& controller, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (controller->is_disconnected() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+}
+
+void wait_for_state(const std::shared_ptr<robot::YaskawaController>& controller,
+                    std::string_view prefix,
+                    std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline && !controller->describe_state().starts_with(prefix)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+}
+
+void drive_mock_to_ready(const std::shared_ptr<robot::YaskawaController>& controller, std::chrono::milliseconds timeout) {
+    controller->turn_servo_power_on();
+    controller->setMotionMode(1);
+    wait_for_state(controller, "ready", timeout);
 }
 
 }  // namespace test

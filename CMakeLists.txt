@@ -131,18 +131,24 @@ enable_testing()
 FetchContent_Declare(
   trajex
   GIT_REPOSITORY https://github.com/viam-modules/trajex.git
-  GIT_TAG v0.100.0-rc1
+  GIT_TAG v0.100.0
 )
 
 find_package(xtl CONFIG REQUIRED)
 find_package(xtensor CONFIG REQUIRED)
+
+# trajex v0.100.0+ gates its TOTG tooling layer behind VIAM_TRAJEX_ENABLE_TOOLS,
+# which defaults OFF for FetchContent consumers. We use viam::trajex::totg::tools
+# (planner, etc.), so turn it on. (We do not use the MLModel service layer, so
+# VIAM_TRAJEX_ENABLE_SERVICE stays off.)
+set(VIAM_TRAJEX_ENABLE_TOOLS ON)
 
 FetchContent_MakeAvailable(trajex)
 
 FetchContent_Declare(
   comms
   GIT_REPOSITORY https://github.com/viam-labs/viam-yaskawa-libs.git
-  GIT_TAG 5128b44879e4ffa27128a6bf9bbe2487980c1d80
+  GIT_TAG 864c532e44c209ceb3671d93d7475d6148bfd5d8
   GIT_SHALLOW TRUE
   SYSTEM
 )
@@ -196,7 +202,7 @@ target_compile_definitions(viam-yaskawa
 
 target_link_libraries(viam-yaskawa
   PUBLIC
-    viam::trajex::service
+    viam::trajex::totg::tools
     Boost::regex
     Eigen3::Eigen
     jsoncpp_lib
@@ -404,17 +410,30 @@ target_link_libraries(fault_injection_test
 )
 
 
-# Suppress warnings on third-party C sources compiled into this target.
+# fake_server.cpp is first-party; just relax the conversion warnings (existing behavior).
 set_source_files_properties(
-  ${INTEGRATION_TEST_SOURCES}
-  ${comms_SOURCE_DIR}/tests/protocol/fault_inject.c
+  src/viam/lib/test/fake_server.cpp
   PROPERTIES COMPILE_OPTIONS "-Wno-conversion"
+)
+
+# mock_robot.c and fault_inject.c are third-party comms test helpers we don't control
+# (viam-yaskawa-libs has no CI of its own). Compiled into our test targets, they inherit
+# viam-yaskawa's PUBLIC -Wall -Werror -pedantic. Downgrade -Werror so the build doesn't
+# fail on per-compiler diagnostics while keeping the warnings visible: newer Clang (e.g.
+# Apple clang 21 on macos-26) flags -Wstrict-prototypes and
+# -Wgnu-statement-expression-from-macro-expansion that GCC never emits.
+set_source_files_properties(
+  ${comms_SOURCE_DIR}/tests/protocol/mock_robot.c
+  ${comms_SOURCE_DIR}/tests/protocol/fault_inject.c
+  PROPERTIES COMPILE_OPTIONS "-Wno-error"
 )
 
 add_test(NAME fault_injection_test COMMAND fault_injection_test)
 
 # Integration tests for YaskawaController against FakeServer (multi-group, dual-arm, goal lifecycle)
-add_executable(controller_integration_test)
+# EXCLUDE_FROM_ALL (like the other test targets) so the release `conan create` build of
+# `all` doesn't compile it — `make test` still builds it explicitly via --target.
+add_executable(controller_integration_test EXCLUDE_FROM_ALL)
 
 target_sources(controller_integration_test
   PRIVATE
