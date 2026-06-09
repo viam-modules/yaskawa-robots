@@ -19,9 +19,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             make_target: docker-amd64-ci
-          - os: buildjet-16vcpu-ubuntu-2204-arm
+          - os: ubuntu-24.04-arm
             make_target: docker-arm64-ci
 
     steps:
