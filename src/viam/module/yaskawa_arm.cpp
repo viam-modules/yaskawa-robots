@@ -716,7 +716,13 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
 
 YaskawaArm::~YaskawaArm() {
     try {
-        robot_->disconnect();
+        // robot_ is only created partway through configure_() (after resource_root_ resolution,
+        // host validation, etc.). If construction threw before that point, the arm is destroyed
+        // with robot_ still null; guard so the dtor reports the real error instead of segfaulting
+        // on robot_->disconnect().
+        if (robot_) {
+            robot_->disconnect();
+        }
     } catch (...) {
         const auto unconditional_abort = make_scope_guard([] { std::abort(); });
         try {
