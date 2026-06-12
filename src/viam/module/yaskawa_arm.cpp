@@ -580,6 +580,33 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
                 return acc;
             })
             .with_waypoint_preprocessor([&](auto&, auto& acc) { acc = totg::deduplicate_waypoints(acc, waypoint_dedup_tolerance_rad_); })
+            .with_move_validator([&](auto&, const totg::waypoint_accumulator& accumulator) {
+                // Surface threshold violations here so the caller sees a clear error;
+                // otherwise the controller rejects with the generic error 26.
+                if (!threshold_) {
+                    return;
+                }
+                auto current_joint_position = accumulator.begin();
+                auto first_waypoint = std::next(current_joint_position);
+                if (first_waypoint == accumulator.end()) {
+                    return;
+                }
+                const auto delta = *first_waypoint - *current_joint_position;
+                const auto max_diff = xt::norm_linf(delta)();
+                if (max_diff > *threshold_) {
+                    std::stringstream err_string;
+                    err_string << "rejecting move request: difference between starting trajectory position [(";
+                    boost::copy(boost::adaptors::transform(*first_waypoint, radians_to_degrees<const double&>),
+                                boost::io::make_ostream_joiner(err_string, ", "));
+                    err_string << ")] and joint position [(";
+                    boost::copy(boost::adaptors::transform(*current_joint_position, radians_to_degrees<const double&>),
+                                boost::io::make_ostream_joiner(err_string, ", "));
+                    err_string << ")] is above threshold " << radians_to_degrees(max_diff) << " > "
+                               << radians_to_degrees(*threshold_);
+                    VIAM_SDK_LOG(error) << err_string.str();
+                    throw std::runtime_error(err_string.str());
+                }
+            })
             .with_segmenter(  // NOLINTNEXTLINE(performance-unnecessary-value-param)
                 [&](auto&, totg::waypoint_accumulator acc) {
                     return totg::segment_at_reversals(std::move(acc), segmentation_threshold_rad_);

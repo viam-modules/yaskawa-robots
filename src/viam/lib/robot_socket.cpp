@@ -1271,8 +1271,34 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                                     remaining.size() - offset,
                                     stop_detail));
                             }
-                            if (shared->get_robot_status().is_group_moving(group_index)) {
-                                break;
+                            // The Motoman in_motion bit clears when the trajectory queue drains,
+                            // before the arm has physically decelerated. At low accel limits the
+                            // arm coasts for hundreds of ms after the bit clears — long enough
+                            // that a back-to-back MoveThroughJointPositions hits controller error
+                            // 26 ("Trajectory start position doesn't match current robot position")
+                            // because the new trajectory's first sample disagrees with the
+                            // encoders. Poll live velocity until settle.
+                            {
+                                constexpr double k_settle_velocity_threshold_rad_per_sec = 1e-3;
+                                constexpr auto k_settle_timeout = std::chrono::seconds{3};
+                                const auto deadline = std::chrono::steady_clock::now() + k_settle_timeout;
+                                while (std::chrono::steady_clock::now() < deadline) {
+                                    const auto pvt = shared->get_group_position_velocity_torque(
+                                        static_cast<uint8_t>(group_index));
+                                    double max_abs_vel = 0.0;
+                                    for (double v : pvt.velocity) {
+                                        max_abs_vel = std::max(max_abs_vel, std::abs(v));
+                                    }
+                                    if (max_abs_vel < k_settle_velocity_threshold_rad_per_sec) {
+                                        break;
+                                    }
+                                    std::this_thread::sleep_for(std::chrono::milliseconds{5});
+                                }
+                                if (std::chrono::steady_clock::now() >= deadline) {
+                                    LOGGING(warning) << "settle wait timed out after "
+                                                     << k_settle_timeout.count()
+                                                     << "s on group " << group_index;
+                                }
                             }
                             promise.set_value_at_thread_exit(status_msg.state);
                             return;
