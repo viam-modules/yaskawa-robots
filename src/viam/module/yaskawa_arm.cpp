@@ -46,6 +46,8 @@
 #include <viam/sdk/registry/registry.hpp>
 #include <viam/sdk/rpc/grpc_context_observer.hpp>
 
+#include <grpcpp/server_context.h>
+
 #include <third_party/trajectories/Trajectory.h>
 
 #if __has_include(<xtensor/containers/xarray.hpp>)
