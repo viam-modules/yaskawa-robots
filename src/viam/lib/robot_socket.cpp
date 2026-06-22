@@ -1142,7 +1142,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                                                                          std::vector<trajectory_point_t> samples,
                                                                          const std::vector<tolerance_t>& tolerance,
                                                                          double trajectory_sampling_freq,
-                                                                         std::optional<RealtimeTrajectoryLogger> logger) {
+                                                                         std::optional<RealtimeTrajectoryLogger> logger,
+                                                                         std::function<bool()> async_cancel_monitor) {
     LOGGING(debug) << "execute_trajectory: group=" << group_index << " samples=" << samples.size();
 
     validate_group_(group_index);
@@ -1200,7 +1201,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                  remaining = std::move(remaining),
                  goal_status_polling_trigger = (k_logging_freq / static_cast<uint64_t>(trajectory_sampling_freq)),
                  axes_controlled,
-                 logger = std::move(logger)]() mutable {
+                 logger = std::move(logger),
+                 async_cancel_monitor = std::move(async_cancel_monitor)]() mutable {
         // Scope guard clears per-group lock when thread exits (success or failure)
         const ScopeGuard thread_cleanup{[&self, group_index]() {
             LOGGING(debug) << "monitor thread exiting: releasing move lock for group " << group_index;
@@ -1219,6 +1221,17 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                 if (!shared) {
                     LOGGING(error) << "cancelling goal monitor thread : the socket was destroyed!";
                     return;
+                }
+
+                if (async_cancel_monitor && async_cancel_monitor()) {
+                    try {
+                        if (!shared->stop(group_index)) {
+                            LOGGING(warning) << "stop on cancellation did not return as stopped";
+                        }
+                    } catch (const std::exception& e) {
+                        LOGGING(warning) << "stop on cancellation threw: " << e.what();
+                    }
+                    throw std::runtime_error("move cancelled by caller");
                 }
 
                 // capture robot status at k_logging_freq Hz

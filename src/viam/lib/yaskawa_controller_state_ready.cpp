@@ -58,7 +58,8 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
                                                                    std::move(req.samples),
                                                                    req.tolerance,
                                                                    req.trajectory_sampling_freq,
-                                                                   std::move(req.logger));
+                                                                   std::move(req.logger),
+                                                                   std::move(req.async_cancel_monitor));
             } catch (const std::exception& ex) {
                 req.complete_error(ex.what());
                 it = state.move_requests_.erase(it);
@@ -72,14 +73,6 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
             } catch (const std::exception& ex) {
                 req.complete_error(ex.what());
             }
-            it = state.move_requests_.erase(it);
-        } else if (req.async_cancel_monitor && req.async_cancel_monitor()) {
-            // GOAL_STATE_CANCELLED resolves through set_value, not set_exception, so the
-            // is_done() branch above would treat a cancel as success. Complete with error here.
-            if (!state.controller_->stop(req.group_index)) {
-                LOGGING(warning) << "[fsm] stop on cancellation did not return as stopped";
-            }
-            req.complete_error("move cancelled by caller");
             it = state.move_requests_.erase(it);
         } else {
             ++it;
