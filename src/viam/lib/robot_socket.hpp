@@ -856,7 +856,6 @@ class YaskawaController::state_ {
         double trajectory_sampling_freq{0.0};
         std::optional<RealtimeTrajectoryLogger> logger;
         std::function<bool()> async_cancel_monitor;
-        bool stop_sent{false};
         std::unique_ptr<GoalRequestHandle> handle;
         std::promise<void> completion;
 

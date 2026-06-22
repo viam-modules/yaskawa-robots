@@ -189,7 +189,6 @@ std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group
             .trajectory_sampling_freq = trajectory_sampling_freq,
             .logger = std::move(logger),
             .async_cancel_monitor = std::move(async_cancel_monitor),
-            .stop_sent = false,
             .handle = {},
             .completion = {},
         });

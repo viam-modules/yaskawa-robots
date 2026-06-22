@@ -433,15 +433,15 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
         return;
     }
 
-    auto observer = viam::sdk::GrpcContextObserver::current();
     robot_
-        ->enqueue_move_request(group_index_,
-                               static_cast<uint32_t>(velocity.size()),
-                               std::move(traj_result->samples),
-                               traj_result->tolerance,
-                               trajectory_sampling_freq_,
-                               std::move(logger),
-                               [observer]() { return observer && observer->context().IsCancelled(); })
+        ->enqueue_move_request(
+            group_index_,
+            static_cast<uint32_t>(velocity.size()),
+            std::move(traj_result->samples),
+            traj_result->tolerance,
+            trajectory_sampling_freq_,
+            std::move(logger),
+            [observer = viam::sdk::GrpcContextObserver::current()] { return observer && observer->context().IsCancelled(); })
         .get();
 }
 
@@ -468,15 +468,15 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
         return;
     }
 
-    auto observer = viam::sdk::GrpcContextObserver::current();
     robot_
-        ->enqueue_move_request(group_index_,
-                               static_cast<uint32_t>(velocity_limits_.size()),
-                               std::move(traj_result->samples),
-                               traj_result->tolerance,
-                               trajectory_sampling_freq_,
-                               std::move(logger),
-                               [observer]() { return observer && observer->context().IsCancelled(); })
+        ->enqueue_move_request(
+            group_index_,
+            static_cast<uint32_t>(velocity_limits_.size()),
+            std::move(traj_result->samples),
+            traj_result->tolerance,
+            trajectory_sampling_freq_,
+            std::move(logger),
+            [observer = viam::sdk::GrpcContextObserver::current()] { return observer && observer->context().IsCancelled(); })
         .get();
 }
 
