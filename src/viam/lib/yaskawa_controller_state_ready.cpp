@@ -58,7 +58,8 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
                                                                    std::move(req.samples),
                                                                    req.tolerance,
                                                                    req.trajectory_sampling_freq,
-                                                                   std::move(req.logger));
+                                                                   std::move(req.logger),
+                                                                   std::move(req.async_cancel_monitor));
             } catch (const std::exception& ex) {
                 req.complete_error(ex.what());
                 it = state.move_requests_.erase(it);

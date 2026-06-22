@@ -275,6 +275,7 @@ target_link_libraries(yaskawa-robots
   PRIVATE
   viam-yaskawa
   viam-cpp-sdk::viamsdk
+  viam-cpp-sdk::viamapi # Proxy for gRPC
   viam::trajex::totg
   viam::trajex::totg::tools
 )

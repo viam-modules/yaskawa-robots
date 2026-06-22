@@ -44,6 +44,9 @@
 #include <viam/sdk/module/module.hpp>
 #include <viam/sdk/module/service.hpp>
 #include <viam/sdk/registry/registry.hpp>
+#include <viam/sdk/rpc/grpc_context_observer.hpp>
+
+#include <grpcpp/server_context.h>
 
 #include <third_party/trajectories/Trajectory.h>
 
@@ -431,12 +434,14 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
     }
 
     robot_
-        ->enqueue_move_request(group_index_,
-                               static_cast<uint32_t>(velocity.size()),
-                               std::move(traj_result->samples),
-                               traj_result->tolerance,
-                               trajectory_sampling_freq_,
-                               std::move(logger))
+        ->enqueue_move_request(
+            group_index_,
+            static_cast<uint32_t>(velocity.size()),
+            std::move(traj_result->samples),
+            traj_result->tolerance,
+            trajectory_sampling_freq_,
+            std::move(logger),
+            [observer = viam::sdk::GrpcContextObserver::current()] { return observer && observer->context().IsCancelled(); })
         .get();
 }
 
@@ -464,12 +469,14 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
     }
 
     robot_
-        ->enqueue_move_request(group_index_,
-                               static_cast<uint32_t>(velocity_limits_.size()),
-                               std::move(traj_result->samples),
-                               traj_result->tolerance,
-                               trajectory_sampling_freq_,
-                               std::move(logger))
+        ->enqueue_move_request(
+            group_index_,
+            static_cast<uint32_t>(velocity_limits_.size()),
+            std::move(traj_result->samples),
+            traj_result->tolerance,
+            trajectory_sampling_freq_,
+            std::move(logger),
+            [observer = viam::sdk::GrpcContextObserver::current()] { return observer && observer->context().IsCancelled(); })
         .get();
 }
 
