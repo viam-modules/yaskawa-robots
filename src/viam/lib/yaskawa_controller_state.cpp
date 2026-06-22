@@ -167,7 +167,8 @@ std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group
                                                                   std::vector<trajectory_point_t> samples,
                                                                   std::vector<tolerance_t> tolerance,
                                                                   double trajectory_sampling_freq,
-                                                                  std::optional<RealtimeTrajectoryLogger> logger) {
+                                                                  std::optional<RealtimeTrajectoryLogger> logger,
+                                                                  std::function<bool()> async_cancel_monitor) {
     std::future<void> future;
     {
         const std::lock_guard lock{mutex_};
@@ -187,6 +188,8 @@ std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group
             .tolerance = std::move(tolerance),
             .trajectory_sampling_freq = trajectory_sampling_freq,
             .logger = std::move(logger),
+            .async_cancel_monitor = std::move(async_cancel_monitor),
+            .stop_sent = false,
             .handle = {},
             .completion = {},
         });
@@ -225,13 +228,19 @@ std::future<void> YaskawaController::enqueue_move_request(uint32_t group_index,
                                                           std::vector<trajectory_point_t> samples,
                                                           std::vector<tolerance_t> tolerance,
                                                           double trajectory_sampling_freq,
-                                                          std::optional<RealtimeTrajectoryLogger> logger) {
+                                                          std::optional<RealtimeTrajectoryLogger> logger,
+                                                          std::function<bool()> async_cancel_monitor) {
     validate_group_(group_index);
     if (!fsm_) {
         throw std::runtime_error("controller FSM not initialized");
     }
-    return fsm_->enqueue_move_request(
-        group_index, axes_controlled, std::move(samples), std::move(tolerance), trajectory_sampling_freq, std::move(logger));
+    return fsm_->enqueue_move_request(group_index,
+                                      axes_controlled,
+                                      std::move(samples),
+                                      std::move(tolerance),
+                                      trajectory_sampling_freq,
+                                      std::move(logger),
+                                      std::move(async_cancel_monitor));
 }
 
 // ---------------------------------------------------------------

@@ -434,21 +434,15 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
     }
 
     auto observer = viam::sdk::GrpcContextObserver::current();
-    auto fut = robot_->enqueue_move_request(group_index_,
-                                            static_cast<uint32_t>(velocity.size()),
-                                            std::move(traj_result->samples),
-                                            traj_result->tolerance,
-                                            trajectory_sampling_freq_,
-                                            std::move(logger));
-    while (fut.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
-        if (observer && observer->context().IsCancelled()) {
-            if (!robot_->stop(group_index_)) {
-                VIAM_SDK_LOG(warn) << "stop on cancellation did not return as stopped";
-            }
-            break;
-        }
-    }
-    fut.get();
+    robot_
+        ->enqueue_move_request(group_index_,
+                               static_cast<uint32_t>(velocity.size()),
+                               std::move(traj_result->samples),
+                               traj_result->tolerance,
+                               trajectory_sampling_freq_,
+                               std::move(logger),
+                               [observer]() { return observer && observer->context().IsCancelled(); })
+        .get();
 }
 
 void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, const ProtoStruct&) {
@@ -475,21 +469,15 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
     }
 
     auto observer = viam::sdk::GrpcContextObserver::current();
-    auto fut = robot_->enqueue_move_request(group_index_,
-                                            static_cast<uint32_t>(velocity_limits_.size()),
-                                            std::move(traj_result->samples),
-                                            traj_result->tolerance,
-                                            trajectory_sampling_freq_,
-                                            std::move(logger));
-    while (fut.wait_for(std::chrono::milliseconds(50)) != std::future_status::ready) {
-        if (observer && observer->context().IsCancelled()) {
-            if (!robot_->stop(group_index_)) {
-                VIAM_SDK_LOG(warn) << "stop on cancellation did not return as stopped";
-            }
-            break;
-        }
-    }
-    fut.get();
+    robot_
+        ->enqueue_move_request(group_index_,
+                               static_cast<uint32_t>(velocity_limits_.size()),
+                               std::move(traj_result->samples),
+                               traj_result->tolerance,
+                               trajectory_sampling_freq_,
+                               std::move(logger),
+                               [observer]() { return observer && observer->context().IsCancelled(); })
+        .get();
 }
 
 ::viam::sdk::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {

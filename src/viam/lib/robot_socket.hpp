@@ -520,7 +520,8 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
                                            std::vector<trajectory_point_t> samples,
                                            std::vector<tolerance_t> tolerance,
                                            double trajectory_sampling_freq,
-                                           std::optional<RealtimeTrajectoryLogger> logger = std::nullopt);
+                                           std::optional<RealtimeTrajectoryLogger> logger = std::nullopt,
+                                           std::function<bool()> async_cancel_monitor = nullptr);
 
     void send_test_trajectory();
     void turn_servo_power_on();
@@ -658,7 +659,8 @@ class YaskawaController::state_ {
                                            std::vector<trajectory_point_t> samples,
                                            std::vector<tolerance_t> tolerance,
                                            double trajectory_sampling_freq,
-                                           std::optional<RealtimeTrajectoryLogger> logger = std::nullopt);
+                                           std::optional<RealtimeTrajectoryLogger> logger = std::nullopt,
+                                           std::function<bool()> async_cancel_monitor = nullptr);
 
    private:
     // ---------------------------------------------------------------
@@ -853,6 +855,8 @@ class YaskawaController::state_ {
         std::vector<tolerance_t> tolerance;
         double trajectory_sampling_freq{0.0};
         std::optional<RealtimeTrajectoryLogger> logger;
+        std::function<bool()> async_cancel_monitor;
+        bool stop_sent{false};
         std::unique_ptr<GoalRequestHandle> handle;
         std::promise<void> completion;
 

@@ -74,6 +74,15 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
             }
             it = state.move_requests_.erase(it);
         } else {
+            // In-flight: if the caller's gRPC context has been cancelled, halt the controller.
+            // The next cycle will observe handle->is_done() and complete the request through
+            // the existing error path above.
+            if (!req.stop_sent && req.async_cancel_monitor && req.async_cancel_monitor()) {
+                req.stop_sent = true;
+                if (!state.controller_->stop(req.group_index)) {
+                    LOGGING(warning) << "[fsm] stop on cancellation did not return as stopped";
+                }
+            }
             ++it;
         }
     }
