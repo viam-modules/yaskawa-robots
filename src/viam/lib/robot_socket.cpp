@@ -865,11 +865,6 @@ void YaskawaController::establish_connections_(std::stop_token token) {
     if (udp_socket_) {
         std::exchange(udp_socket_, {})->disconnect();
     }
-    // TcpRobotSocket can't be reused once disconnected (its request queue is closed permanently),
-    // so start every attempt with a fresh socket regardless of the prior state: a dead-but-
-    // connected session, a cleanly disconnected one (e.g. after a firmware flash), or a socket
-    // left disconnected by a previous failed attempt (otherwise the retry pushes onto a closed
-    // queue -> "cannot push on closed queue").
     if (tcp_socket_) {
         std::exchange(tcp_socket_, {})->disconnect();
     }
