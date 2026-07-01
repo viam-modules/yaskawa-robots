@@ -612,21 +612,31 @@ ProtoStruct YaskawaArm::flash_firmware_(bool reboot) {
     // turn_servo_power_on() and fight the servos-off precondition.
     robot_->disconnect();
 
+    static constexpr char k_servos_on_msg[] =
+        "existing app still active (rc=0x2010) - turn SERVO POWER OFF and release HOLD on the pendant, then retry";
+
     MotoPlusFlasher flasher{host};
     const auto del = flasher.delete_app(dest);  // rc=0x3902 ("nothing to remove") is benign
     VIAM_SDK_LOG(info) << "flash_firmware: delete -> " << del.detail;
+    resp["delete_detail"] = ProtoValue(del.detail);
+
+    // rc=0x2010 on delete means the app is still active (servo power on) and can't be replaced.
+    // Don't waste a full upload — the download would fail too. Tell the operator to drop servos.
+    if (del.servos_on) {
+        robot_->connect();  // restore the connection we tore down
+        resp["ok"] = ProtoValue(false);
+        resp["error"] = ProtoValue(std::string(k_servos_on_msg));
+        return resp;
+    }
+
     const auto dl = flasher.download_app(dest, bytes, reboot, std::chrono::seconds{120});
     VIAM_SDK_LOG(info) << "flash_firmware: download -> " << dl.detail;
-
-    resp["delete_detail"] = ProtoValue(del.detail);
     resp["download_detail"] = ProtoValue(dl.detail);
 
     if (!dl.ok) {
         robot_->connect();  // restore the connection we tore down
         resp["ok"] = ProtoValue(false);
-        resp["error"] = ProtoValue(dl.servos_on ? std::string("rc=0x2010: existing app still active — turn SERVO POWER OFF and "
-                                                              "release HOLD on the pendant, then retry")
-                                                : std::string("download failed: " + dl.detail));
+        resp["error"] = ProtoValue(dl.servos_on ? std::string(k_servos_on_msg) : std::string("download failed: " + dl.detail));
         return resp;
     }
 
