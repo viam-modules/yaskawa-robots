@@ -615,7 +615,7 @@ ProtoStruct YaskawaArm::flash_firmware_(bool reboot) {
     MotoPlusFlasher flasher{host};
     const auto del = flasher.delete_app(dest);  // rc=0x3902 ("nothing to remove") is benign
     VIAM_SDK_LOG(info) << "flash_firmware: delete -> " << del.detail;
-    const auto dl = flasher.download_app(dest, bytes, reboot);
+    const auto dl = flasher.download_app(dest, bytes, reboot, std::chrono::seconds{120});
     VIAM_SDK_LOG(info) << "flash_firmware: download -> " << dl.detail;
 
     resp["delete_detail"] = ProtoValue(del.detail);
@@ -632,23 +632,12 @@ ProtoStruct YaskawaArm::flash_firmware_(bool reboot) {
 
     resp["ok"] = ProtoValue(true);
 
-    // A successful DOWNLOAD (reboot verb) reboots the controller. Rebuild the FSM and wait,
-    // bounded, for it to reconnect and reach `ready`. NOTE: this blocks do_command for up to the
-    // timeout — a long synchronous call the gRPC client must tolerate.
+    // A successful DOWNLOAD (reboot verb) reboots the controller. Restart the FSM so it reconnects
+    // in the background; do NOT block here waiting for `ready` — that would hold config_mutex_ for
+    // the whole reboot and risk the do_command gRPC deadline.
     robot_->connect();
     if (reboot) {
-        using namespace std::chrono_literals;
-        const auto deadline = std::chrono::steady_clock::now() + 90s;
-        bool ready = false;
-        while (std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::sleep_for(2s);
-            if (!robot_->is_disconnected() && robot_->describe_state().starts_with("ready")) {
-                ready = true;
-                break;
-            }
-        }
-        resp["reconnected"] = ProtoValue(ready);
-        resp["state"] = ProtoValue(robot_->describe_state());
+        resp["note"] = ProtoValue(std::string("controller rebooting; the module will reconnect in the background"));
     }
     return resp;
 }

@@ -147,14 +147,14 @@ Optionally skip the post-install reboot (the new app then loads on the next cont
 { "flash_firmware": { "reboot": false } }
 ```
 
-The command deletes the existing app, uploads `firmware_path`, and (by default) reboots the controller and waits for it to reconnect. It **blocks for up to ~90 seconds** while the controller reboots. The response is a struct:
+The command deletes the existing app, uploads `firmware_path`, and (by default) tells the controller to reboot. It returns once the upload completes (a few seconds); the controller then reboots and the module **reconnects in the background** (the arm is unavailable until it does). The response is a struct:
 
 | Field | Meaning |
 | ----- | ------- |
 | `ok` | `true` if the download succeeded |
 | `download_detail` / `delete_detail` | Raw controller responses |
 | `error` | Populated on failure (e.g. the servos-off instruction for `rc=0x2010`) |
-| `reconnected` / `state` | Whether the arm reconnected after the reboot, and its FSM state |
+| `note` | On a reboot flash, indicates the controller is rebooting / reconnecting in the background |
 
 ### `flash_on_start`
 
@@ -169,6 +169,10 @@ Setting `"flash_on_start": true` flashes `firmware_path` on every module start. 
     "flash_on_start": true
 }
 ```
+
+### Multiple arms on one controller
+
+Firmware is per-**controller**, but these attributes are per-**arm**. If several arm components share a `host` (see [Control Groups](#control-groups-group_index)), set the firmware attributes (`firmware_path`, `firmware_dest_name`, `flash_on_start`) on **exactly one** of them — or keep them identical across all. Conflicting values are not currently reconciled. A flash reboots the whole controller, so **every** arm on that host disconnects and reconnects during it.
 
 ## Building and Running
 
