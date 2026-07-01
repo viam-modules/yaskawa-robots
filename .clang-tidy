@@ -10,6 +10,9 @@
 # readability-implicit-bool-conversion: We have decided that !ptr-type is cleaner than ptr-type==nullptr
 # readability-magic-numbers: This encourages useless variables and extra lint lines
 # readability-named-parameter: Useful to fix lints about unused parameters
+# clang-analyzer-unix.BlockInCriticalSection: false positives on Boost.Asio synchronous socket ops
+#   (flags recv/send because Asio takes an internal service-registry lock during socket construction
+#   that the analyzer wrongly treats as held through the blocking call).
 
 Checks: >
   -*,
@@ -31,6 +34,7 @@ Checks: >
   -readability-implicit-bool-conversion,
   -readability-magic-numbers,
   -readability-named-parameter,
+  -clang-analyzer-unix.BlockInCriticalSection,
 WarningsAsErrors: '*'
 FormatStyle: file
 CheckOptions:
