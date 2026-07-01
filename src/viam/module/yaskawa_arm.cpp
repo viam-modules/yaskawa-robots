@@ -377,9 +377,11 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     segmentation_threshold_rad_ =
         find_config_attribute<double>(config, "segmentation_threshold_rad").value_or(k_default_segmentation_threshold);
 
-    // Optionally flash the controller firmware on startup. Unconditional for now (Phase 1): it
-    // reflashes + reboots on every start; a version gate (Phase 2) will make it flash only when the
-    // running build differs. A failure here must not abort module startup — log and continue.
+    // Optionally flash the controller firmware on startup. Currently unconditional: it reflashes +
+    // reboots the controller on every start/reconfigure.
+    // TODO(RSDK-14150): gate this on a version check so it only flashes when the running build
+    // differs. https://viam.atlassian.net/browse/RSDK-14150
+    // A failure here must not abort module startup, so log and continue.
     if (find_config_attribute<bool>(config, "flash_on_start").value_or(false)) {
         if (!firmware_path_) {
             VIAM_SDK_LOG(warn) << "flash_on_start is set but `firmware_path` is missing; skipping";
@@ -572,7 +574,9 @@ ProtoStruct YaskawaArm::do_command(const ProtoStruct& command) {
         return ProtoStruct{};  // no recognized command
     }
 
-    // Options: {"reboot": <bool=true>}. (Version-gated skip / "force" come in Phase 2.)
+    // Options: {"reboot": <bool=true>}.
+    // TODO(RSDK-14150): add a version check to skip flashing when the controller is already up to
+    // date (plus a "force" override). https://viam.atlassian.net/browse/RSDK-14150
     bool reboot = true;
     if (const auto* opts = cmd_it->second.get<ProtoStruct>()) {
         if (const auto opt_it = opts->find("reboot"); opt_it != opts->end()) {
