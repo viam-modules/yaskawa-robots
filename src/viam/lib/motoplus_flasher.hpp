@@ -16,9 +16,8 @@ struct FlashOutcome {
 
 /// Client for the Yaskawa MotoPlus DevTools "online download" protocol used by the Windows
 /// OnlineDownload.exe: a plain-text line protocol over TCP (default port 12000). Each call is a
-/// self-contained connect / send / read-response / close. Reverse-engineered + capture-verified;
-/// see yaskawa-controller/tools/mp_online_download.py and
-/// motoplus-sdk/HSES_MOTOPLUS_DEVTOOLS_PROTOCOL.md.
+/// self-contained connect / send / read-response / close. Reverse-engineered and capture-verified
+/// against the Windows OnlineDownload.exe.
 ///
 /// Preconditions on the controller (else the flash is rejected): servo power OFF + HOLD released,
 /// the MotoPlus Temporary File initialized (one-time, maintenance mode), S4C1084=1, firmware
