@@ -598,7 +598,7 @@ ProtoStruct YaskawaArm::flash_firmware_(bool reboot) {
     if (!fw_file) {
         throw std::runtime_error("flash_firmware: cannot open firmware file: " + fw_path.string());
     }
-    std::vector<char> bytes(std::istreambuf_iterator<char>(fw_file), {});
+    const std::vector<char> bytes(std::istreambuf_iterator<char>(fw_file), {});
     if (fw_file.bad()) {
         throw std::runtime_error("flash_firmware: error reading firmware file: " + fw_path.string());
     }

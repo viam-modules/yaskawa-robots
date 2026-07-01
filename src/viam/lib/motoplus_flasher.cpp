@@ -61,7 +61,7 @@ bool connect_with_timeout(
     io.restart();
     io.run_for(timeout);
     if (!connected) {
-        sock.close(ec);
+        // sock is a local; it closes on scope exit (RAII), no explicit close needed.
         err = "connect failed: " + connect_ec.message();
         return false;
     }
@@ -105,7 +105,7 @@ void read_messages(tcp::socket& sock, const std::function<bool(const std::string
     }
 }
 
-FlashOutcome classify(std::vector<std::string> msgs) {
+FlashOutcome classify(const std::vector<std::string>& msgs) {
     FlashOutcome out;
     out.detail = join(msgs);
     for (const auto& m : msgs) {
@@ -141,7 +141,7 @@ FlashOutcome MotoPlusFlasher::delete_app(const std::string& name, std::chrono::s
     std::vector<std::string> msgs;
     read_messages(sock, is_terminal, msgs);
     LOGGING(debug) << "DELETENRB " << name << " -> " << join(msgs);
-    return classify(std::move(msgs));
+    return classify(msgs);
 }
 
 FlashOutcome MotoPlusFlasher::download_app(const std::string& name,
@@ -174,7 +174,7 @@ FlashOutcome MotoPlusFlasher::download_app(const std::string& name,
         }
     }
     if (!started) {
-        FlashOutcome out = classify(std::move(msgs));
+        FlashOutcome out = classify(msgs);
         if (out.detail.empty()) {
             out.detail = "no 'DOWNLOAD Start' from controller";
         }
@@ -188,7 +188,7 @@ FlashOutcome MotoPlusFlasher::download_app(const std::string& name,
     }
     read_messages(sock, is_terminal, msgs);
     LOGGING(debug) << header << " -> " << join(msgs);
-    return classify(std::move(msgs));
+    return classify(msgs);
 }
 
 }  // namespace robot
