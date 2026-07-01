@@ -4,7 +4,9 @@
 #include <filesystem>
 #include <list>
 #include <memory>
+#include <optional>
 #include <shared_mutex>
+#include <string>
 
 #include <Eigen/Core>
 #include <thread>
@@ -103,6 +105,11 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
    private:
     void configure_(const Dependencies& deps, const ResourceConfig& config);
 
+    // Flash the configured firmware to the controller. Precondition: caller holds config_mutex_
+    // (do_command), or the object is not yet shared (configure_ at startup). Tears down and
+    // rebuilds the FSM connection.
+    ProtoStruct flash_firmware_(bool reboot);
+
     template <template <typename> typename lock_type>
     void check_configured_(const lock_type<std::shared_mutex>&);
 
@@ -138,4 +145,9 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     boost::asio::io_context& io_context_;
     std::filesystem::path resource_root_;
     std::string telemetry_output_path_;
+
+    // Firmware flashing (do_command "flash_firmware"): path to the MotoPlus .out on the host and
+    // the optional on-controller name (defaults to the file's basename).
+    std::optional<std::string> firmware_path_;
+    std::optional<std::string> firmware_dest_name_;
 };

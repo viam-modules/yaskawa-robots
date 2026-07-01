@@ -34,6 +34,7 @@
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/algorithm.hpp>
 
+#include <viam/lib/motoplus_flasher.hpp>
 #include <viam/lib/robot_socket.hpp>
 #include <viam/lib/scope_guard.hpp>
 #include <viam/sdk/common/pose.hpp>
@@ -330,6 +331,10 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     }
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
+    // Firmware flashing config (used by do_command "flash_firmware"; see MotoPlusFlasher).
+    firmware_path_ = find_config_attribute<std::string>(config, "firmware_path");
+    firmware_dest_name_ = find_config_attribute<std::string>(config, "firmware_dest_name");
+
     // Get telemetry output path from config or fall back to VIAM_MODULE_DATA
     telemetry_output_path_ = [&] {
         auto path = find_config_attribute<std::string>(config, "telemetry_output_path");
@@ -371,6 +376,29 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     collinearization_ratio_ = find_config_attribute<double>(config, "collinearization_ratio");
     segmentation_threshold_rad_ =
         find_config_attribute<double>(config, "segmentation_threshold_rad").value_or(k_default_segmentation_threshold);
+
+    // Optionally flash the controller firmware on startup. Unconditional for now (Phase 1): it
+    // reflashes + reboots on every start; a version gate (Phase 2) will make it flash only when the
+    // running build differs. A failure here must not abort module startup — log and continue.
+    if (find_config_attribute<bool>(config, "flash_on_start").value_or(false)) {
+        if (!firmware_path_) {
+            VIAM_SDK_LOG(warn) << "flash_on_start is set but `firmware_path` is missing; skipping";
+        } else {
+            VIAM_SDK_LOG(info) << "flash_on_start: flashing " << *firmware_path_;
+            try {
+                const auto res = flash_firmware_(true);
+                bool ok = false;
+                if (const auto it = res.find("ok"); it != res.end()) {
+                    if (const auto* b = it->second.get<bool>()) {
+                        ok = *b;
+                    }
+                }
+                VIAM_SDK_LOG(info) << "flash_on_start result: ok=" << ok;
+            } catch (const std::exception& e) {
+                VIAM_SDK_LOG(warn) << "flash_on_start failed: " << e.what();
+            }
+        }
+    }
 
     // YaskawaController spins up its FSM in the constructor; the resource is up immediately,
     // and the FSM connects (and reconnects) in the background.
@@ -538,8 +566,90 @@ void YaskawaArm::stop(const ProtoStruct&) {
     }
 }
 
-ProtoStruct YaskawaArm::do_command(const ProtoStruct&) {
-    ProtoStruct resp = ProtoStruct{};
+ProtoStruct YaskawaArm::do_command(const ProtoStruct& command) {
+    const auto cmd_it = command.find("flash_firmware");
+    if (cmd_it == command.end()) {
+        return ProtoStruct{};  // no recognized command
+    }
+
+    // Options: {"reboot": <bool=true>}. (Version-gated skip / "force" come in Phase 2.)
+    bool reboot = true;
+    if (const auto* opts = cmd_it->second.get<ProtoStruct>()) {
+        if (const auto opt_it = opts->find("reboot"); opt_it != opts->end()) {
+            if (const auto* b = opt_it->second.get<bool>()) {
+                reboot = *b;
+            }
+        }
+    }
+
+    const std::unique_lock wlock{config_mutex_};
+    return flash_firmware_(reboot);
+}
+
+ProtoStruct YaskawaArm::flash_firmware_(bool reboot) {
+    using viam::sdk::ProtoValue;
+    ProtoStruct resp;
+
+    if (!firmware_path_) {
+        throw std::invalid_argument("flash_firmware: `firmware_path` is not configured");
+    }
+    const std::filesystem::path fw_path{*firmware_path_};
+    std::ifstream fw_file(fw_path, std::ios::binary);
+    if (!fw_file) {
+        throw std::runtime_error("flash_firmware: cannot open firmware file: " + fw_path.string());
+    }
+    std::vector<char> bytes(std::istreambuf_iterator<char>(fw_file), {});
+    if (fw_file.bad()) {
+        throw std::runtime_error("flash_firmware: error reading firmware file: " + fw_path.string());
+    }
+    const std::string dest = firmware_dest_name_.value_or(fw_path.filename().string());
+    const std::string host = robot_->host();
+
+    VIAM_SDK_LOG(info) << "flash_firmware: " << bytes.size() << " bytes as '" << dest << "' to " << host << ":"
+                       << MotoPlusFlasher::k_default_port << " (reboot=" << (reboot ? "yes" : "no") << ")";
+
+    // Quiesce the FSM: stops the heartbeat and the auto-recovery path that would call
+    // turn_servo_power_on() and fight the servos-off precondition.
+    robot_->disconnect();
+
+    MotoPlusFlasher flasher{host};
+    const auto del = flasher.delete_app(dest);  // rc=0x3902 ("nothing to remove") is benign
+    VIAM_SDK_LOG(info) << "flash_firmware: delete -> " << del.detail;
+    const auto dl = flasher.download_app(dest, bytes, reboot);
+    VIAM_SDK_LOG(info) << "flash_firmware: download -> " << dl.detail;
+
+    resp["delete_detail"] = ProtoValue(del.detail);
+    resp["download_detail"] = ProtoValue(dl.detail);
+
+    if (!dl.ok) {
+        robot_->connect();  // restore the connection we tore down
+        resp["ok"] = ProtoValue(false);
+        resp["error"] = ProtoValue(dl.servos_on ? std::string("rc=0x2010: existing app still active — turn SERVO POWER OFF and "
+                                                              "release HOLD on the pendant, then retry")
+                                                : std::string("download failed: " + dl.detail));
+        return resp;
+    }
+
+    resp["ok"] = ProtoValue(true);
+
+    // A successful DOWNLOAD (reboot verb) reboots the controller. Rebuild the FSM and wait,
+    // bounded, for it to reconnect and reach `ready`. NOTE: this blocks do_command for up to the
+    // timeout — a long synchronous call the gRPC client must tolerate.
+    robot_->connect();
+    if (reboot) {
+        using namespace std::chrono_literals;
+        const auto deadline = std::chrono::steady_clock::now() + 90s;
+        bool ready = false;
+        while (std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(2s);
+            if (!robot_->is_disconnected() && robot_->describe_state().starts_with("ready")) {
+                ready = true;
+                break;
+            }
+        }
+        resp["reconnected"] = ProtoValue(ready);
+        resp["state"] = ProtoValue(robot_->describe_state());
+    }
     return resp;
 }
 

@@ -174,6 +174,7 @@ add_library(viam-yaskawa)
 target_sources(viam-yaskawa
   PRIVATE
     src/viam/lib/robot_socket.cpp
+    src/viam/lib/motoplus_flasher.cpp
     src/viam/lib/logger.cpp
     src/viam/lib/trajectory_logger.cpp
     src/viam/lib/yaskawa_controller_state.cpp
@@ -344,6 +345,25 @@ target_link_libraries(broadcast_log_parser_test
 )
 
 add_test(NAME broadcast_log_parser_test COMMAND broadcast_log_parser_test)
+
+add_executable(motoplus_flasher_test EXCLUDE_FROM_ALL)
+
+target_sources(motoplus_flasher_test
+  PRIVATE
+    src/viam/lib/test/motoplus_flasher_test.cpp
+)
+
+target_link_libraries(motoplus_flasher_test
+  PRIVATE
+    viam-yaskawa
+    Boost::unit_test_framework
+)
+
+# Boost.Asio's io_context.hpp trips a -Wnull-dereference false positive under -O2; the core
+# lib avoids it by building at -O0, so match that here.
+target_compile_options(motoplus_flasher_test PRIVATE -O0)
+
+add_test(NAME motoplus_flasher_test COMMAND motoplus_flasher_test)
 
 add_executable(realtime_trajectory_logger_test EXCLUDE_FROM_ALL)
 

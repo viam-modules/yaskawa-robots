@@ -37,6 +37,9 @@ The following attributes are available for `viam:yaskawa-robots` arms:
 | `enable_auto_error_recovery` | bool | Optional | When true, the driver automatically calls `reset_errors` to clear software errors so the arm can recover without operator intervention. Set to false if you want errors to remain visible on the pendant for inspection before they're cleared. (Move requests will still trigger error recovery as part of waking the arm — this only gates the passive background path.) **Default true** |
 | `telemetry_output_path` | string | Optional | Path for writing telemetry data files. **Default: VIAM_MODULE_DATA environment variable** |
 | `group_index` | int | Optional | Control group index on the Yaskawa controller that this arm represents (see below). **Default 0** |
+| `firmware_path` | string | Optional | Absolute path (on the machine running the module) to the MotoPlus firmware `.out` to flash to the controller. Required to use `flash_on_start` or the `flash_firmware` DoCommand. See [Firmware Flashing](#firmware-flashing). |
+| `firmware_dest_name` | string | Optional | Filename to store the application under on the controller. **Default: the basename of `firmware_path`** (e.g. `viammoto.out`). |
+| `flash_on_start` | bool | Optional | When true, flash `firmware_path` to the controller on every module start/reconfigure, then reboot the controller. A flash failure is logged but does not stop the module from starting. See [Firmware Flashing](#firmware-flashing). **Default false** |
 
 #### Control Groups (`group_index`)
 
@@ -119,6 +122,53 @@ First ensure that your machine is displaying as **Live** on the Viam App. Then y
 - To simply view data from and manipulate your arm, use the **CONTROL** tab of the Viam App.
 For more information, see [Control Machines](https://docs.viam.com/fleet/control/).
 - More advanced control of the arm can be achieved by using one of [Viam's client SDK libraries](https://docs.viam.com/components/arm/#control-your-arm-with-viams-client-sdk-libraries)
+
+## Firmware Flashing
+
+This module can flash the MotoPlus controller firmware (the `.out` application) over the network, replacing the Windows-only `OnlineDownload.exe`. Flashing is triggered either by the `flash_firmware` [DoCommand](https://docs.viam.com/dev/reference/apis/components/arm/#docommand) or automatically at startup via `flash_on_start`.
+
+Point `firmware_path` at the `.out` file **on the machine running the module** (not your laptop).
+
+### Prerequisites (on the controller)
+
+1. **Servo power OFF** and any **HOLD released** on the pendant. If servos are on, flashing fails with `rc=0x2010`.
+2. First time only: initialize the MotoPlus Temporary File in **Maintenance mode**, and set parameter **`S4C1084 = 1`**.
+3. Controller firmware **YAS4.12.00-00 or newer** (YRC1000).
+
+### `flash_firmware` DoCommand
+
+```json
+{ "flash_firmware": {} }
+```
+
+Optionally skip the post-install reboot (the new app then loads on the next controller power cycle):
+
+```json
+{ "flash_firmware": { "reboot": false } }
+```
+
+The command deletes the existing app, uploads `firmware_path`, and (by default) reboots the controller and waits for it to reconnect. It **blocks for up to ~90 seconds** while the controller reboots. The response is a struct:
+
+| Field | Meaning |
+| ----- | ------- |
+| `ok` | `true` if the download succeeded |
+| `download_detail` / `delete_detail` | Raw controller responses |
+| `error` | Populated on failure (e.g. the servos-off instruction for `rc=0x2010`) |
+| `reconnected` / `state` | Whether the arm reconnected after the reboot, and its FSM state |
+
+### `flash_on_start`
+
+Setting `"flash_on_start": true` flashes `firmware_path` on every module start. **This currently flashes and reboots the controller unconditionally on each start/reconfigure** (a version check that skips when the running firmware already matches is planned). A failure is logged and does not prevent the module from starting.
+
+```json
+{
+    "host": "10.1.10.84",
+    "speed_rad_per_sec": 2.09,
+    "acceleration_rad_per_sec2": 0.14,
+    "firmware_path": "/opt/viam/firmware/viammoto.out",
+    "flash_on_start": true
+}
+```
 
 ## Building and Running
 
