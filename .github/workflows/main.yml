@@ -81,6 +81,9 @@ jobs:
        (needs.check-recent-commits.outputs.has_recent_commits == 'true' ||
         github.event.schedule == '0 10 * * 0'))
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write  # required for Google Workload Identity Federation
     strategy:
       fail-fast: false
       matrix:
@@ -148,6 +151,19 @@ jobs:
         with:
           submodules: true
           fetch-depth: 0
+
+      # Authenticate to Google Cloud via Workload Identity Federation
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/785265540/locations/global/workloadIdentityPools/static-file-id/providers/static-file-github
+
+      # Install the gcloud SDK (provides gsutil)
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Get firmware
+        run: make get-firmware
 
       # Build using setup.sh and build.sh scripts
       - name: Setup C++ SDK

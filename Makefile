@@ -13,7 +13,8 @@
 	docker-upload \
 	docker \
 	docker-arm64-ci \
-	docker-amd64-ci
+	docker-amd64-ci \
+	get-firmware
 
 default: module.tar.gz
 
@@ -51,6 +52,17 @@ run-clang-tidy:
 
 run-clang-check:
 	clang-check-19 -p build --extra-arg=-D_Bool=bool ./src/viam/*/*.cpp
+
+# Firmware
+# The exact object name in the bucket is not finalized yet; override on the
+# command line, e.g. `make get-firmware FIRMWARE_FILE=yaskawa-fw-1.2.3.bin`.
+FIRMWARE_BUCKET = gs://yaskawa-firmware.viam.dev
+FIRMWARE_FILE ?= firmware.bin
+FIRMWARE_DEST ?= firmware/$(FIRMWARE_FILE)
+
+get-firmware:
+	mkdir -p $(dir $(FIRMWARE_DEST))
+	gsutil cp $(FIRMWARE_BUCKET)/$(FIRMWARE_FILE) $(FIRMWARE_DEST)
 
 clean:
 	rm -rf build
