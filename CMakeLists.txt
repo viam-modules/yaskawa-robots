@@ -330,6 +330,18 @@ install(
   DESTINATION ${CMAKE_INSTALL_DATADIR}/yaskawa-robots
 )
 
+# MotoPlus firmware is not committed; `make get-firmware` fetches it from GCS into
+# src/firmware/ before the build (see Makefile). Bundle it next to the kinematics so the
+# module can flash it, along with the sidecar .version carrying the git-describe id used to
+# detect an out-of-sync controller. OPTIONAL: local builds that skip get-firmware omit it.
+install(
+  FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/firmware/viammoto.out
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/firmware/viammoto.out.version
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/yaskawa-robots/firmware
+  OPTIONAL
+)
+
 add_executable(broadcast_log_parser_test EXCLUDE_FROM_ALL)
 
 target_sources(broadcast_log_parser_test

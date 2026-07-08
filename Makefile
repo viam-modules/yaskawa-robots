@@ -53,13 +53,27 @@ run-clang-tidy:
 run-clang-check:
 	clang-check-19 -p build --extra-arg=-D_Bool=bool ./src/viam/*/*.cpp
 
+# MotoPlus firmware is distributed out-of-band via GCS, not committed. The bucket holds
+# immutable viammoto-<git-describe>.out objects. The shipped version is pinned in the committed
+# ./firmware.version so releases are reproducible and the module flashes the firmware it was
+# built against (bump that file to ship a new one). get-firmware reads the pin, downloads that
+# object to a stable name so the runtime path never changes, and writes a sidecar .version
+# (bundled into the tarball) with the id the flasher compares against. The .out lands under src/
+# so conan export_sources (src/*) picks it up and the install() rule in CMakeLists.txt bundles it.
 FIRMWARE_BUCKET = gs://yaskawa-firmware.viam.dev
-FIRMWARE_FILE ?= firmware.bin
+FIRMWARE_DIR = src/firmware
+FIRMWARE_OUT = $(FIRMWARE_DIR)/viammoto.out
+FIRMWARE_VERSION_FILE = firmware.version
 
-get-firmware: $(FIRMWARE_FILE)
-
-$(FIRMWARE_FILE):
-	gsutil cp $(FIRMWARE_BUCKET)/$(FIRMWARE_FILE) $(FIRMWARE_FILE)
+get-firmware:
+	mkdir -p $(FIRMWARE_DIR)
+	if [ ! -f $(FIRMWARE_VERSION_FILE) ]; then echo "get-firmware: $(FIRMWARE_VERSION_FILE) missing" >&2; exit 1; fi; \
+	ver=$$(grep -v '^[[:space:]]*#' $(FIRMWARE_VERSION_FILE) | tr -d '[:space:]'); \
+	if [ -z "$$ver" ]; then echo "get-firmware: $(FIRMWARE_VERSION_FILE) has no version" >&2; exit 1; fi; \
+	case "$$ver" in *dirty*) echo "get-firmware: refusing dirty firmware '$$ver'" >&2; exit 1;; esac; \
+	echo "get-firmware: fetching viammoto-$$ver.out"; \
+	gsutil cp $(FIRMWARE_BUCKET)/viammoto-$$ver.out $(FIRMWARE_OUT); \
+	printf '%s' "$$ver" > $(FIRMWARE_OUT).version
 
 clean:
 	rm -rf build
