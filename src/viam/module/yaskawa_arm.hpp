@@ -110,6 +110,10 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     // rebuilds the FSM connection.
     ProtoStruct flash_firmware_(bool reboot);
 
+    // Resolve which firmware to flash: the configured `firmware_path` if set, otherwise the
+    // firmware bundled in the module tarball (if present). std::nullopt if neither is available.
+    std::optional<std::filesystem::path> resolve_firmware_path_() const;
+
     template <template <typename> typename lock_type>
     void check_configured_(const lock_type<std::shared_mutex>&);
 

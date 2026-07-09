@@ -84,6 +84,11 @@ constexpr double k_min_sampling_freq_hz = 1.0;
 constexpr double k_max_sampling_freq_hz = 250.0;
 constexpr double k_default_min_timestep_sec = 1e-2;
 
+// Firmware bundled in the module tarball, relative to resource_root_. Installed next to the
+// kinematics by CMakeLists.txt (`make get-firmware` fetches it from GCS pre-build). Used as the
+// default when `firmware_path` is unset. Local builds that skip get-firmware won't have it.
+constexpr char k_packaged_firmware_relpath[] = "firmware/viammoto.out";
+
 xt::xarray<double> eigen_waypoints_to_xarray(const std::list<Eigen::VectorXd>& waypoints) {
     if (waypoints.empty()) {
         return xt::xarray<double>::from_shape({0, 0});
@@ -383,10 +388,12 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     // differs. https://viam.atlassian.net/browse/RSDK-14150
     // A failure here must not abort module startup, so log and continue.
     if (find_config_attribute<bool>(config, "flash_on_start").value_or(false)) {
-        if (!firmware_path_) {
-            VIAM_SDK_LOG(warn) << "flash_on_start is set but `firmware_path` is missing; skipping";
+        const auto fw_path = resolve_firmware_path_();
+        if (!fw_path) {
+            VIAM_SDK_LOG(warn) << "flash_on_start is set but no firmware available "
+                                  "(`firmware_path` unset and no packaged firmware); skipping";
         } else {
-            VIAM_SDK_LOG(info) << "flash_on_start: flashing " << *firmware_path_;
+            VIAM_SDK_LOG(info) << "flash_on_start: flashing " << fw_path->string();
             try {
                 const auto res = flash_firmware_(true);
                 bool ok = false;
@@ -590,14 +597,29 @@ ProtoStruct YaskawaArm::do_command(const ProtoStruct& command) {
     return flash_firmware_(reboot);
 }
 
+std::optional<std::filesystem::path> YaskawaArm::resolve_firmware_path_() const {
+    if (firmware_path_) {
+        return std::filesystem::path{*firmware_path_};
+    }
+    // Fall back to the firmware bundled in the tarball. Only use it if it actually exists;
+    // local builds that skip `make get-firmware` won't have it.
+    const auto packaged = resource_root_ / k_packaged_firmware_relpath;
+    std::error_code ec;
+    if (std::filesystem::exists(packaged, ec)) {
+        return packaged;
+    }
+    return std::nullopt;
+}
+
 ProtoStruct YaskawaArm::flash_firmware_(bool reboot) {
     using viam::sdk::ProtoValue;
     ProtoStruct resp;
 
-    if (!firmware_path_) {
-        throw std::invalid_argument("flash_firmware: `firmware_path` is not configured");
+    const auto fw_path_opt = resolve_firmware_path_();
+    if (!fw_path_opt) {
+        throw std::invalid_argument("flash_firmware: no firmware available (`firmware_path` unset and no packaged firmware found)");
     }
-    const std::filesystem::path fw_path{*firmware_path_};
+    const std::filesystem::path fw_path{*fw_path_opt};
     std::ifstream fw_file(fw_path, std::ios::binary);
     if (!fw_file) {
         throw std::runtime_error("flash_firmware: cannot open firmware file: " + fw_path.string());

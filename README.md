@@ -37,9 +37,9 @@ The following attributes are available for `viam:yaskawa-robots` arms:
 | `enable_auto_error_recovery` | bool | Optional | When true, the driver automatically calls `reset_errors` to clear software errors so the arm can recover without operator intervention. Set to false if you want errors to remain visible on the pendant for inspection before they're cleared. (Move requests will still trigger error recovery as part of waking the arm — this only gates the passive background path.) **Default true** |
 | `telemetry_output_path` | string | Optional | Path for writing telemetry data files. **Default: VIAM_MODULE_DATA environment variable** |
 | `group_index` | int | Optional | Control group index on the Yaskawa controller that this arm represents (see below). **Default 0** |
-| `firmware_path` | string | Optional | Absolute path (on the machine running the module) to the MotoPlus firmware `.out` to flash to the controller. Required to use `flash_on_start` or the `flash_firmware` DoCommand. See [Firmware Flashing](#firmware-flashing). |
-| `firmware_dest_name` | string | Optional | Filename to store the application under on the controller. **Default: the basename of `firmware_path`** (e.g. `viammoto.out`). |
-| `flash_on_start` | bool | Optional | When true, flash `firmware_path` to the controller on every module start/reconfigure, then reboot the controller. A flash failure is logged but does not stop the module from starting. See [Firmware Flashing](#firmware-flashing). **Default false** |
+| `firmware_path` | string | Optional | Absolute path (on the machine running the module) to the MotoPlus firmware `.out` to flash to the controller. **Default: the firmware bundled in the module tarball**, if present. Overrides the bundled firmware. See [Firmware Flashing](#firmware-flashing). |
+| `firmware_dest_name` | string | Optional | Filename to store the application under on the controller. **Default: the basename of the firmware being flashed** (e.g. `viammoto.out`). |
+| `flash_on_start` | bool | Optional | When true, flash the firmware to the controller on every module start/reconfigure, then reboot the controller. A flash failure is logged but does not stop the module from starting. See [Firmware Flashing](#firmware-flashing). **Default false** |
 
 #### Control Groups (`group_index`)
 
@@ -127,7 +127,7 @@ For more information, see [Control Machines](https://docs.viam.com/fleet/control
 
 This module can flash the MotoPlus controller firmware (the `.out` application) over the network, replacing the Windows-only `OnlineDownload.exe`. Flashing is triggered either by the `flash_firmware` [DoCommand](https://docs.viam.com/dev/reference/apis/components/arm/#docommand) or automatically at startup via `flash_on_start`.
 
-Point `firmware_path` at the `.out` file **on the machine running the module** (not your laptop).
+By default the module flashes the firmware **bundled in its tarball** (built and version-pinned alongside the module). To flash a different `.out`, point `firmware_path` at it **on the machine running the module** (not your laptop); this overrides the bundled firmware. If `firmware_path` is unset and no bundled firmware is present (e.g. a local build that skipped `make get-firmware`), flashing is skipped with a warning.
 
 ### Prerequisites (on the controller)
 
@@ -147,7 +147,7 @@ Optionally skip the post-install reboot (the new app then loads on the next cont
 { "flash_firmware": { "reboot": false } }
 ```
 
-The command deletes the existing app, uploads `firmware_path`, and (by default) tells the controller to reboot. It returns once the upload completes (a few seconds); the controller then reboots and the module **reconnects in the background** (the arm is unavailable until it does). The response is a struct:
+The command deletes the existing app, uploads the firmware (`firmware_path` if set, otherwise the bundled firmware), and (by default) tells the controller to reboot. It returns once the upload completes (a few seconds); the controller then reboots and the module **reconnects in the background** (the arm is unavailable until it does). The response is a struct:
 
 | Field | Meaning |
 | ----- | ------- |
@@ -158,14 +158,15 @@ The command deletes the existing app, uploads `firmware_path`, and (by default) 
 
 ### `flash_on_start`
 
-Setting `"flash_on_start": true` flashes `firmware_path` on every module start. **This currently flashes and reboots the controller unconditionally on each start/reconfigure** (a version check that skips when the running firmware already matches is planned). A failure is logged and does not prevent the module from starting.
+Setting `"flash_on_start": true` flashes the firmware on every module start. **This currently flashes and reboots the controller unconditionally on each start/reconfigure** (a version check that skips when the running firmware already matches is planned). A failure is logged and does not prevent the module from starting.
+
+Since the bundled firmware is the default, this needs no `firmware_path`:
 
 ```json
 {
     "host": "10.1.10.84",
     "speed_rad_per_sec": 2.09,
     "acceleration_rad_per_sec2": 0.14,
-    "firmware_path": "/opt/viam/firmware/viammoto.out",
     "flash_on_start": true
 }
 ```
