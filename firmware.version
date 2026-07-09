@@ -1,0 +1,5 @@
+# Pinned MotoPlus firmware version: the `git describe` of the yaskawa-controller build.
+# `make get-firmware` fetches gs://yaskawa-firmware.viam.dev/viammoto-<this>.out and bundles it
+# into the module tarball. Bump this line to ship a new firmware. Must be a clean (non-dirty)
+# describe.
+abacb7c
