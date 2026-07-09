@@ -1,4 +1,6 @@
 logs
 build
 module.tar.gz
+# firmware fetched from GCS by `make get-firmware`, not committed
+/src/firmware/
 
