@@ -147,7 +147,7 @@ By default the module **skips flashing if the controller already runs this build
 { "flash_firmware": { "reboot": false, "force": false } }
 ```
 - `reboot` (default `true`): set `false` to skip the post-install reboot (the new app then loads on the next controller power cycle).
-- `force` (default `false`): flash even if the build ids match. An **unknown** running id (pre-v7 firmware, unreachable controller, or missing `.version`) is treated as out-of-sync and flashes regardless.
+- `force` (default `false`): flash even if the build ids match. An **unknown** id — pre-v7 firmware, an unstamped (`"unknown"`) build, an unreachable controller, or a missing `.version` — is treated as out-of-sync and flashes regardless.
 
 The command deletes the existing app, uploads the firmware (`firmware_path` if set, otherwise the bundled firmware), and (by default) tells the controller to reboot. It returns once the upload completes (a few seconds); the controller then reboots and the module **reconnects in the background** (the arm is unavailable until it does). The response is a struct:
 

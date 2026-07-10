@@ -617,7 +617,7 @@ std::optional<std::string> YaskawaArm::expected_build_id_(const std::filesystem:
     const auto not_space = [](unsigned char c) { return std::isspace(c) == 0; };
     id.erase(id.begin(), std::find_if(id.begin(), id.end(), not_space));
     id.erase(std::find_if(id.rbegin(), id.rend(), not_space).base(), id.end());
-    if (id.empty()) {
+    if (id.empty() || id == "unknown") {  // unstamped -> can't verify, force a flash
         return std::nullopt;
     }
     return id;
@@ -629,8 +629,12 @@ std::optional<std::string> YaskawaArm::running_build_id_(std::chrono::seconds ti
     for (;;) {
         try {
             const auto caps = robot_->get_capabilities();
-            // Empty means pre-v7 firmware (no build_id field) or an unstamped build -> unknown.
-            return caps.build_id.empty() ? std::nullopt : std::optional<std::string>{caps.build_id};
+            // Empty = pre-v7 firmware (no build_id field); "unknown" = a build that skipped the
+            // git-describe stamp. Both mean we can't identify the running build -> treat as unknown.
+            if (caps.build_id.empty() || caps.build_id == "unknown") {
+                return std::nullopt;
+            }
+            return caps.build_id;
         } catch (const std::exception&) {
             if (std::chrono::steady_clock::now() >= deadline) {
                 return std::nullopt;  // couldn't reach the controller in time
