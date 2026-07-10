@@ -608,7 +608,7 @@ ProtoStruct YaskawaArm::do_command(const ProtoStruct& command) {
     return flash_firmware_(reboot, force);
 }
 
-std::optional<std::string> YaskawaArm::expected_build_id_(const std::filesystem::path& firmware_path) const {
+std::optional<std::string> YaskawaArm::expected_build_id_(const std::filesystem::path& firmware_path) {
     std::ifstream f(firmware_path.string() + ".version", std::ios::binary);
     if (!f) {
         return std::nullopt;
@@ -652,7 +652,7 @@ ProtoStruct YaskawaArm::firmware_status_() {
     const auto running = running_build_id_(std::chrono::seconds{5});
     resp["expected_id"] = ProtoValue(expected.value_or(""));
     resp["running_id"] = ProtoValue(running.value_or(""));
-    resp["in_sync"] = ProtoValue(static_cast<bool>(expected && running && *expected == *running));
+    resp["in_sync"] = ProtoValue(expected && running && *expected == *running);
     return resp;
 }
 
@@ -662,7 +662,7 @@ std::optional<std::filesystem::path> YaskawaArm::resolve_firmware_path_() const 
     }
     // Fall back to the firmware bundled in the tarball. Only use it if it actually exists;
     // local builds that skip `make get-firmware` won't have it.
-    const auto packaged = resource_root_ / k_packaged_firmware_relpath;
+    auto packaged = resource_root_ / k_packaged_firmware_relpath;
     std::error_code ec;
     if (std::filesystem::exists(packaged, ec)) {
         return packaged;
@@ -678,7 +678,7 @@ ProtoStruct YaskawaArm::flash_firmware_(bool reboot, bool force) {
     if (!fw_path_opt) {
         throw std::invalid_argument("flash_firmware: no firmware available (`firmware_path` unset and no packaged firmware found)");
     }
-    const std::filesystem::path fw_path{*fw_path_opt};
+    const auto& fw_path = *fw_path_opt;
     std::ifstream fw_file(fw_path, std::ios::binary);
     if (!fw_file) {
         throw std::runtime_error("flash_firmware: cannot open firmware file: " + fw_path.string());

@@ -117,7 +117,7 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     // Firmware version-sync (RSDK-14150). expected = the `.version` sidecar next to the resolved
     // firmware; running = the controller's reported capabilities build_id (with a bounded wait for
     // the connection). firmware_status_ reports both without flashing.
-    std::optional<std::string> expected_build_id_(const std::filesystem::path& firmware_path) const;
+    static std::optional<std::string> expected_build_id_(const std::filesystem::path& firmware_path);
     std::optional<std::string> running_build_id_(std::chrono::seconds timeout) const;
     ProtoStruct firmware_status_();
 
