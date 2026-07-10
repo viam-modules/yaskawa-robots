@@ -285,6 +285,13 @@ CapabilitiesMessage::CapabilitiesMessage(const Message& msg) {
         groups[i].base_axis_motion.assign(cap->base_axis_motion, cap->base_axis_motion + cap->num_axes);
         groups[i].interpolation_period_us = cap->interpolation_period_us;
     }
+
+    // build_id (PROTOCOL_VERSION 7+) follows the fixed groups[MAX_GROUPS] array. Pre-v7 firmware
+    // sends a shorter payload without it, so leave build_id empty (caller treats that as unknown).
+    if (msg.payload.size() >= sizeof(capabilities_payload_t)) {
+        const auto* full = reinterpret_cast<const capabilities_payload_t*>(msg.payload.data());
+        build_id.assign(full->build_id, strnlen(full->build_id, sizeof(full->build_id)));
+    }
 }
 
 Message::Message(message_type_t type, std::vector<uint8_t>&& data) : payload(std::move(data)) {

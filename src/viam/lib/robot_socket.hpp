@@ -290,6 +290,7 @@ struct CapabilitiesMessage {
     uint8_t protocol_version{0};
     uint8_t num_groups{0};
     std::vector<GroupCapability> groups;
+    std::string build_id;  // firmware git-describe id; empty for pre-v7 firmware (no build_id field)
 
     CapabilitiesMessage() = default;
     CapabilitiesMessage(const Message&);
