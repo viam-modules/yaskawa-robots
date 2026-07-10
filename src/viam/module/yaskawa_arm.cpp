@@ -697,6 +697,8 @@ ProtoStruct YaskawaArm::flash_firmware_(bool reboot, bool force) {
     const auto running = running_build_id_(std::chrono::seconds{15});
     resp["expected_id"] = ProtoValue(expected.value_or(""));
     resp["running_id"] = ProtoValue(running.value_or(""));
+    VIAM_SDK_LOG(info) << "flash_firmware: controller build=" << (running ? *running : "unknown")
+                       << ", firmware build=" << (expected ? *expected : "unknown") << (force ? " (force)" : "");
     if (!force && expected && running && *expected == *running) {
         resp["ok"] = ProtoValue(true);
         resp["skipped"] = ProtoValue(true);
