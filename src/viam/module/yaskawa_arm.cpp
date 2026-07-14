@@ -747,10 +747,11 @@ ProtoStruct YaskawaArm::flash_firmware_(bool force) {
     // Version-sync gate (RSDK-14150): if the controller already runs this build, skip the flash.
     // Query the running id before we tear the connection down. Unknown running/expected id (pre-v7
     // firmware, unreachable controller, or missing .version) is treated as out-of-sync -> flash.
-    // When forcing we flash regardless, so skip the capabilities round-trip -- that also avoids
-    // racing a reconnecting FSM for it on the protocol-mismatch flash-on-start path.
+    // On a protocol mismatch the build id is unreadable (parse_header rejects the reply) and the
+    // FSM is mid-reconnect, so skip the query -- it would only race the FSM and return nothing.
     const auto expected = expected_build_id_(fw_path);
-    const auto running = force ? std::optional<std::string>{} : running_build_id_(std::chrono::seconds{15});
+    const bool cannot_query = robot_->controller_protocol_mismatch();
+    const auto running = cannot_query ? std::optional<std::string>{} : running_build_id_(std::chrono::seconds{15});
     resp["expected_id"] = ProtoValue(expected.value_or(""));
     resp["running_id"] = ProtoValue(running.value_or(""));
     VIAM_SDK_LOG(info) << "flash_firmware: controller build=" << (running ? *running : "unknown")
@@ -988,6 +989,11 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
 
 YaskawaArm::~YaskawaArm() {
     // Stop the background flash_on_start task before tearing down the controller it uses.
+    // request_stop() only breaks the task's wait-for-connect loop; it does NOT interrupt an
+    // in-progress flash (the flasher's delete/download are synchronous, bounded by their own
+    // ~120s timeout). So if teardown races an active flash, this join blocks until the flash
+    // finishes -- intentional: interrupting a firmware write mid-download would leave the
+    // controller with no valid app (delete has already run).
     if (flash_on_start_thread_.joinable()) {
         flash_on_start_thread_.request_stop();
         flash_on_start_thread_.join();
