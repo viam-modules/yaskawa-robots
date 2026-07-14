@@ -39,7 +39,7 @@ The following attributes are available for `viam:yaskawa-robots` arms:
 | `group_index` | int | Optional | Control group index on the Yaskawa controller that this arm represents (see below). **Default 0** |
 | `firmware_path` | string | Optional | Absolute path (on the machine running the module) to the MotoPlus firmware `.out` to flash to the controller. **Default: the firmware bundled in the module tarball**, if present. Overrides the bundled firmware. See [Firmware Flashing](#firmware-flashing). |
 | `firmware_dest_name` | string | Optional | Filename to store the application under on the controller. **Default: the basename of the firmware being flashed** (e.g. `viammoto.out`). |
-| `flash_on_start` | bool | Optional | When true, on every module start/reconfigure flash the firmware **only if the controller's running build differs** from the bundled/configured one, then reboot. A flash failure is logged but does not stop the module from starting. See [Firmware Flashing](#firmware-flashing). **Default false** |
+| `flash_on_start` | bool | Optional | On every module start/reconfigure, flash the firmware **only if the controller's running build differs** from the bundled/configured one, then reboot. A flash failure is logged but does not stop the module from starting. Set **false** to disable (e.g. when testing a dev build on the controller manually). See [Firmware Flashing](#firmware-flashing). **Default true** |
 
 #### Control Groups (`group_index`)
 
@@ -141,24 +141,17 @@ By default the module flashes the firmware **bundled in its tarball** (built and
 { "flash_firmware": {} }
 ```
 
-By default the module **skips flashing if the controller already runs this build** — it compares the controller's reported build id (`MSG_CAPABILITIES`) against the firmware's `.version` sidecar. Options:
+An explicit `flash_firmware` is a deliberate operator action, so it **always flashes** (no version gate) and **always reboots** — use it to force a (re)install regardless of the controller's current build. For the version-gated, skip-if-in-sync behavior, use [`flash_on_start`](#flash_on_start) instead.
 
-```json
-{ "flash_firmware": { "reboot": false, "force": false } }
-```
-- `reboot` (default `true`): set `false` to skip the post-install reboot (the new app then loads on the next controller power cycle).
-- `force` (default `false`): flash even if the build ids match. An **unknown** id — pre-v7 firmware, an unstamped (`"unknown"`) build, an unreachable controller, or a missing `.version` — is treated as out-of-sync and flashes regardless.
-
-The command deletes the existing app, uploads the firmware (`firmware_path` if set, otherwise the bundled firmware), and (by default) tells the controller to reboot. It returns once the upload completes (a few seconds); the controller then reboots and the module **reconnects in the background** (the arm is unavailable until it does). The response is a struct:
+The command deletes the existing app, uploads the firmware (`firmware_path` if set, otherwise the bundled firmware), and tells the controller to reboot. It returns once the upload completes (a few seconds); the controller then reboots and the module **reconnects in the background** (the arm is unavailable until it does). The response is a struct:
 
 | Field | Meaning |
 | ----- | ------- |
-| `ok` | `true` if the download succeeded (or was skipped as already up to date) |
-| `skipped` | `true` when the flash was skipped because the controller already runs this build |
+| `ok` | `true` if the download succeeded |
 | `expected_id` / `running_id` | The firmware's build id vs the controller's reported build id |
 | `download_detail` / `delete_detail` | Raw controller responses |
 | `error` | Populated on failure (e.g. the servos-off instruction for `rc=0x2010`) |
-| `note` | Rebooting/reconnecting, or "already running build …" when skipped |
+| `note` | Rebooting/reconnecting status |
 
 ### `firmware_status` DoCommand
 
@@ -171,16 +164,16 @@ Returns `{ "expected_id": "<firmware .version>", "running_id": "<controller buil
 
 ### `flash_on_start`
 
-Setting `"flash_on_start": true` runs the same version check on every module start/reconfigure and flashes **only if the controller's running build differs** from the bundled/configured firmware (then reboots). If the running build can't be determined, it flashes to be safe. A failure is logged and does not prevent the module from starting.
+`flash_on_start` is **true by default**: on every module start/reconfigure it compares the controller's reported build id (`MSG_CAPABILITIES`) against the bundled/configured firmware's `.version` sidecar and flashes **only if they differ** (then reboots). If the running build can't be determined — pre-v7 firmware, an unstamped (`"unknown"`) build, an unreachable controller, or a missing `.version` — it flashes to be safe. A failure is logged and does not prevent the module from starting. Set `"flash_on_start": false` to disable (e.g. when manually testing a dev build on the controller).
 
-Since the bundled firmware is the default, this needs no `firmware_path`:
+Since the bundled firmware is the default, the default-on flash needs no extra config; an explicit `firmware_path` overrides which `.out` is used:
 
 ```json
 {
     "host": "10.1.10.84",
     "speed_rad_per_sec": 2.09,
     "acceleration_rad_per_sec2": 0.14,
-    "flash_on_start": true
+    "flash_on_start": false
 }
 ```
 

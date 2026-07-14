@@ -387,7 +387,7 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     // skips when the controller already runs this build, so this only flashes on a mismatch (or when
     // the running build can't be determined). A failure here must not abort module startup, so log
     // and continue.
-    if (find_config_attribute<bool>(config, "flash_on_start").value_or(false)) {
+    if (find_config_attribute<bool>(config, "flash_on_start").value_or(true)) {
         const auto fw_path = resolve_firmware_path_();
         if (!fw_path) {
             VIAM_SDK_LOG(warn) << "flash_on_start is set but no firmware available "
@@ -395,7 +395,7 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
         } else {
             VIAM_SDK_LOG(info) << "flash_on_start: checking controller firmware against " << fw_path->string();
             try {
-                const auto res = flash_firmware_(true, /*force=*/false);
+                const auto res = flash_firmware_(/*force=*/false);
                 bool ok = false;
                 if (const auto it = res.find("ok"); it != res.end()) {
                     if (const auto* b = it->second.get<bool>()) {
@@ -582,30 +582,14 @@ ProtoStruct YaskawaArm::do_command(const ProtoStruct& command) {
         return firmware_status_();
     }
 
-    const auto cmd_it = command.find("flash_firmware");
-    if (cmd_it == command.end()) {
+    if (command.find("flash_firmware") == command.end()) {
         return ProtoStruct{};  // no recognized command
     }
 
-    // Options: {"reboot": <bool=true>, "force": <bool=false>}. Without force, a controller already
-    // running this firmware (running build_id == the .out's .version) is left untouched (RSDK-14150).
-    bool reboot = true;
-    bool force = false;
-    if (const auto* opts = cmd_it->second.get<ProtoStruct>()) {
-        if (const auto opt_it = opts->find("reboot"); opt_it != opts->end()) {
-            if (const auto* b = opt_it->second.get<bool>()) {
-                reboot = *b;
-            }
-        }
-        if (const auto opt_it = opts->find("force"); opt_it != opts->end()) {
-            if (const auto* b = opt_it->second.get<bool>()) {
-                force = *b;
-            }
-        }
-    }
-
+    // An explicit flash_firmware do_command is a deliberate operator action, so always force the
+    // upload (skip the version gate) and always reboot. The version-gated path is flash_on_start.
     const std::unique_lock wlock{config_mutex_};
-    return flash_firmware_(reboot, force);
+    return flash_firmware_(/*force=*/true);
 }
 
 std::optional<std::string> YaskawaArm::expected_build_id_(const std::filesystem::path& firmware_path) {
@@ -670,7 +654,7 @@ std::optional<std::filesystem::path> YaskawaArm::resolve_firmware_path_() const 
     return std::nullopt;
 }
 
-ProtoStruct YaskawaArm::flash_firmware_(bool reboot, bool force) {
+ProtoStruct YaskawaArm::flash_firmware_(bool force) {
     using viam::sdk::ProtoValue;
     ProtoStruct resp;
 
@@ -708,7 +692,7 @@ ProtoStruct YaskawaArm::flash_firmware_(bool reboot, bool force) {
     }
 
     VIAM_SDK_LOG(info) << "flash_firmware: " << bytes.size() << " bytes as '" << dest << "' to " << host << ":"
-                       << MotoPlusFlasher::k_default_port << " (reboot=" << (reboot ? "yes" : "no") << ")";
+                       << MotoPlusFlasher::k_default_port;
 
     // Quiesce the FSM: stops the heartbeat and the auto-recovery path that would call
     // turn_servo_power_on() and fight the servos-off precondition.
@@ -731,7 +715,7 @@ ProtoStruct YaskawaArm::flash_firmware_(bool reboot, bool force) {
         return resp;
     }
 
-    const auto dl = flasher.download_app(dest, bytes, reboot, std::chrono::seconds{120});
+    const auto dl = flasher.download_app(dest, bytes, /*reboot=*/true, std::chrono::seconds{120});
     VIAM_SDK_LOG(info) << "flash_firmware: download -> " << dl.detail;
     resp["download_detail"] = ProtoValue(dl.detail);
 
@@ -748,9 +732,7 @@ ProtoStruct YaskawaArm::flash_firmware_(bool reboot, bool force) {
     // in the background; do NOT block here waiting for `ready` — that would hold config_mutex_ for
     // the whole reboot and risk the do_command gRPC deadline.
     robot_->connect();
-    if (reboot) {
-        resp["note"] = ProtoValue(std::string("controller rebooting; the module will reconnect in the background"));
-    }
+    resp["note"] = ProtoValue(std::string("controller rebooting; the module will reconnect in the background"));
     return resp;
 }
 

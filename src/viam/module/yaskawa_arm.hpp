@@ -108,7 +108,7 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     // Flash the configured firmware to the controller. Precondition: caller holds config_mutex_
     // (do_command), or the object is not yet shared (configure_ at startup). Tears down and
     // rebuilds the FSM connection.
-    ProtoStruct flash_firmware_(bool reboot, bool force);
+    ProtoStruct flash_firmware_(bool force);
 
     // Resolve which firmware to flash: the configured `firmware_path` if set, otherwise the
     // firmware bundled in the module tarball (if present). std::nullopt if neither is available.
