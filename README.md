@@ -37,6 +37,9 @@ The following attributes are available for `viam:yaskawa-robots` arms:
 | `enable_auto_error_recovery` | bool | Optional | When true, the driver automatically calls `reset_errors` to clear software errors so the arm can recover without operator intervention. Set to false if you want errors to remain visible on the pendant for inspection before they're cleared. (Move requests will still trigger error recovery as part of waking the arm — this only gates the passive background path.) **Default true** |
 | `telemetry_output_path` | string | Optional | Path for writing telemetry data files. **Default: VIAM_MODULE_DATA environment variable** |
 | `group_index` | int | Optional | Control group index on the Yaskawa controller that this arm represents (see below). **Default 0** |
+| `firmware_path` | string | Optional | **Dev only.** Absolute path (on the machine running the module) to a MotoPlus firmware `.out` to flash, overriding the version-pinned firmware bundled in the tarball. **Default: the bundled firmware**, if present. See [Firmware Flashing](#firmware-flashing). |
+| `firmware_dest_name` | string | Optional | **Dev only.** Filename to store the application under on the controller. **Default: the basename of the firmware being flashed** (e.g. `viammoto.out`). |
+| `flash_on_start` | bool | Optional | On every module start/reconfigure, flash the firmware **only if the controller's running build differs** from the bundled/configured one, then reboot. A flash failure is logged but does not stop the module from starting. Set **false** to disable (e.g. when testing a dev build on the controller manually). See [Firmware Flashing](#firmware-flashing). **Default true** |
 
 #### Control Groups (`group_index`)
 
@@ -119,6 +122,68 @@ First ensure that your machine is displaying as **Live** on the Viam App. Then y
 - To simply view data from and manipulate your arm, use the **CONTROL** tab of the Viam App.
 For more information, see [Control Machines](https://docs.viam.com/fleet/control/).
 - More advanced control of the arm can be achieved by using one of [Viam's client SDK libraries](https://docs.viam.com/components/arm/#control-your-arm-with-viams-client-sdk-libraries)
+
+## Firmware Flashing
+
+This module can flash the MotoPlus controller firmware (the `.out` application) over the network, replacing the Windows-only `OnlineDownload.exe`.
+
+**Production:** the module bundles a firmware `.out` **version-pinned in its tarball** — a module release packages whatever version is tagged in the `Makefile`, coupling the controller firmware to the driver release. With `flash_on_start` (default **true**), the module flashes that bundled firmware on start **only if the controller's running build differs**, keeping the controller in sync with the driver automatically. No firmware config is needed.
+
+**Development only:** to try a different `.out` (e.g. a local controller build) without a module release, point `firmware_path` at it **on the machine running the module** (not your laptop) — this overrides the bundled firmware — and/or trigger an on-demand flash with the `flash_firmware` [DoCommand](https://docs.viam.com/dev/reference/apis/components/arm/#docommand). These knobs are meant for dev work; deployments should rely on the bundled, version-pinned firmware. If `firmware_path` is unset and no bundled firmware is present (e.g. a local build that skipped `make get-firmware`), flashing is skipped with a warning.
+
+### Prerequisites (on the controller)
+
+1. **Servo power OFF** and any **HOLD released** on the pendant. If servos are on, flashing fails with `rc=0x2010`.
+2. First time only: initialize the MotoPlus Temporary File in **Maintenance mode**, and set parameter **`S4C1084 = 1`**.
+3. Controller firmware **YAS4.12.00-00 or newer** (YRC1000).
+
+### `flash_firmware` DoCommand
+
+```json
+{ "flash_firmware": {} }
+```
+
+**Dev only** — deployments rely on the version-gated `flash_on_start`; this is for on-demand flashing during development. An explicit `flash_firmware` is a deliberate operator action, so it **always flashes** (no version gate) and **always reboots** — use it to force a (re)install regardless of the controller's current build.
+
+The command deletes the existing app, uploads the firmware (`firmware_path` if set, otherwise the bundled firmware), and tells the controller to reboot. It returns once the upload completes (a few seconds); the controller then reboots and the module **reconnects in the background** (the arm is unavailable until it does). The response is a struct:
+
+| Field | Meaning |
+| ----- | ------- |
+| `ok` | `true` if the download succeeded |
+| `expected_id` / `running_id` | The firmware's build id vs the controller's reported build id |
+| `download_detail` / `delete_detail` | Raw controller responses |
+| `error` | Populated on failure (e.g. the servos-off instruction for `rc=0x2010`) |
+| `note` | Rebooting/reconnecting status |
+
+### `firmware_status` DoCommand
+
+Read-only version check — no flashing:
+
+```json
+{ "firmware_status": {} }
+```
+Returns `{ "expected_id": "<firmware .version>", "running_id": "<controller build id>", "in_sync": true|false }`.
+
+### `flash_on_start`
+
+`flash_on_start` is **true by default**. It runs **in the background** (it does not block module startup or reconfigure) and **waits for the controller to connect** before comparing versions, then compares the controller's reported build id (`MSG_CAPABILITIES`) against the bundled/configured firmware's `.version` sidecar and flashes **only if they differ** (then reboots). If the running build can't be determined — pre-v7 firmware, an unstamped (`"unknown"`) build, or a missing `.version` — it flashes to be safe. A controller too old to speak the module's protocol can't complete the handshake, but that **protocol mismatch is detected and treated as out-of-date, so it is flashed** (this is the main way a stale controller self-heals). Only a controller that is genuinely unreachable is skipped. A failure is logged and does not prevent the module from starting. Set `"flash_on_start": false` to disable (e.g. when manually testing a dev build on the controller).
+
+Only the arm on the **primary group** (`group_index` 0, the default) runs this check, so multiple arms sharing one controller don't flash concurrently.
+
+Since the bundled firmware is the default, the default-on flash needs no extra config; an explicit `firmware_path` overrides which `.out` is used:
+
+```json
+{
+    "host": "10.1.10.84",
+    "speed_rad_per_sec": 2.09,
+    "acceleration_rad_per_sec2": 0.14,
+    "flash_on_start": false
+}
+```
+
+### Multiple arms on one controller
+
+Firmware is per-**controller**, but these attributes are per-**arm**. `flash_on_start` runs only on the arm at `group_index` 0 (see [Control Groups](#control-groups-group_index)), so it's safe to leave it at its default across several arms sharing a `host` — only the primary group's arm flashes. If you set a dev-only `firmware_path`, set it on that primary-group arm (the others are ignored for flashing). A flash reboots the whole controller, so **every** arm on that host disconnects and reconnects during it.
 
 ## Building and Running
 

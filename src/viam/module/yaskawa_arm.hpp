@@ -1,10 +1,14 @@
 #pragma once
 
+#include <atomic>
 #include <boost/asio/io_context.hpp>
 #include <filesystem>
 #include <list>
 #include <memory>
+#include <optional>
 #include <shared_mutex>
+#include <stop_token>
+#include <string>
 
 #include <Eigen/Core>
 #include <thread>
@@ -103,6 +107,30 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
    private:
     void configure_(const Dependencies& deps, const ResourceConfig& config);
 
+    // Flash the configured firmware to the controller. Precondition: caller holds config_mutex_
+    // (do_command), or the object is not yet shared (configure_ at startup). Tears down and
+    // rebuilds the FSM connection.
+    ProtoStruct flash_firmware_(bool force);
+
+    // Resolve which firmware to flash: the configured `firmware_path` if set, otherwise the
+    // firmware bundled in the module tarball (if present). std::nullopt if neither is available.
+    std::optional<std::filesystem::path> resolve_firmware_path_() const;
+
+    // Firmware version-sync (RSDK-14150). expected = the `.version` sidecar next to the resolved
+    // firmware; running = the controller's reported capabilities build_id (with a bounded wait for
+    // the connection). firmware_status_ reports both without flashing.
+    static std::optional<std::string> expected_build_id_(const std::filesystem::path& firmware_path);
+    std::optional<std::string> running_build_id_(std::chrono::seconds timeout) const;
+    ProtoStruct firmware_status_();
+
+    // flash_on_start (default on): run the version-gated flash in the background. Deferred so it
+    // doesn't block configure_/startup, and so the build-id compare waits for the controller to
+    // actually connect (a pre-connect query reports "unknown" and would trigger a needless flash).
+    // Only the primary group (group_index_ == 0) runs it, so multiple arms sharing one controller
+    // don't flash concurrently.
+    void start_flash_on_start_();
+    void flash_on_start_task_(const std::stop_token& stop);
+
     template <template <typename> typename lock_type>
     void check_configured_(const lock_type<std::shared_mutex>&);
 
@@ -138,4 +166,15 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     boost::asio::io_context& io_context_;
     std::filesystem::path resource_root_;
     std::string telemetry_output_path_;
+
+    // Firmware flashing (do_command "flash_firmware"): path to the MotoPlus .out on the host and
+    // the optional on-controller name (defaults to the file's basename).
+    std::optional<std::string> firmware_path_;
+    std::optional<std::string> firmware_dest_name_;
+
+    // Background flash_on_start task. `in_flight` guards against stacking a second task across
+    // reconfigures; the thread is declared last so it is joined before the members it uses (robot_,
+    // config_mutex_) are destroyed.
+    std::atomic<bool> flash_on_start_in_flight_{false};
+    std::jthread flash_on_start_thread_;
 };

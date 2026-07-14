@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <boost/asio/io_context.hpp>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <exception>
@@ -34,6 +35,7 @@
 #include <boost/range/adaptor/transformed.hpp>
 #include <boost/range/algorithm.hpp>
 
+#include <viam/lib/motoplus_flasher.hpp>
 #include <viam/lib/robot_socket.hpp>
 #include <viam/lib/scope_guard.hpp>
 #include <viam/sdk/common/pose.hpp>
@@ -82,6 +84,11 @@ namespace {
 constexpr double k_min_sampling_freq_hz = 1.0;
 constexpr double k_max_sampling_freq_hz = 250.0;
 constexpr double k_default_min_timestep_sec = 1e-2;
+
+// Firmware bundled in the module tarball, relative to resource_root_. Installed next to the
+// kinematics by CMakeLists.txt (`make get-firmware` fetches it from GCS pre-build). Used as the
+// default when `firmware_path` is unset. Local builds that skip get-firmware won't have it.
+constexpr char k_packaged_firmware_relpath[] = "firmware/viammoto.out";
 
 xt::xarray<double> eigen_waypoints_to_xarray(const std::list<Eigen::VectorXd>& waypoints) {
     if (waypoints.empty()) {
@@ -330,6 +337,10 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     }
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
 
+    // Firmware flashing config (used by do_command "flash_firmware"; see MotoPlusFlasher).
+    firmware_path_ = find_config_attribute<std::string>(config, "firmware_path");
+    firmware_dest_name_ = find_config_attribute<std::string>(config, "firmware_dest_name");
+
     // Get telemetry output path from config or fall back to VIAM_MODULE_DATA
     telemetry_output_path_ = [&] {
         auto path = find_config_attribute<std::string>(config, "telemetry_output_path");
@@ -371,6 +382,12 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     collinearization_ratio_ = find_config_attribute<double>(config, "collinearization_ratio");
     segmentation_threshold_rad_ =
         find_config_attribute<double>(config, "segmentation_threshold_rad").value_or(k_default_segmentation_threshold);
+
+    // Optionally flash the controller firmware on startup. Version-gated (RSDK-14150) and run in the
+    // background so it neither blocks configure_ nor races the FSM connect; see start_flash_on_start_.
+    if (find_config_attribute<bool>(config, "flash_on_start").value_or(true)) {
+        start_flash_on_start_();
+    }
 
     // YaskawaController spins up its FSM in the constructor; the resource is up immediately,
     // and the FSM connects (and reconnects) in the background.
@@ -538,8 +555,257 @@ void YaskawaArm::stop(const ProtoStruct&) {
     }
 }
 
-ProtoStruct YaskawaArm::do_command(const ProtoStruct&) {
-    ProtoStruct resp = ProtoStruct{};
+ProtoStruct YaskawaArm::do_command(const ProtoStruct& command) {
+    // Read-only version check: report running vs expected build id, no flashing.
+    if (command.find("firmware_status") != command.end()) {
+        const std::shared_lock rlock{config_mutex_};
+        return firmware_status_();
+    }
+
+    if (command.find("flash_firmware") == command.end()) {
+        return ProtoStruct{};  // no recognized command
+    }
+
+    // An explicit flash_firmware do_command is a deliberate operator action, so always force the
+    // upload (skip the version gate) and always reboot. The version-gated path is flash_on_start.
+    const std::unique_lock wlock{config_mutex_};
+    return flash_firmware_(/*force=*/true);
+}
+
+std::optional<std::string> YaskawaArm::expected_build_id_(const std::filesystem::path& firmware_path) {
+    std::ifstream f(firmware_path.string() + ".version", std::ios::binary);
+    if (!f) {
+        return std::nullopt;
+    }
+    std::string id((std::istreambuf_iterator<char>(f)), {});
+    const auto not_space = [](unsigned char c) { return std::isspace(c) == 0; };
+    id.erase(id.begin(), std::find_if(id.begin(), id.end(), not_space));
+    id.erase(std::find_if(id.rbegin(), id.rend(), not_space).base(), id.end());
+    if (id.empty() || id == "unknown") {  // unstamped -> can't verify, force a flash
+        return std::nullopt;
+    }
+    return id;
+}
+
+std::optional<std::string> YaskawaArm::running_build_id_(std::chrono::seconds timeout) const {
+    using namespace std::chrono_literals;
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    for (;;) {
+        try {
+            const auto caps = robot_->get_capabilities();
+            // Empty = pre-v7 firmware (no build_id field); "unknown" = a build that skipped the
+            // git-describe stamp. Both mean we can't identify the running build -> treat as unknown.
+            if (caps.build_id.empty() || caps.build_id == "unknown") {
+                return std::nullopt;
+            }
+            return caps.build_id;
+        } catch (const std::exception&) {
+            if (std::chrono::steady_clock::now() >= deadline) {
+                return std::nullopt;  // couldn't reach the controller in time
+            }
+            std::this_thread::sleep_for(1s);
+        }
+    }
+}
+
+ProtoStruct YaskawaArm::firmware_status_() {
+    using viam::sdk::ProtoValue;
+    ProtoStruct resp;
+    const auto fw = resolve_firmware_path_();
+    const std::optional<std::string> expected = fw ? expected_build_id_(*fw) : std::optional<std::string>{};
+    const auto running = running_build_id_(std::chrono::seconds{5});
+    resp["expected_id"] = ProtoValue(expected.value_or(""));
+    resp["running_id"] = ProtoValue(running.value_or(""));
+    resp["in_sync"] = ProtoValue(expected && running && *expected == *running);
+    return resp;
+}
+
+std::optional<std::filesystem::path> YaskawaArm::resolve_firmware_path_() const {
+    if (firmware_path_) {
+        return std::filesystem::path{*firmware_path_};
+    }
+    // Fall back to the firmware bundled in the tarball. Only use it if it actually exists;
+    // local builds that skip `make get-firmware` won't have it.
+    auto packaged = resource_root_ / k_packaged_firmware_relpath;
+    std::error_code ec;
+    if (std::filesystem::exists(packaged, ec)) {
+        return packaged;
+    }
+    return std::nullopt;
+}
+
+void YaskawaArm::start_flash_on_start_() {
+    // A controller is shared across the arms of its groups, so only the primary group flashes;
+    // otherwise every arm on the box would race to flash the same firmware.
+    if (group_index_ != 0) {
+        VIAM_SDK_LOG(info) << "flash_on_start: skipping on non-primary group " << group_index_
+                           << " (the primary group's arm handles flashing)";
+        return;
+    }
+    const auto fw_path = resolve_firmware_path_();
+    if (!fw_path) {
+        VIAM_SDK_LOG(warn) << "flash_on_start enabled but no firmware available "
+                              "(`firmware_path` unset and no packaged firmware); skipping";
+        return;
+    }
+    // Don't stack tasks across reconfigures: if one is still in flight, let it finish.
+    bool expected = false;
+    if (!flash_on_start_in_flight_.compare_exchange_strong(expected, true)) {
+        VIAM_SDK_LOG(info) << "flash_on_start: a firmware check is already in progress; skipping";
+        return;
+    }
+    VIAM_SDK_LOG(info) << "flash_on_start: will check controller firmware against " << fw_path->string() << " once the controller connects";
+    // Assigning over a previous jthread joins it first; that task has finished (in_flight was false),
+    // so the join is immediate.
+    flash_on_start_thread_ = std::jthread([this](const std::stop_token& stop) { flash_on_start_task_(stop); });
+}
+
+void YaskawaArm::flash_on_start_task_(const std::stop_token& stop) {
+    const auto clear_in_flight = make_scope_guard([this] { flash_on_start_in_flight_ = false; });
+
+    // Snapshot the controller so the (lock-free) wait below can't race a reconfigure swapping robot_.
+    std::shared_ptr<YaskawaController> robot;
+    {
+        const std::shared_lock rlock{config_mutex_};
+        robot = robot_;
+    }
+    if (!robot) {
+        return;
+    }
+
+    // Wait until we can make a decision: either the controller connects (then compare build ids), or
+    // it proves reachable-but-protocol-mismatched (an out-of-date controller that can't complete the
+    // handshake -- we can't read its build, but the mismatch means it's out of date, so flash). A
+    // pre-connect build-id query reports "unknown" and would flash needlessly, hence the wait. A
+    // controller that never does either (unreachable/off) is skipped. Bounded; abort on shutdown.
+    constexpr auto k_connect_timeout = std::chrono::seconds{120};
+    const auto deadline = std::chrono::steady_clock::now() + k_connect_timeout;
+    while (!stop.stop_requested() && robot->is_disconnected() && !robot->controller_protocol_mismatch() &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{500});
+    }
+    if (stop.stop_requested()) {
+        return;
+    }
+    const bool mismatch = robot->controller_protocol_mismatch();
+    if (robot->is_disconnected() && !mismatch) {
+        VIAM_SDK_LOG(warn) << "flash_on_start: controller did not connect within " << k_connect_timeout.count()
+                           << "s and no protocol mismatch was detected; skipping firmware check";
+        return;
+    }
+
+    // Compare + flash under the config lock (flash_firmware_ tears down and rebuilds the connection).
+    // On a protocol mismatch we can't read the running build to compare and the controller is
+    // definitely out of date, so force the flash; when connected, let the version gate decide.
+    const std::unique_lock wlock{config_mutex_};
+    if (stop.stop_requested()) {
+        return;
+    }
+    if (mismatch) {
+        VIAM_SDK_LOG(info) << "flash_on_start: controller protocol mismatch detected; flashing to update firmware";
+    }
+    try {
+        const auto res = flash_firmware_(/*force=*/mismatch);
+        bool ok = false;
+        bool skipped = false;
+        if (const auto it = res.find("ok"); it != res.end()) {
+            if (const auto* b = it->second.get<bool>()) {
+                ok = *b;
+            }
+        }
+        if (const auto it = res.find("skipped"); it != res.end()) {
+            if (const auto* b = it->second.get<bool>()) {
+                skipped = *b;
+            }
+        }
+        VIAM_SDK_LOG(info) << "flash_on_start result: ok=" << ok << " skipped=" << skipped;
+    } catch (const std::exception& e) {
+        VIAM_SDK_LOG(warn) << "flash_on_start failed: " << e.what();
+    }
+}
+
+ProtoStruct YaskawaArm::flash_firmware_(bool force) {
+    using viam::sdk::ProtoValue;
+    ProtoStruct resp;
+
+    const auto fw_path_opt = resolve_firmware_path_();
+    if (!fw_path_opt) {
+        throw std::invalid_argument("flash_firmware: no firmware available (`firmware_path` unset and no packaged firmware found)");
+    }
+    const auto& fw_path = *fw_path_opt;
+    std::ifstream fw_file(fw_path, std::ios::binary);
+    if (!fw_file) {
+        throw std::runtime_error("flash_firmware: cannot open firmware file: " + fw_path.string());
+    }
+    const std::vector<char> bytes(std::istreambuf_iterator<char>(fw_file), {});
+    if (fw_file.bad()) {
+        throw std::runtime_error("flash_firmware: error reading firmware file: " + fw_path.string());
+    }
+    const std::string dest = firmware_dest_name_.value_or(fw_path.filename().string());
+    const std::string host = robot_->host();
+
+    // Version-sync gate (RSDK-14150): if the controller already runs this build, skip the flash.
+    // Query the running id before we tear the connection down. Unknown running/expected id (pre-v7
+    // firmware, unreachable controller, or missing .version) is treated as out-of-sync -> flash.
+    // On a protocol mismatch the build id is unreadable (parse_header rejects the reply) and the
+    // FSM is mid-reconnect, so skip the query -- it would only race the FSM and return nothing.
+    const auto expected = expected_build_id_(fw_path);
+    const bool cannot_query = robot_->controller_protocol_mismatch();
+    const auto running = cannot_query ? std::optional<std::string>{} : running_build_id_(std::chrono::seconds{15});
+    resp["expected_id"] = ProtoValue(expected.value_or(""));
+    resp["running_id"] = ProtoValue(running.value_or(""));
+    VIAM_SDK_LOG(info) << "flash_firmware: controller build=" << (running ? *running : "unknown")
+                       << ", firmware build=" << (expected ? *expected : "unknown") << (force ? " (force)" : "");
+    if (!force && expected && running && *expected == *running) {
+        resp["ok"] = ProtoValue(true);
+        resp["skipped"] = ProtoValue(true);
+        resp["note"] = ProtoValue("controller already running build " + *running + " (pass force to reflash)");
+        VIAM_SDK_LOG(info) << "flash_firmware: controller already at build " << *running << "; skipping";
+        return resp;
+    }
+
+    VIAM_SDK_LOG(info) << "flash_firmware: " << bytes.size() << " bytes as '" << dest << "' to " << host << ":"
+                       << MotoPlusFlasher::k_default_port;
+
+    // Quiesce the FSM: stops the heartbeat and the auto-recovery path that would call
+    // turn_servo_power_on() and fight the servos-off precondition.
+    robot_->disconnect();
+
+    static constexpr char k_servos_on_msg[] =
+        "existing app still active (rc=0x2010) - turn SERVO POWER OFF and release HOLD on the pendant, then retry";
+
+    MotoPlusFlasher flasher{host};
+    const auto del = flasher.delete_app(dest);  // rc=0x3902 ("nothing to remove") is benign
+    VIAM_SDK_LOG(info) << "flash_firmware: delete -> " << del.detail;
+    resp["delete_detail"] = ProtoValue(del.detail);
+
+    // rc=0x2010 on delete means the app is still active (servo power on) and can't be replaced.
+    // Don't waste a full upload — the download would fail too. Tell the operator to drop servos.
+    if (del.servos_on) {
+        robot_->connect();  // restore the connection we tore down
+        resp["ok"] = ProtoValue(false);
+        resp["error"] = ProtoValue(std::string(k_servos_on_msg));
+        return resp;
+    }
+
+    const auto dl = flasher.download_app(dest, bytes, /*reboot=*/true, std::chrono::seconds{120});
+    VIAM_SDK_LOG(info) << "flash_firmware: download -> " << dl.detail;
+    resp["download_detail"] = ProtoValue(dl.detail);
+
+    if (!dl.ok) {
+        robot_->connect();  // restore the connection we tore down
+        resp["ok"] = ProtoValue(false);
+        resp["error"] = ProtoValue(dl.servos_on ? std::string(k_servos_on_msg) : std::string("download failed: " + dl.detail));
+        return resp;
+    }
+
+    resp["ok"] = ProtoValue(true);
+
+    // A successful DOWNLOAD (reboot verb) reboots the controller. Restart the FSM so it reconnects
+    // in the background; do NOT block here waiting for `ready` — that would hold config_mutex_ for
+    // the whole reboot and risk the do_command gRPC deadline.
+    robot_->connect();
+    resp["note"] = ProtoValue(std::string("controller rebooting; the module will reconnect in the background"));
     return resp;
 }
 
@@ -722,6 +988,16 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
 }
 
 YaskawaArm::~YaskawaArm() {
+    // Stop the background flash_on_start task before tearing down the controller it uses.
+    // request_stop() only breaks the task's wait-for-connect loop; it does NOT interrupt an
+    // in-progress flash (the flasher's delete/download are synchronous, bounded by their own
+    // ~120s timeout). So if teardown races an active flash, this join blocks until the flash
+    // finishes -- intentional: interrupting a firmware write mid-download would leave the
+    // controller with no valid app (delete has already run).
+    if (flash_on_start_thread_.joinable()) {
+        flash_on_start_thread_.request_stop();
+        flash_on_start_thread_.join();
+    }
     try {
         // robot_ is only created partway through configure_() (after resource_root_ resolution,
         // host validation, etc.). If construction threw before that point, the arm is destroyed

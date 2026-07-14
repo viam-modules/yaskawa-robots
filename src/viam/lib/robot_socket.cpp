@@ -285,6 +285,13 @@ CapabilitiesMessage::CapabilitiesMessage(const Message& msg) {
         groups[i].base_axis_motion.assign(cap->base_axis_motion, cap->base_axis_motion + cap->num_axes);
         groups[i].interpolation_period_us = cap->interpolation_period_us;
     }
+
+    // build_id (PROTOCOL_VERSION 7+) follows the fixed groups[MAX_GROUPS] array. Pre-v7 firmware
+    // sends a shorter payload without it, so leave build_id empty (caller treats that as unknown).
+    if (msg.payload.size() >= sizeof(capabilities_payload_t)) {
+        const auto* full = reinterpret_cast<const capabilities_payload_t*>(msg.payload.data());
+        build_id.assign(full->build_id, strnlen(full->build_id, sizeof(full->build_id)));
+    }
 }
 
 Message::Message(message_type_t type, std::vector<uint8_t>&& data) : payload(std::move(data)) {
@@ -465,7 +472,7 @@ protocol_header_t RobotSocketBase::parse_header(const std::vector<uint8_t>& buff
         throw std::runtime_error("Invalid message: wrong magic number");
     }
     if (header.version != PROTOCOL_VERSION) {
-        throw std::runtime_error(std::format(
+        throw protocol_version_mismatch_error(std::format(
             "protocol version mismatch: client={} controller={} — update controller firmware", PROTOCOL_VERSION, header.version));
     }
     return header;
@@ -865,10 +872,10 @@ void YaskawaController::establish_connections_(std::stop_token token) {
     if (udp_socket_) {
         std::exchange(udp_socket_, {})->disconnect();
     }
-    if (tcp_socket_ && tcp_socket_->is_connected()) {
+    if (tcp_socket_) {
         std::exchange(tcp_socket_, {})->disconnect();
-        tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_, tcp_port_);
     }
+    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_, tcp_port_);
 
     try {
         check_cancel();
@@ -879,8 +886,18 @@ void YaskawaController::establish_connections_(std::stop_token token) {
         tcp_future.get();
 
         check_cancel();
-        // Capabilities handshake: verify protocol version and discover controller groups
-        auto caps = get_capabilities();
+        // Capabilities handshake: verify protocol version and discover controller groups. A version
+        // mismatch means the controller is reachable but its firmware is out of date; record that so
+        // the flash-on-start task can distinguish it from an unreachable controller and reflash.
+        auto caps = [&] {
+            try {
+                return get_capabilities();
+            } catch (const protocol_version_mismatch_error&) {
+                controller_protocol_mismatch_.store(true, std::memory_order_release);
+                throw;
+            }
+        }();
+        controller_protocol_mismatch_.store(false, std::memory_order_release);
         LOGGING(info) << "controller capabilities: protocol_version=" << static_cast<int>(caps.protocol_version)
                       << " num_groups=" << static_cast<int>(caps.num_groups);
         for (const auto& grp : caps.groups) {
@@ -942,6 +959,7 @@ std::future<void> YaskawaController::connect() {
 
 void YaskawaController::disconnect() {
     LOGGING(info) << "Yaskawa Controller disconnecting";
+    controller_protocol_mismatch_.store(false, std::memory_order_release);
     // Reset FSM first so its worker thread joins before we tear down the sockets it talks to.
     fsm_.reset();
     if (udp_socket_) {
