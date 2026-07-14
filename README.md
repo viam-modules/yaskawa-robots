@@ -166,7 +166,9 @@ Returns `{ "expected_id": "<firmware .version>", "running_id": "<controller buil
 
 ### `flash_on_start`
 
-`flash_on_start` is **true by default**: on every module start/reconfigure it compares the controller's reported build id (`MSG_CAPABILITIES`) against the bundled/configured firmware's `.version` sidecar and flashes **only if they differ** (then reboots). If the running build can't be determined — pre-v7 firmware, an unstamped (`"unknown"`) build, an unreachable controller, or a missing `.version` — it flashes to be safe. A failure is logged and does not prevent the module from starting. Set `"flash_on_start": false` to disable (e.g. when manually testing a dev build on the controller).
+`flash_on_start` is **true by default**. It runs **in the background** (it does not block module startup or reconfigure) and **waits for the controller to connect** before comparing versions, then compares the controller's reported build id (`MSG_CAPABILITIES`) against the bundled/configured firmware's `.version` sidecar and flashes **only if they differ** (then reboots). If the running build can't be determined — pre-v7 firmware, an unstamped (`"unknown"`) build, or a missing `.version` — it flashes to be safe; if the controller never connects, the check is skipped. A failure is logged and does not prevent the module from starting. Set `"flash_on_start": false` to disable (e.g. when manually testing a dev build on the controller).
+
+Only the arm on the **primary group** (`group_index` 0, the default) runs this check, so multiple arms sharing one controller don't flash concurrently.
 
 Since the bundled firmware is the default, the default-on flash needs no extra config; an explicit `firmware_path` overrides which `.out` is used:
 
@@ -181,7 +183,7 @@ Since the bundled firmware is the default, the default-on flash needs no extra c
 
 ### Multiple arms on one controller
 
-Firmware is per-**controller**, but these attributes are per-**arm**. If several arm components share a `host` (see [Control Groups](#control-groups-group_index)), set the firmware attributes (`firmware_path`, `firmware_dest_name`, `flash_on_start`) on **exactly one** of them — or keep them identical across all. Conflicting values are not currently reconciled. A flash reboots the whole controller, so **every** arm on that host disconnects and reconnects during it.
+Firmware is per-**controller**, but these attributes are per-**arm**. `flash_on_start` runs only on the arm at `group_index` 0 (see [Control Groups](#control-groups-group_index)), so it's safe to leave it at its default across several arms sharing a `host` — only the primary group's arm flashes. If you set a dev-only `firmware_path`, set it on that primary-group arm (the others are ignored for flashing). A flash reboots the whole controller, so **every** arm on that host disconnects and reconnects during it.
 
 ## Building and Running
 

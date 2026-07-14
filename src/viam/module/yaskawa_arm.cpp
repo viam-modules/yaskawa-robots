@@ -383,30 +383,10 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     segmentation_threshold_rad_ =
         find_config_attribute<double>(config, "segmentation_threshold_rad").value_or(k_default_segmentation_threshold);
 
-    // Optionally flash the controller firmware on startup. Version-gated (RSDK-14150): flash_firmware_
-    // skips when the controller already runs this build, so this only flashes on a mismatch (or when
-    // the running build can't be determined). A failure here must not abort module startup, so log
-    // and continue.
+    // Optionally flash the controller firmware on startup. Version-gated (RSDK-14150) and run in the
+    // background so it neither blocks configure_ nor races the FSM connect; see start_flash_on_start_.
     if (find_config_attribute<bool>(config, "flash_on_start").value_or(true)) {
-        const auto fw_path = resolve_firmware_path_();
-        if (!fw_path) {
-            VIAM_SDK_LOG(warn) << "flash_on_start is set but no firmware available "
-                                  "(`firmware_path` unset and no packaged firmware); skipping";
-        } else {
-            VIAM_SDK_LOG(info) << "flash_on_start: checking controller firmware against " << fw_path->string();
-            try {
-                const auto res = flash_firmware_(/*force=*/false);
-                bool ok = false;
-                if (const auto it = res.find("ok"); it != res.end()) {
-                    if (const auto* b = it->second.get<bool>()) {
-                        ok = *b;
-                    }
-                }
-                VIAM_SDK_LOG(info) << "flash_on_start result: ok=" << ok;
-            } catch (const std::exception& e) {
-                VIAM_SDK_LOG(warn) << "flash_on_start failed: " << e.what();
-            }
-        }
+        start_flash_on_start_();
     }
 
     // YaskawaController spins up its FSM in the constructor; the resource is up immediately,
@@ -652,6 +632,87 @@ std::optional<std::filesystem::path> YaskawaArm::resolve_firmware_path_() const 
         return packaged;
     }
     return std::nullopt;
+}
+
+void YaskawaArm::start_flash_on_start_() {
+    // A controller is shared across the arms of its groups, so only the primary group flashes;
+    // otherwise every arm on the box would race to flash the same firmware.
+    if (group_index_ != 0) {
+        VIAM_SDK_LOG(info) << "flash_on_start: skipping on non-primary group " << group_index_
+                           << " (the primary group's arm handles flashing)";
+        return;
+    }
+    const auto fw_path = resolve_firmware_path_();
+    if (!fw_path) {
+        VIAM_SDK_LOG(warn) << "flash_on_start enabled but no firmware available "
+                              "(`firmware_path` unset and no packaged firmware); skipping";
+        return;
+    }
+    // Don't stack tasks across reconfigures: if one is still in flight, let it finish.
+    bool expected = false;
+    if (!flash_on_start_in_flight_.compare_exchange_strong(expected, true)) {
+        VIAM_SDK_LOG(info) << "flash_on_start: a firmware check is already in progress; skipping";
+        return;
+    }
+    VIAM_SDK_LOG(info) << "flash_on_start: will check controller firmware against " << fw_path->string() << " once the controller connects";
+    // Assigning over a previous jthread joins it first; that task has finished (in_flight was false),
+    // so the join is immediate.
+    flash_on_start_thread_ = std::jthread([this](const std::stop_token& stop) { flash_on_start_task_(stop); });
+}
+
+void YaskawaArm::flash_on_start_task_(const std::stop_token& stop) {
+    const auto clear_in_flight = make_scope_guard([this] { flash_on_start_in_flight_ = false; });
+
+    // Snapshot the controller so the (lock-free) wait below can't race a reconfigure swapping robot_.
+    std::shared_ptr<YaskawaController> robot;
+    {
+        const std::shared_lock rlock{config_mutex_};
+        robot = robot_;
+    }
+    if (!robot) {
+        return;
+    }
+
+    // Wait for the controller to connect so the build-id compare is meaningful: a pre-connect query
+    // reports "unknown", which would be treated as out-of-sync and flash needlessly. Bounded, and
+    // abort promptly on shutdown (the dtor requests a stop and joins).
+    constexpr auto k_connect_timeout = std::chrono::seconds{120};
+    const auto deadline = std::chrono::steady_clock::now() + k_connect_timeout;
+    while (!stop.stop_requested() && robot->is_disconnected() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds{500});
+    }
+    if (stop.stop_requested()) {
+        return;
+    }
+    if (robot->is_disconnected()) {
+        VIAM_SDK_LOG(warn) << "flash_on_start: controller did not connect within " << k_connect_timeout.count()
+                           << "s; skipping firmware check";
+        return;
+    }
+
+    // Compare + flash under the config lock (flash_firmware_ tears down and rebuilds the connection).
+    const std::unique_lock wlock{config_mutex_};
+    if (stop.stop_requested()) {
+        return;
+    }
+    try {
+        const auto res = flash_firmware_(/*force=*/false);
+        bool ok = false;
+        bool skipped = false;
+        if (const auto it = res.find("ok"); it != res.end()) {
+            if (const auto* b = it->second.get<bool>()) {
+                ok = *b;
+            }
+        }
+        if (const auto it = res.find("skipped"); it != res.end()) {
+            if (const auto* b = it->second.get<bool>()) {
+                skipped = *b;
+            }
+        }
+        VIAM_SDK_LOG(info) << "flash_on_start result: ok=" << ok << " skipped=" << skipped;
+    } catch (const std::exception& e) {
+        VIAM_SDK_LOG(warn) << "flash_on_start failed: " << e.what();
+    }
 }
 
 ProtoStruct YaskawaArm::flash_firmware_(bool force) {
@@ -915,6 +976,11 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
 }
 
 YaskawaArm::~YaskawaArm() {
+    // Stop the background flash_on_start task before tearing down the controller it uses.
+    if (flash_on_start_thread_.joinable()) {
+        flash_on_start_thread_.request_stop();
+        flash_on_start_thread_.join();
+    }
     try {
         // robot_ is only created partway through configure_() (after resource_root_ resolution,
         // host validation, etc.). If construction threw before that point, the arm is destroyed
