@@ -1,0 +1,72 @@
+name: Update pinned firmware
+
+# Keeps firmware.version in sync with the latest MotoPlus firmware released by yaskawa-controller.
+# yaskawa-controller's release-firmware.yml uploads viammoto-<git-describe>.out to the bucket and
+# overwrites a LATEST pointer object with that <git-describe>. This job reads LATEST via the same
+# read-only Workload Identity Federation the release build already uses (no stored secret), and if
+# it differs from the pinned firmware.version, opens a PR bumping the pin. The PR is same-repo, so
+# peter-evans/create-pull-request runs on the default GITHUB_TOKEN -- also no secret. (Requires the
+# repo setting "Allow GitHub Actions to create and approve pull requests".)
+#
+# Pull, not push: yaskawa-controller can't open a cross-repo PR without a stored GitHub credential,
+# so instead this polls on a schedule. Bump the cron or fire it manually via workflow_dispatch.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 13 * * *'   # daily ~13:00 UTC
+
+permissions:
+  contents: write        # push the bump branch
+  pull-requests: write   # open the PR
+  id-token: write        # Workload Identity Federation (bucket read)
+
+env:
+  FIRMWARE_BUCKET: gs://yaskawa-firmware.viam.dev
+
+jobs:
+  bump:
+    name: Bump firmware.version to latest release
+    if: github.repository_owner == 'viam-modules'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v3
+        with:
+          project_id: static-file-server-310021
+          workload_identity_provider: projects/785265540/locations/global/workloadIdentityPools/static-file-id/providers/static-file-github
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Read latest released firmware id
+        id: latest
+        run: |
+          id="$(gsutil cat "${FIRMWARE_BUCKET}/LATEST" | tr -d '[:space:]')"
+          [ -n "$id" ] || { echo "LATEST is empty" >&2; exit 1; }
+          case "$id" in *dirty*) echo "refusing dirty id '$id'" >&2; exit 1;; esac
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+      - name: Rewrite firmware.version (preserve comments)
+        run: |
+          id='${{ steps.latest.outputs.id }}'
+          cur="$(grep -v '^[[:space:]]*#' firmware.version | tr -d '[:space:]')"
+          echo "pinned='$cur' latest='$id'"
+          { grep '^[[:space:]]*#' firmware.version; printf '%s\n' "$id"; } > firmware.version.tmp
+          mv firmware.version.tmp firmware.version
+
+      # No-ops (opens no PR) when firmware.version is unchanged.
+      - name: Open bump PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: 'flash: bump pinned firmware to ${{ steps.latest.outputs.id }}'
+          branch: workflow/bump-firmware
+          delete-branch: true
+          base: main
+          add-paths: firmware.version
+          title: 'Bump pinned MotoPlus firmware to ${{ steps.latest.outputs.id }}'
+          body: |
+            Auto-generated. yaskawa-controller released firmware `${{ steps.latest.outputs.id }}`.
+
+            Bumps `firmware.version`; on build `make get-firmware` fetches
+            `viammoto-${{ steps.latest.outputs.id }}.out` and bundles it into the module.
