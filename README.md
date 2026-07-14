@@ -37,8 +37,8 @@ The following attributes are available for `viam:yaskawa-robots` arms:
 | `enable_auto_error_recovery` | bool | Optional | When true, the driver automatically calls `reset_errors` to clear software errors so the arm can recover without operator intervention. Set to false if you want errors to remain visible on the pendant for inspection before they're cleared. (Move requests will still trigger error recovery as part of waking the arm — this only gates the passive background path.) **Default true** |
 | `telemetry_output_path` | string | Optional | Path for writing telemetry data files. **Default: VIAM_MODULE_DATA environment variable** |
 | `group_index` | int | Optional | Control group index on the Yaskawa controller that this arm represents (see below). **Default 0** |
-| `firmware_path` | string | Optional | Absolute path (on the machine running the module) to the MotoPlus firmware `.out` to flash to the controller. **Default: the firmware bundled in the module tarball**, if present. Overrides the bundled firmware. See [Firmware Flashing](#firmware-flashing). |
-| `firmware_dest_name` | string | Optional | Filename to store the application under on the controller. **Default: the basename of the firmware being flashed** (e.g. `viammoto.out`). |
+| `firmware_path` | string | Optional | **Dev only.** Absolute path (on the machine running the module) to a MotoPlus firmware `.out` to flash, overriding the version-pinned firmware bundled in the tarball. **Default: the bundled firmware**, if present. See [Firmware Flashing](#firmware-flashing). |
+| `firmware_dest_name` | string | Optional | **Dev only.** Filename to store the application under on the controller. **Default: the basename of the firmware being flashed** (e.g. `viammoto.out`). |
 | `flash_on_start` | bool | Optional | On every module start/reconfigure, flash the firmware **only if the controller's running build differs** from the bundled/configured one, then reboot. A flash failure is logged but does not stop the module from starting. Set **false** to disable (e.g. when testing a dev build on the controller manually). See [Firmware Flashing](#firmware-flashing). **Default true** |
 
 #### Control Groups (`group_index`)
@@ -125,9 +125,11 @@ For more information, see [Control Machines](https://docs.viam.com/fleet/control
 
 ## Firmware Flashing
 
-This module can flash the MotoPlus controller firmware (the `.out` application) over the network, replacing the Windows-only `OnlineDownload.exe`. Flashing is triggered either by the `flash_firmware` [DoCommand](https://docs.viam.com/dev/reference/apis/components/arm/#docommand) or automatically at startup via `flash_on_start`.
+This module can flash the MotoPlus controller firmware (the `.out` application) over the network, replacing the Windows-only `OnlineDownload.exe`.
 
-By default the module flashes the firmware **bundled in its tarball** (built and version-pinned alongside the module). To flash a different `.out`, point `firmware_path` at it **on the machine running the module** (not your laptop); this overrides the bundled firmware. If `firmware_path` is unset and no bundled firmware is present (e.g. a local build that skipped `make get-firmware`), flashing is skipped with a warning.
+**Production:** the module bundles a firmware `.out` **version-pinned in its tarball** — a module release packages whatever version is tagged in the `Makefile`, coupling the controller firmware to the driver release. With `flash_on_start` (default **true**), the module flashes that bundled firmware on start **only if the controller's running build differs**, keeping the controller in sync with the driver automatically. No firmware config is needed.
+
+**Development only:** to try a different `.out` (e.g. a local controller build) without a module release, point `firmware_path` at it **on the machine running the module** (not your laptop) — this overrides the bundled firmware — and/or trigger an on-demand flash with the `flash_firmware` [DoCommand](https://docs.viam.com/dev/reference/apis/components/arm/#docommand). These knobs are meant for dev work; deployments should rely on the bundled, version-pinned firmware. If `firmware_path` is unset and no bundled firmware is present (e.g. a local build that skipped `make get-firmware`), flashing is skipped with a warning.
 
 ### Prerequisites (on the controller)
 
@@ -141,7 +143,7 @@ By default the module flashes the firmware **bundled in its tarball** (built and
 { "flash_firmware": {} }
 ```
 
-An explicit `flash_firmware` is a deliberate operator action, so it **always flashes** (no version gate) and **always reboots** — use it to force a (re)install regardless of the controller's current build. For the version-gated, skip-if-in-sync behavior, use [`flash_on_start`](#flash_on_start) instead.
+**Dev only** — deployments rely on the version-gated `flash_on_start`; this is for on-demand flashing during development. An explicit `flash_firmware` is a deliberate operator action, so it **always flashes** (no version gate) and **always reboots** — use it to force a (re)install regardless of the controller's current build.
 
 The command deletes the existing app, uploads the firmware (`firmware_path` if set, otherwise the bundled firmware), and tells the controller to reboot. It returns once the upload completes (a few seconds); the controller then reboots and the module **reconnects in the background** (the arm is unavailable until it does). The response is a struct:
 
