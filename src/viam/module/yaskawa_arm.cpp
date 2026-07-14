@@ -673,30 +673,39 @@ void YaskawaArm::flash_on_start_task_(const std::stop_token& stop) {
         return;
     }
 
-    // Wait for the controller to connect so the build-id compare is meaningful: a pre-connect query
-    // reports "unknown", which would be treated as out-of-sync and flash needlessly. Bounded, and
-    // abort promptly on shutdown (the dtor requests a stop and joins).
+    // Wait until we can make a decision: either the controller connects (then compare build ids), or
+    // it proves reachable-but-protocol-mismatched (an out-of-date controller that can't complete the
+    // handshake -- we can't read its build, but the mismatch means it's out of date, so flash). A
+    // pre-connect build-id query reports "unknown" and would flash needlessly, hence the wait. A
+    // controller that never does either (unreachable/off) is skipped. Bounded; abort on shutdown.
     constexpr auto k_connect_timeout = std::chrono::seconds{120};
     const auto deadline = std::chrono::steady_clock::now() + k_connect_timeout;
-    while (!stop.stop_requested() && robot->is_disconnected() && std::chrono::steady_clock::now() < deadline) {
+    while (!stop.stop_requested() && robot->is_disconnected() && !robot->controller_protocol_mismatch() &&
+           std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds{500});
     }
     if (stop.stop_requested()) {
         return;
     }
-    if (robot->is_disconnected()) {
+    const bool mismatch = robot->controller_protocol_mismatch();
+    if (robot->is_disconnected() && !mismatch) {
         VIAM_SDK_LOG(warn) << "flash_on_start: controller did not connect within " << k_connect_timeout.count()
-                           << "s; skipping firmware check";
+                           << "s and no protocol mismatch was detected; skipping firmware check";
         return;
     }
 
     // Compare + flash under the config lock (flash_firmware_ tears down and rebuilds the connection).
+    // On a protocol mismatch we can't read the running build to compare and the controller is
+    // definitely out of date, so force the flash; when connected, let the version gate decide.
     const std::unique_lock wlock{config_mutex_};
     if (stop.stop_requested()) {
         return;
     }
+    if (mismatch) {
+        VIAM_SDK_LOG(info) << "flash_on_start: controller protocol mismatch detected; flashing to update firmware";
+    }
     try {
-        const auto res = flash_firmware_(/*force=*/false);
+        const auto res = flash_firmware_(/*force=*/mismatch);
         bool ok = false;
         bool skipped = false;
         if (const auto it = res.find("ok"); it != res.end()) {
@@ -738,8 +747,10 @@ ProtoStruct YaskawaArm::flash_firmware_(bool force) {
     // Version-sync gate (RSDK-14150): if the controller already runs this build, skip the flash.
     // Query the running id before we tear the connection down. Unknown running/expected id (pre-v7
     // firmware, unreachable controller, or missing .version) is treated as out-of-sync -> flash.
+    // When forcing we flash regardless, so skip the capabilities round-trip -- that also avoids
+    // racing a reconnecting FSM for it on the protocol-mismatch flash-on-start path.
     const auto expected = expected_build_id_(fw_path);
-    const auto running = running_build_id_(std::chrono::seconds{15});
+    const auto running = force ? std::optional<std::string>{} : running_build_id_(std::chrono::seconds{15});
     resp["expected_id"] = ProtoValue(expected.value_or(""));
     resp["running_id"] = ProtoValue(running.value_or(""));
     VIAM_SDK_LOG(info) << "flash_firmware: controller build=" << (running ? *running : "unknown")

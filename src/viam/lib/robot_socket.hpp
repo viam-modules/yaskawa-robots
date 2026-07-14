@@ -327,6 +327,13 @@ struct GoalAcceptedMessage {
     GoalAcceptedMessage(const Message& msg);
 };
 
+// Thrown by parse_header when a message's protocol version doesn't match the module's
+// PROTOCOL_VERSION. Distinguished from a generic connect failure so callers can tell a
+// reachable-but-out-of-date controller (which a firmware flash fixes) from an unreachable one.
+struct protocol_version_mismatch_error : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
 class RobotSocketBase {
    public:
     RobotSocketBase(boost::asio::io_context& io_context, const std::string& host, uint16_t port)
@@ -516,6 +523,12 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     std::string describe_state() const;
     bool is_any_moving() const;
     bool is_disconnected() const;
+    // True when the last connection attempt reached the controller but failed the capabilities
+    // handshake on a protocol version mismatch (i.e. the controller firmware is out of date).
+    // Set in establish_connections_, cleared on a successful handshake and on disconnect().
+    bool controller_protocol_mismatch() const {
+        return controller_protocol_mismatch_.load(std::memory_order_acquire);
+    }
     std::future<void> enqueue_move_request(uint32_t group_index,
                                            uint32_t axes_controlled,
                                            std::vector<trajectory_point_t> samples,
@@ -614,6 +627,11 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     void validate_group_(uint32_t group_index) const;
 
     std::unique_ptr<state_> fsm_;
+
+    // Set by establish_connections_ when the capabilities handshake fails on a protocol version
+    // mismatch; cleared on a successful handshake and on disconnect(). Read lock-free by
+    // controller_protocol_mismatch() from other threads (e.g. the flash-on-start task).
+    std::atomic<bool> controller_protocol_mismatch_{false};
 
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;
