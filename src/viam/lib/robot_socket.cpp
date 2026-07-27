@@ -64,6 +64,80 @@ using namespace boost::asio;
 
 constexpr size_t k_chunk_size = 200;  // controller cannot exceed 200 points per message
 
+// ---------------------------------------------------------------
+// MoveStream
+// ---------------------------------------------------------------
+
+MoveStream::MoveStream(std::vector<trajectory_point_t> samples)
+    : pending_(std::make_move_iterator(samples.begin()), std::make_move_iterator(samples.end())), closed_{true} {}
+
+bool MoveStream::extend(const std::vector<trajectory_point_t>& points) {
+    const std::lock_guard lock{mutex_};
+    if (finished_ || closed_) {
+        return false;
+    }
+    pending_.insert(pending_.end(), points.begin(), points.end());
+    return true;
+}
+
+bool MoveStream::close() {
+    const std::lock_guard lock{mutex_};
+    if (finished_) {
+        return false;
+    }
+    closed_ = true;
+    return true;
+}
+
+void MoveStream::abort(std::string_view message) {
+    const std::lock_guard lock{mutex_};
+    closed_ = true;
+    if (!abort_reason_) {
+        abort_reason_ = std::string{message};
+    }
+}
+
+bool MoveStream::finished() const {
+    const std::lock_guard lock{mutex_};
+    return finished_;
+}
+
+std::vector<trajectory_point_t> MoveStream::take(std::size_t max_points) {
+    const std::lock_guard lock{mutex_};
+    const auto count = std::min(max_points, pending_.size());
+    std::vector<trajectory_point_t> points;
+    points.reserve(count);
+    std::move(pending_.begin(), std::next(pending_.begin(), static_cast<ptrdiff_t>(count)), std::back_inserter(points));
+    pending_.erase(pending_.begin(), std::next(pending_.begin(), static_cast<ptrdiff_t>(count)));
+    return points;
+}
+
+bool MoveStream::closed() const {
+    const std::lock_guard lock{mutex_};
+    return closed_;
+}
+
+bool MoveStream::drained() const {
+    const std::lock_guard lock{mutex_};
+    return closed_ && pending_.empty();
+}
+
+std::size_t MoveStream::pending_count() const {
+    const std::lock_guard lock{mutex_};
+    return pending_.size();
+}
+
+std::optional<std::string> MoveStream::abort_reason() const {
+    const std::lock_guard lock{mutex_};
+    return abort_reason_;
+}
+
+void MoveStream::finish() {
+    const std::lock_guard lock{mutex_};
+    finished_ = true;
+    pending_.clear();
+}
+
 /// Parse cartesian position from a protocol message
 /// Validates message type and payload size before extracting position data
 CartesianPosition::CartesianPosition(const Message& msg) {
@@ -1157,12 +1231,16 @@ GoalAcceptedMessage YaskawaController::send_goal_(uint32_t group_index,
 // own reset_errors/turn_servo_power_on/setMotionMode sequence before invoking this.
 std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_t group_index,
                                                                          uint32_t axes_controlled,
-                                                                         std::vector<trajectory_point_t> samples,
+                                                                         std::shared_ptr<MoveStream> stream,
                                                                          const std::vector<tolerance_t>& tolerance,
                                                                          double trajectory_sampling_freq,
                                                                          std::optional<RealtimeTrajectoryLogger> logger,
                                                                          std::function<bool()> async_cancel_monitor) {
-    LOGGING(debug) << "execute_trajectory: group=" << group_index << " samples=" << samples.size();
+    if (!stream) {
+        throw std::runtime_error("execute_trajectory: no trajectory stream");
+    }
+    LOGGING(debug) << "execute_trajectory: group=" << group_index << " pending=" << stream->pending_count()
+                   << " closed=" << stream->closed();
 
     validate_group_(group_index);
     if (group_index >= MAX_GROUPS) {
@@ -1176,15 +1254,24 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
     }
     LOGGING(debug) << "execute_trajectory: acquired move lock for group " << group_index;
 
-    // Scope guard clears the per-group lock on any exit path.
+    // Scope guard clears the per-group lock on any exit path, and retires the stream so a
+    // producer still feeding a streamed move learns it is over.
     // Dismissed after the monitoring thread is successfully created (which takes over cleanup responsibility).
-    ScopeGuard cleanup{[this, group_index]() { group_move_in_progress_[group_index] = false; }};
+    ScopeGuard cleanup{[this, group_index, stream]() {
+        stream->finish();
+        group_move_in_progress_[group_index] = false;
+    }};
 
-    // Send the first chunk
-    const auto first_end = std::min(k_chunk_size, samples.size());
-    const std::vector<trajectory_point_t> first_chunk(samples.begin(), std::next(samples.begin(), static_cast<ptrdiff_t>(first_end)));
+    // Send the first chunk. `staged` is the tail of what we last pulled out of the stream: points
+    // taken from it but not yet accepted by the controller. The controller needs at least two
+    // points to open a goal, so a streamed move must prime the stream before getting here.
+    auto staged = stream->take(k_chunk_size);
+    if (staged.empty()) {
+        throw std::runtime_error("execute_trajectory: trajectory stream has no points to start from");
+    }
+    const auto first_end = staged.size();
     LOGGING(debug) << "execute_trajectory: sending first chunk, group=" << group_index << " points=" << first_end;
-    auto accepted = send_goal_(group_index, axes_controlled, first_chunk, tolerance);
+    auto accepted = send_goal_(group_index, axes_controlled, staged, tolerance);
 
     // If the controller reports 0 or a value exceeding what we sent, assume the entire chunk was consumed.
     // This handles firmware that doesn't set num_trajectory_accepted (field may be uninitialized).
@@ -1194,10 +1281,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
         LOGGING(warning) << "controller reported " << raw << " points accepted (sent " << first_end << "), assuming all accepted";
         accepted_count = first_end;
     }
-    std::vector<trajectory_point_t> remaining;
-    if (accepted_count < samples.size()) {
-        remaining.assign(std::next(samples.begin(), static_cast<ptrdiff_t>(accepted_count)), samples.end());
-    }
+    staged.erase(staged.begin(), std::next(staged.begin(), static_cast<ptrdiff_t>(accepted_count)));
 
     LOGGING(debug) << "execute_trajectory: first chunk sent, goal_id=" << accepted.goal_id << " accepted=" << accepted_count << "/"
                    << first_end;
@@ -1210,20 +1294,23 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
 
     // Derive poll interval from trajectory sampling frequency
     constexpr auto k_logging_freq = 250;
-    LOGGING(debug) << "execute_trajectory: spawning monitor thread, remaining=" << remaining.size();
+    LOGGING(debug) << "execute_trajectory: spawning monitor thread, staged=" << staged.size() << " pending=" << stream->pending_count();
     // Single thread handles both chunk streaming and goal monitoring
     std::thread([promise = std::move(promise),
                  self = weak_from_this(),
                  goal_id = accepted.goal_id,
                  group_index,
-                 remaining = std::move(remaining),
+                 stream,
+                 staged = std::move(staged),
                  goal_status_polling_trigger = (k_logging_freq / static_cast<uint64_t>(trajectory_sampling_freq)),
                  axes_controlled,
                  logger = std::move(logger),
                  async_cancel_monitor = std::move(async_cancel_monitor)]() mutable {
-        // Scope guard clears per-group lock when thread exits (success or failure)
-        const ScopeGuard thread_cleanup{[&self, group_index]() {
+        // Scope guard clears per-group lock when thread exits (success or failure), and retires
+        // the stream so a producer still feeding it stops.
+        const ScopeGuard thread_cleanup{[&self, &stream, group_index]() {
             LOGGING(debug) << "monitor thread exiting: releasing move lock for group " << group_index;
+            stream->finish();
             if (auto shared = self.lock()) {
                 shared->group_move_in_progress_[group_index] = false;
             }
@@ -1231,7 +1318,6 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
         try {
             const auto poll_interval = std::chrono::milliseconds(static_cast<int64_t>(1000.0 / k_logging_freq));
             constexpr size_t queue_threshold = 50;
-            size_t offset = 0;
             uint64_t iteration = 0;
             while (true) {
                 std::this_thread::sleep_for(poll_interval);
@@ -1241,7 +1327,11 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                     return;
                 }
 
-                if (async_cancel_monitor && async_cancel_monitor()) {
+                // Two ways a caller kills an in-flight move: the async monitor (a cancelled gRPC
+                // context) and, for a streamed move, the producer aborting the stream because it
+                // faulted or was torn down. Both stop the arm and fail the move.
+                const auto abort_reason = stream->abort_reason();
+                if (abort_reason || (async_cancel_monitor && async_cancel_monitor())) {
                     try {
                         if (!shared->stop(group_index)) {
                             LOGGING(warning) << "stop on cancellation did not return as stopped";
@@ -1249,7 +1339,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                     } catch (const std::exception& e) {
                         LOGGING(warning) << "stop on cancellation threw: " << e.what();
                     }
-                    throw std::runtime_error("move cancelled by caller");
+                    throw std::runtime_error(abort_reason.value_or("move cancelled by caller"));
                 }
 
                 // capture robot status at k_logging_freq Hz
@@ -1264,31 +1354,42 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                 if (iteration++ % goal_status_polling_trigger == 0) {
                     const auto status_msg = shared->get_goal_status(goal_id);
                     LOGGING(debug) << "group " << group_index << " goal status poll: state=" << static_cast<int>(status_msg.state)
-                                   << " queue=" << status_msg.current_queue_size << " offset=" << offset << "/" << remaining.size();
+                                   << " queue=" << status_msg.current_queue_size << " staged=" << staged.size()
+                                   << " pending=" << stream->pending_count();
 
                     switch (status_msg.state) {
                         case GOAL_STATE_ACTIVE:
-                            // Stream remaining chunks when queue is running low
-                            if (offset < remaining.size()) {
+                            // Feed the controller more points when its queue is running low. For a
+                            // unary move that drains a trajectory we already hold; for a streamed
+                            // move it also picks up whatever the producer has extended since the
+                            // last tick.
+                            if (staged.empty()) {
+                                staged = stream->take(k_chunk_size);
+                            }
+                            if (!staged.empty()) {
                                 LOGGING(debug) << "queue size: " << status_msg.current_queue_size << " points";
                                 if (status_msg.current_queue_size <= queue_threshold) {
-                                    const size_t end = std::min(offset + k_chunk_size, remaining.size());
-                                    const std::vector<trajectory_point_t> chunk(
-                                        std::next(remaining.begin(), static_cast<ptrdiff_t>(offset)),
-                                        std::next(remaining.begin(), static_cast<ptrdiff_t>(end)));
+                                    LOGGING(debug) << "sending chunk: " << staged.size() << " points";
 
-                                    LOGGING(debug)
-                                        << "sending chunk: points " << offset << " to " << end << " (" << chunk.size() << " points)";
-
-                                    const auto chunk_accepted = shared->send_goal_(group_index, axes_controlled, chunk, {});
+                                    const auto chunk_accepted = shared->send_goal_(group_index, axes_controlled, staged, {});
                                     LOGGING(debug) << "chunk accepted: " << chunk_accepted.num_trajectory_accepted << " points";
-                                    offset += chunk_accepted.num_trajectory_accepted;
+                                    // A partial accept means the controller's queue filled up; keep
+                                    // the tail staged and offer it again on the next tick.
+                                    const auto consumed =
+                                        std::min(static_cast<size_t>(chunk_accepted.num_trajectory_accepted), staged.size());
+                                    staged.erase(staged.begin(), std::next(staged.begin(), static_cast<ptrdiff_t>(consumed)));
                                 }
                             }
                             break;
-                        case GOAL_STATE_SUCCEEDED:
-                            LOGGING(debug) << "goal SUCCEEDED: offset=" << offset << " remaining=" << remaining.size();
-                            if (offset < remaining.size()) {
+                        case GOAL_STATE_SUCCEEDED: {
+                            // The arm finished the trajectory it was given. That is only the end of
+                            // the move if we have nothing left to send and the producer has closed
+                            // the stream; otherwise the arm ran out of points before the trajectory
+                            // was over -- either we failed to keep it fed, or (streamed) the
+                            // producer could not keep up.
+                            const auto unsent = staged.size() + stream->pending_count();
+                            LOGGING(debug) << "goal SUCCEEDED: unsent=" << unsent << " closed=" << stream->closed();
+                            if (unsent > 0 || !stream->closed()) {
                                 std::string stop_detail;
                                 try {
                                     if (!shared->stop(group_index)) {
@@ -1299,7 +1400,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                                 }
                                 throw std::runtime_error(std::format(
                                     "goal failed - arm motion ended earlier than expected with {} trajectory points left to process{}",
-                                    remaining.size() - offset,
+                                    unsent,
                                     stop_detail));
                             }
                             if (shared->get_robot_status().is_group_moving(group_index)) {
@@ -1307,6 +1408,7 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                             }
                             promise.set_value_at_thread_exit(status_msg.state);
                             return;
+                        }
                         case GOAL_STATE_PENDING:
                             break;
                         case GOAL_STATE_CANCELLED:

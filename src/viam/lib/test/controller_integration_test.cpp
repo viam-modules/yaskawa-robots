@@ -97,7 +97,7 @@ struct TestFixture {
         }
 
         test::drive_mock_to_ready(controller);
-        return controller->execute_trajectory(group_index, k_dof, std::move(samples), {}, 3.0);
+        return controller->execute_trajectory(group_index, k_dof, std::make_shared<robot::MoveStream>(std::move(samples)), {}, 3.0);
     }
 };
 

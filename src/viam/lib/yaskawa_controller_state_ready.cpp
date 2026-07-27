@@ -55,7 +55,7 @@ std::optional<YaskawaController::state_::event_variant_> YaskawaController::stat
             try {
                 req.handle = state.controller_->execute_trajectory(req.group_index,
                                                                    req.axes_controlled,
-                                                                   std::move(req.samples),
+                                                                   req.stream,
                                                                    req.tolerance,
                                                                    req.trajectory_sampling_freq,
                                                                    std::move(req.logger),
