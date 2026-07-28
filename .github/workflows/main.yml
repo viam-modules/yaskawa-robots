@@ -46,10 +46,10 @@ jobs:
         include:
         - arch: amd64
           runner: ubuntu-latest
-          digest: sha256:60fe0f62969bd8fe01d2617809f3f7845c2246d71b3c4fb9f64b0af56867c789
+          digest: sha256:cd4e06aa7c6f4682675571d9b141bdbca1f04846db50aba9eee7ce23794af216
         - arch: arm64
           runner: ubuntu-4cpu-arm
-          digest: sha256:f5c330afbeb8a9e64c5cba0cafc570bdcd03f94ca1c74d0a093072828bfd2a44
+          digest: sha256:204b567f77f86440053de7454fc42fbe155362a8f7a5992ef6e068de537ca957
     steps:
       - name: Checkout
         uses: actions/checkout@v4
