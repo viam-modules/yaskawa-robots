@@ -1239,6 +1239,12 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
     if (!stream) {
         throw std::runtime_error("execute_trajectory: no trajectory stream");
     }
+    // The producer can give up before the FSM ever dispatches the move (the client cancelled, or a
+    // later point in the stream was malformed). Bail before commanding any motion -- the monitor
+    // thread's abort check only helps once the goal is already running.
+    if (const auto abort_reason = stream->abort_reason()) {
+        throw std::runtime_error(*abort_reason);
+    }
     LOGGING(debug) << "execute_trajectory: group=" << group_index << " pending=" << stream->pending_count()
                    << " closed=" << stream->closed();
 

@@ -8,6 +8,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <format>
@@ -23,6 +24,7 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <variant>
 
 #include <boost/accumulators/accumulators.hpp>
 #include <boost/accumulators/statistics/median.hpp>
@@ -125,6 +127,74 @@ trajectory_point_t make_trajectory_point(const Container& positions, const Conta
     }
     pt.time_from_start = time_from_start;
     return pt;
+}
+
+// The SDK stub already validated time ordering and per-point arity, so the only thing left to
+// guard is that the caller is talking about this arm's joints.
+void check_streamed_arity(const std::vector<double>& src, std::size_t dof, const char* field) {
+    if (src.size() != dof) {
+        throw std::invalid_argument(std::format("trajectory point {} has {} joints, arm has {}", field, src.size(), dof));
+    }
+}
+
+// Converts an SDK `trajectory_point` into the wire's `trajectory_point_t`.
+//
+// The SDK denominates every joint value in degrees and carries time as a microsecond offset from
+// the start of the stream; the controller wants radians and a `duration_t` split into whole
+// seconds plus nanoseconds. Both sides measure time from the start of the trajectory, so there is
+// nothing to accumulate here -- a point converts in isolation.
+//
+// Streamed points arrive already time-parameterized, so this path deliberately bypasses
+// trajex/TOTG and does not re-check the configured `speed_rad_per_sec` /
+// `acceleration_rad_per_sec2`: the caller owns the profile. The controller still validates the
+// first point's speed against its per-axis limits and the first position against
+// START_MAX_PULSE_DEVIATION, so an unreachable stream is rejected at the goal rather than run.
+trajectory_point_t convert_streamed_point(const Arm::trajectory_point& point, std::size_t dof) {
+    // The controller drives a velocity-parameterized queue, so a position-only point has no meaning
+    // to it. Rather than synthesize velocities by differencing -- which would silently invent a
+    // profile the caller did not ask for -- require them.
+    if (!point.constraints) {
+        throw std::invalid_argument("trajectory point is missing constraints (velocities are required)");
+    }
+
+    const auto& velocities = point.constraints->velocities_degs_per_sec;
+    // The controller ignores accelerations today, but the wire struct carries them, so pass through
+    // whatever the caller supplied instead of dropping it.
+    const auto* accelerations = point.constraints->accelerations_degs_per_sec2.get_ptr();
+
+    check_streamed_arity(point.positions, dof, "positions");
+    check_streamed_arity(velocities, dof, "velocities");
+    if (accelerations) {
+        check_streamed_arity(*accelerations, dof, "accelerations");
+    }
+
+    trajectory_point_t pt{};
+    // `trajectory_point_t` is a packed wire struct, so its arrays are filled element by element: a
+    // reference or pointer cannot bind to a packed field.
+    for (std::size_t i = 0; i < dof; ++i) {
+        pt.positions[i] = degrees_to_radians(point.positions[i]);
+        pt.velocities[i] = degrees_to_radians(velocities[i]);
+        if (accelerations) {
+            pt.accelerations[i] = degrees_to_radians((*accelerations)[i]);
+        }
+    }
+
+    const auto secs = std::chrono::floor<std::chrono::seconds>(point.time);
+    const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(point.time - secs);
+    pt.time_from_start = {boost::numeric_cast<uint32_t>(secs.count()), boost::numeric_cast<uint32_t>(nanos.count())};
+    return pt;
+}
+
+std::vector<trajectory_point_t> convert_streamed_batch(const std::vector<Arm::trajectory_point>& batch, std::size_t dof) {
+    if (dof == 0 || dof > static_cast<std::size_t>(NUMBER_OF_DOF)) {
+        throw std::invalid_argument(std::format("arm has {} joints, which the protocol cannot carry (max {})", dof, NUMBER_OF_DOF));
+    }
+    std::vector<trajectory_point_t> out;
+    out.reserve(batch.size());
+    for (const auto& point : batch) {
+        out.push_back(convert_streamed_point(point, dof));
+    }
+    return out;
 }
 
 struct segment_accumulator {
@@ -495,6 +565,135 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
             std::move(logger),
             [observer = viam::sdk::GrpcContextObserver::current()] { return observer && observer->context().IsCancelled(); })
         .get();
+}
+
+YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
+    const std::function<boost::optional<std::vector<trajectory_point>>()>& batch_source,
+    const std::function<bool(trajectory_update)>& update_handler,
+    const viam::sdk::ProtoStruct&) {
+    // How the producer side of the stream ended: one of three clean exits, or a producer-side
+    // error carried as an exception to rethrow. The unlocked teardown below turns each into a
+    // return or a throw.
+    enum class exit_reason : std::uint8_t { k_completed, k_halted_by_update_handler, k_move_finished_early };
+    struct loop_result {
+        std::future<void> completion;
+        std::variant<exit_reason, std::exception_ptr> outcome;
+    };
+
+    std::shared_lock rlock{config_mutex_};
+
+    // Locked phase: prime the move, then feed it. The read lock is moved in here so it releases
+    // when this lambda returns, before we wait on the move's completion -- a streamed move can run
+    // arbitrarily long, and reconfigure shouldn't be pinned behind the wait. We do hold it across
+    // the blocking `batch_source()` calls to keep `robot_` valid; a stalled client is broken out of
+    // by gRPC tearing the RPC down.
+    auto result = [&, rlock = std::move(rlock)]() -> std::optional<loop_result> {
+        const auto dof = static_cast<std::size_t>(velocity_limits_.size());
+
+        // Pull until we have something to open the goal with. `enqueue_streamed_move_request`
+        // requires at least one point up front because the FSM worker thread dispatches the first
+        // chunk, and that thread also drives the heartbeat -- it must never block there waiting on
+        // a remote producer.
+        std::vector<trajectory_point_t> primer;
+        while (primer.empty()) {
+            const auto batch = batch_source();
+            if (!batch) {
+                // The stream ended without ever producing a point. Nothing to move.
+                return std::nullopt;
+            }
+            primer = convert_streamed_batch(*batch, dof);
+        }
+
+        // TODO(RSDK-14267): realtime telemetry is not wired up for streamed trajectories.
+        // `RealtimeTrajectoryLogger` wants the whole planned trajectory up front, which a stream by
+        // definition does not have, so streamed moves run without a logger for now.
+        auto move = robot_->enqueue_streamed_move_request(
+            group_index_,
+            static_cast<uint32_t>(velocity_limits_.size()),
+            std::move(primer),
+            {},
+            trajectory_sampling_freq_,
+            std::nullopt,
+            [observer = viam::sdk::GrpcContextObserver::current()] { return observer && observer->context().IsCancelled(); });
+
+        std::variant<exit_reason, std::exception_ptr> outcome;
+        try {
+            outcome = [&]() -> exit_reason {
+                while (true) {
+                    if (!update_handler({})) {
+                        // On the server side the handler only returns false when the gRPC call is
+                        // being torn down, i.e. the same thing an async cancel means: stop the arm.
+                        move.stream->abort("move cancelled: update handler asked the stream to stop");
+                        return exit_reason::k_halted_by_update_handler;
+                    }
+
+                    const auto batch = batch_source();
+                    if (!batch) {
+                        // End of stream. A false return means the goal monitor retired the move
+                        // before we got here, handled the same as any other early finish.
+                        return move.stream->close() ? exit_reason::k_completed : exit_reason::k_move_finished_early;
+                    }
+                    if (batch->empty()) {
+                        // The SDK dispatcher filters these out, but be defensive.
+                        continue;
+                    }
+                    // `extend` returns false once the goal monitor has retired the move -- a fault,
+                    // or an arm that stopped early. Stop feeding a stream nobody is reading.
+                    if (!move.stream->extend(convert_streamed_batch(*batch, dof))) {
+                        return exit_reason::k_move_finished_early;
+                    }
+                }
+            }();
+        } catch (...) {
+            // A producer-side error: a malformed point, or an update handler that threw. Abort so
+            // the monitor stops the arm rather than running out the points it already holds; the
+            // unlocked phase waits for that to land and then rethrows the original error.
+            move.stream->abort("move failed: error while reading the trajectory stream");
+            outcome = std::current_exception();
+        }
+
+        return loop_result{std::move(move.completion), std::move(outcome)};
+    }();
+
+    // NOTE: the configuration read lock is no longer held after the above statement. Do not touch
+    // members other than to wait on the move's completion future.
+
+    if (!result) {
+        return stream_outcome::k_completed;
+    }
+
+    if (const auto* error = std::get_if<std::exception_ptr>(&result->outcome)) {
+        // Wait for our abort to take effect so a retry can't race the dying move, then rethrow the
+        // original error rather than the abort's stand-in.
+        try {
+            result->completion.get();
+        } catch (...) {  // NOLINT(bugprone-empty-catch): intentional
+        }
+        std::rethrow_exception(*error);
+    }
+
+    switch (std::get<exit_reason>(result->outcome)) {
+        case exit_reason::k_completed:
+            result->completion.get();
+            return stream_outcome::k_completed;
+        case exit_reason::k_halted_by_update_handler:
+            // We aborted at the handler's request, so the move completing with a cancellation error
+            // is the expected outcome, not a fault. Swallow it.
+            try {
+                result->completion.get();
+            } catch (...) {  // NOLINT(bugprone-empty-catch): intentional
+            }
+            return stream_outcome::k_halted_by_update_handler;
+        case exit_reason::k_move_finished_early:
+            // The move retired before end-of-stream. In practice that is a fault, which `get()`
+            // rethrows. A clean completion here would mean the arm finished a motion we never told
+            // it was done with; surface that rather than hide it.
+            result->completion.get();
+            throw std::runtime_error("arm reported trajectory completion before end-of-stream");
+    }
+
+    // Unreachable: the switch covers every `exit_reason`.
+    throw std::logic_error("move_through_joint_positions_streamed: unhandled exit_reason");
 }
 
 ::viam::sdk::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
