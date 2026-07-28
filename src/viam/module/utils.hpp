@@ -10,6 +10,8 @@
 
 #include <Eigen/Dense>
 #include <viam/lib/logger.hpp>
+#include <viam/lib/robot_socket.hpp>
+#include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
 
@@ -127,3 +129,24 @@ Eigen::Index number_of_dof_configured(const viam::sdk::ResourceConfig& config, c
 // Reads a validated config attribute (scalar or array of doubles) into an Eigen::VectorXd.
 // Scalars are broadcast to target_dof elements. Arrays must match target_dof exactly.
 Eigen::VectorXd read_limit_vector(const viam::sdk::ResourceConfig& config, const std::string& attribute, Eigen::Index target_dof);
+
+// Converts an SDK `trajectory_point` into the wire's `trajectory_point_t`.
+//
+// The SDK denominates every joint value in degrees and carries time as a microsecond offset from
+// the start of the stream; the controller wants radians and a `duration_t` split into whole
+// seconds plus nanoseconds. Both sides measure time from the start of the trajectory, so there is
+// nothing to accumulate here -- a point converts in isolation.
+//
+// Streamed points arrive already time-parameterized, so this path deliberately bypasses
+// trajex/TOTG and does not re-check the configured `speed_rad_per_sec` /
+// `acceleration_rad_per_sec2`: the caller owns the profile. The controller still validates the
+// first point's speed against its per-axis limits and the first position against
+// START_MAX_PULSE_DEVIATION, so an unreachable stream is rejected at the goal rather than run.
+//
+// Throws std::invalid_argument if the point carries no constraints (velocities are required) or if
+// any of its joint vectors is not `dof` long.
+trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point& point, std::size_t dof);
+
+// Converts a whole batch of streamed points, preserving order. Throws std::invalid_argument if
+// `dof` is not something the protocol can carry, or for any reason `convert_streamed_point` does.
+std::vector<trajectory_point_t> convert_streamed_batch(const std::vector<viam::sdk::Arm::trajectory_point>& batch, std::size_t dof);

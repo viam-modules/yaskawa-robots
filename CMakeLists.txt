@@ -392,6 +392,21 @@ target_link_libraries(realtime_trajectory_logger_test
 
 add_test(NAME realtime_trajectory_logger_test COMMAND realtime_trajectory_logger_test)
 
+add_executable(move_stream_test EXCLUDE_FROM_ALL)
+
+target_sources(move_stream_test
+  PRIVATE
+    src/viam/lib/test/move_stream_test.cpp
+)
+
+target_link_libraries(move_stream_test
+  PRIVATE
+    viam-yaskawa
+    Boost::unit_test_framework
+)
+
+add_test(NAME move_stream_test COMMAND move_stream_test)
+
 add_executable(move_limit_test EXCLUDE_FROM_ALL)
 
 target_sources(move_limit_test
@@ -408,6 +423,23 @@ target_link_libraries(move_limit_test
 )
 
 add_test(NAME move_limit_test COMMAND move_limit_test)
+
+add_executable(streamed_conversion_test EXCLUDE_FROM_ALL)
+
+target_sources(streamed_conversion_test
+  PRIVATE
+    src/viam/module/test/streamed_conversion_test.cpp
+    src/viam/module/utils.cpp
+)
+
+target_link_libraries(streamed_conversion_test
+  PRIVATE
+    viam-yaskawa
+    Boost::unit_test_framework
+    viam-cpp-sdk::viamsdk
+)
+
+add_test(NAME streamed_conversion_test COMMAND streamed_conversion_test)
 
 # Common sources and include dirs for integration tests that use the fake server
 set(INTEGRATION_TEST_SOURCES

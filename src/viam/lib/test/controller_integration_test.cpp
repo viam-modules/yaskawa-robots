@@ -79,25 +79,48 @@ struct TestFixture {
         return {target};
     }
 
+    // Helper: build a minimal 2-point trajectory: start at 0, end at offset.
+    static std::vector<trajectory_point_t> make_samples(double offset = 0.1) {
+        std::vector<trajectory_point_t> samples;
+
+        trajectory_point_t start{};
+        start.time_from_start = {0, 0};
+        samples.push_back(start);
+
+        trajectory_point_t end{};
+        for (int i = 0; i < k_dof; ++i) {
+            end.positions[i] = offset;
+        }
+        end.time_from_start = {1, 0};
+        samples.push_back(end);
+
+        return samples;
+    }
+
     // Helper: build simple trajectory samples and issue execute_trajectory on the given group.
     std::unique_ptr<robot::GoalRequestHandle> do_move(uint32_t group_index = 0, double offset = 0.1) {
-        // Build a minimal 2-point trajectory: start at 0, end at offset
-        std::vector<trajectory_point_t> samples;
-        {
-            trajectory_point_t start{};
-            start.time_from_start = {0, 0};
-            samples.push_back(start);
-
-            trajectory_point_t end{};
-            for (int i = 0; i < k_dof; ++i) {
-                end.positions[i] = offset;
-            }
-            end.time_from_start = {1, 0};
-            samples.push_back(end);
-        }
-
         test::drive_mock_to_ready(controller);
-        return controller->execute_trajectory(group_index, k_dof, std::make_shared<robot::MoveStream>(std::move(samples)), {}, 3.0);
+        return controller->execute_trajectory(group_index, k_dof, std::make_shared<robot::MoveStream>(make_samples(offset)), {}, 3.0);
+    }
+
+    // Helper: hand the same trajectory to the streamed path, so tests can drive extend/close/abort
+    // on a move that is (or is about to be) in flight.
+    robot::YaskawaController::streamed_move start_streamed_move(uint32_t group_index = 0, double offset = 0.1) {
+        test::drive_mock_to_ready(controller);
+        return controller->enqueue_streamed_move_request(group_index, k_dof, make_samples(offset), {}, 3.0);
+    }
+
+    // Helper: block until the mock reports an active goal, so a test can act on a move that is
+    // genuinely running instead of racing the FSM's dispatch.
+    bool wait_for_goal_active(uint32_t group_index = 0, std::chrono::milliseconds timeout = std::chrono::seconds(5)) {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (server.robot().groups[group_index].current_goal_state == GOAL_STATE_ACTIVE) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return false;
     }
 };
 
@@ -241,6 +264,117 @@ BOOST_FIXTURE_TEST_CASE(full_move_lifecycle, ControllerFixture, *boost::unit_tes
     connect();
     auto handle = do_move();
     BOOST_CHECK_EQUAL(handle->wait(), GOAL_STATE_SUCCEEDED);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+// ==================== Suite 2b: Streamed Move Lifecycle ====================
+//
+// These cover the producer/consumer contract between a streamed move and the goal monitor:
+// priming, end-of-stream, aborting, and what a producer sees once the move is over.
+//
+// What they cannot cover is appending to an already-running goal. The real controller merges a
+// second MSG_MOVE_GOAL into the active goal's queue; the mock rejects it outright
+// (`mock_robot_accept_goal` refuses while a goal is ACTIVE), which is the same limitation the
+// `move_large_offset` case notes. Every trajectory here therefore fits in the first chunk.
+
+BOOST_AUTO_TEST_SUITE(streamed_move_lifecycle)
+
+// A streamed move has to be primed because the FSM worker thread dispatches the first chunk, and
+// that thread also drives the heartbeat -- it must never block there waiting on a producer.
+BOOST_FIXTURE_TEST_CASE(streamed_move_requires_priming, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    test::drive_mock_to_ready(controller);
+
+    BOOST_CHECK_THROW(controller->enqueue_streamed_move_request(0, k_dof, {}, {}, 3.0), std::invalid_argument);
+}
+
+BOOST_FIXTURE_TEST_CASE(streamed_move_completes_after_close, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    auto move = start_streamed_move();
+
+    BOOST_CHECK(move.stream->close());
+    BOOST_REQUIRE(move.completion.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+    BOOST_CHECK_NO_THROW(move.completion.get());
+
+    // Everything we primed reached the controller as one goal.
+    auto* echoed = mock_robot_echo_trajectory(&server.robot(), 0);
+    BOOST_REQUIRE(echoed != nullptr);
+    BOOST_CHECK_EQUAL(echoed->trajectory_size, 2U);
+}
+
+// The arm finishing the points it has is only the end of the move if the producer said the
+// trajectory was over. Otherwise the arm ran out of trajectory early, which must be reported
+// rather than passed off as a clean completion.
+BOOST_FIXTURE_TEST_CASE(unclosed_stream_fails_when_the_arm_runs_out, ControllerFixture, *boost::unit_test::timeout(20)) {
+    connect();
+    auto move = start_streamed_move();
+
+    // Never close the stream. The goal reaches SUCCEEDED with the producer still nominally
+    // feeding it, and the monitor fails the move.
+    BOOST_REQUIRE(move.completion.wait_for(std::chrono::seconds(15)) == std::future_status::ready);
+    BOOST_CHECK_EXCEPTION(move.completion.get(), std::runtime_error, [](const std::runtime_error& ex) {
+        return std::string(ex.what()).find("ended earlier than expected") != std::string::npos;
+    });
+}
+
+// Aborting is how a producer reports that its move can never finish -- a cancelled RPC, or a
+// malformed point later in the stream. The reason it gives is what the caller gets back, whether
+// the abort lands before the FSM dispatches the move or after the goal is already running.
+BOOST_FIXTURE_TEST_CASE(abort_fails_the_move_with_its_reason, ControllerFixture, *boost::unit_test::timeout(20)) {
+    connect();
+    auto move = start_streamed_move(0, 1.0);
+
+    move.stream->abort("producer gave up");
+
+    BOOST_REQUIRE(move.completion.wait_for(std::chrono::seconds(15)) == std::future_status::ready);
+    BOOST_CHECK_EXCEPTION(move.completion.get(), std::runtime_error, [](const std::runtime_error& ex) {
+        return std::string(ex.what()).find("producer gave up") != std::string::npos;
+    });
+}
+
+// Aborting once the goal is running is the path that has to physically intervene: the monitor
+// notices on its next tick, stops the arm, and fails the move. (The case above usually resolves
+// before dispatch, where bailing out is all that is needed.)
+BOOST_FIXTURE_TEST_CASE(abort_mid_flight_stops_the_arm, ControllerFixture, *boost::unit_test::timeout(20)) {
+    connect();
+    auto move = start_streamed_move(0, 1.0);
+
+    BOOST_REQUIRE(wait_for_goal_active());
+    BOOST_REQUIRE(server.robot().groups[0].in_motion);
+
+    move.stream->abort("producer faulted mid-stream");
+
+    BOOST_REQUIRE(move.completion.wait_for(std::chrono::seconds(15)) == std::future_status::ready);
+    BOOST_CHECK_EXCEPTION(move.completion.get(), std::runtime_error, [](const std::runtime_error& ex) {
+        return std::string(ex.what()).find("producer faulted mid-stream") != std::string::npos;
+    });
+    BOOST_CHECK(!server.robot().groups[0].in_motion);
+}
+
+// Once the move is over the stream is retired, so a producer that is still feeding it finds out
+// from `extend`/`close` rather than by piling points into a buffer nobody will read.
+BOOST_FIXTURE_TEST_CASE(producer_learns_the_move_is_over, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    auto move = start_streamed_move();
+
+    BOOST_REQUIRE(move.stream->close());
+    BOOST_REQUIRE(move.completion.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+    BOOST_REQUIRE_NO_THROW(move.completion.get());
+
+    BOOST_CHECK(move.stream->finished());
+    BOOST_CHECK(!move.stream->extend(make_samples(0.2)));
+    BOOST_CHECK(!move.stream->close());
+}
+
+// A streamed move is rejected up front for the same reasons a unary one is: the FSM, not the
+// stream, decides whether the arm can move at all.
+BOOST_FIXTURE_TEST_CASE(streamed_move_rejects_when_e_stopped, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    server.robot().e_stopped = true;
+    test::wait_for_state(controller, "independent(");
+
+    BOOST_CHECK_THROW(controller->enqueue_streamed_move_request(0, k_dof, make_samples(), {}, 3.0), std::runtime_error);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
@@ -456,8 +590,7 @@ BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_SUITE(multi_group_support)
 
-BOOST_FIXTURE_TEST_CASE(multi_group_server_construction, GantryFixture,
-                        *boost::unit_test::timeout(5)) {
+BOOST_FIXTURE_TEST_CASE(multi_group_server_construction, GantryFixture, *boost::unit_test::timeout(5)) {
     // Verify multi-group FakeServer stores correct group configuration
     BOOST_CHECK_EQUAL(server.num_groups(), 2);
     BOOST_CHECK_EQUAL(server.group_config(0).num_axes, 6);
