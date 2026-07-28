@@ -507,6 +507,12 @@ class UdpBroadcastListener {
 
 class GoalRequestHandle;
 
+/// The fewest points the controller will open a goal with: `MIN_NUMBER_OF_POINTS_PER_TRAJECTORY`
+/// in the MotoPlus firmware, which the wire protocol does not export, so it is mirrored here.
+/// Sending fewer is rejected outright with `VIAM_ERROR_TRAJ_EMPTY`. A single point describes only
+/// where the trajectory starts, which is where the arm already is -- there is no motion in it.
+inline constexpr std::size_t k_min_goal_points = 2;
+
 /// The trajectory of a single move, handed from whoever produced it to the goal monitor that
 /// feeds it to the controller. A unary move fills one in and closes it before the move is ever
 /// enqueued; a streamed move keeps extending it while the arm is already running.
@@ -620,14 +626,14 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     };
 
     /// Enqueue a move whose trajectory is still arriving. `initial_samples` primes the stream so
-    /// the first goal can go out the moment the FSM dispatches the move: the controller needs at
-    /// least `MIN_NUMBER_OF_POINTS_PER_TRAJECTORY` (2) points to start one, and the FSM worker
-    /// thread must not block waiting on a remote producer, since it also drives heartbeats.
-    /// Every later point goes in through `MoveStream::extend`, and the producer must eventually
-    /// `close` (or `abort`) the stream.
+    /// the first goal can go out the moment the FSM dispatches the move: it must hold at least
+    /// `k_min_goal_points`, since the FSM worker thread cannot block waiting on a remote producer
+    /// (it also drives heartbeats) and the controller will not open a goal with fewer. Throws
+    /// std::invalid_argument if it holds fewer. Every later point goes in through
+    /// `MoveStream::extend`, and the producer must eventually `close` (or `abort`) the stream.
     streamed_move enqueue_streamed_move_request(uint32_t group_index,
                                                 uint32_t axes_controlled,
-                                                std::vector<trajectory_point_t> initial_samples,
+                                                const std::vector<trajectory_point_t>& initial_samples,
                                                 std::vector<tolerance_t> tolerance,
                                                 double trajectory_sampling_freq,
                                                 std::optional<RealtimeTrajectoryLogger> logger = std::nullopt,

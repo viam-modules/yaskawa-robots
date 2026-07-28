@@ -245,7 +245,7 @@ std::future<void> YaskawaController::enqueue_move_request(uint32_t group_index,
 
 YaskawaController::streamed_move YaskawaController::enqueue_streamed_move_request(uint32_t group_index,
                                                                                   uint32_t axes_controlled,
-                                                                                  std::vector<trajectory_point_t> initial_samples,
+                                                                                  const std::vector<trajectory_point_t>& initial_samples,
                                                                                   std::vector<tolerance_t> tolerance,
                                                                                   double trajectory_sampling_freq,
                                                                                   std::optional<RealtimeTrajectoryLogger> logger,
@@ -254,8 +254,9 @@ YaskawaController::streamed_move YaskawaController::enqueue_streamed_move_reques
     if (!fsm_) {
         throw std::runtime_error("controller FSM not initialized");
     }
-    if (initial_samples.empty()) {
-        throw std::invalid_argument("streamed move must be primed with at least one trajectory point");
+    if (initial_samples.size() < k_min_goal_points) {
+        throw std::invalid_argument(std::format(
+            "streamed move must be primed with at least {} trajectory points, got {}", k_min_goal_points, initial_samples.size()));
     }
 
     auto stream = std::make_shared<MoveStream>();

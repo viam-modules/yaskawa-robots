@@ -522,18 +522,22 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
     auto result = [&, rlock = std::move(rlock)]() -> std::optional<loop_result> {
         const auto dof = static_cast<std::size_t>(velocity_limits_.size());
 
-        // Pull until we have something to open the goal with. `enqueue_streamed_move_request`
-        // requires at least one point up front because the FSM worker thread dispatches the first
-        // chunk, and that thread also drives the heartbeat -- it must never block there waiting on
-        // a remote producer.
+        // Pull until we have enough to open the goal with. The move has to be primed because the
+        // FSM worker thread dispatches the first chunk, and that thread also drives the heartbeat
+        // -- it must never block there waiting on a remote producer. Batches are whatever size the
+        // sender chose, including one point each, so accumulate across them rather than assuming
+        // the first batch is enough to start a goal.
         std::vector<trajectory_point_t> primer;
-        while (primer.empty()) {
+        while (primer.size() < robot::k_min_goal_points) {
             const auto batch = batch_source();
             if (!batch) {
-                // The stream ended without ever producing a point. Nothing to move.
+                // The stream ended before it described any motion: either no points at all, or a
+                // lone point, which is the trajectory's starting state and so where the arm
+                // already is. Nothing to execute either way.
                 return std::nullopt;
             }
-            primer = convert_streamed_batch(*batch, dof);
+            const auto converted = convert_streamed_batch(*batch, dof);
+            primer.insert(primer.end(), converted.begin(), converted.end());
         }
 
         // TODO(RSDK-14267): realtime telemetry is not wired up for streamed trajectories.
@@ -579,8 +583,9 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
         } catch (...) {
             // A producer-side error: a malformed point, or an update handler that threw. Abort so
             // the monitor stops the arm rather than running out the points it already holds; the
-            // unlocked phase waits for that to land and then rethrows the original error.
-            move.stream->abort("move failed: error while reading the trajectory stream");
+            // unlocked phase waits for that to land and then rethrows the original error, which is
+            // more specific than this stand-in.
+            move.stream->abort("move failed: error while feeding the trajectory stream");
             outcome = std::current_exception();
         }
 

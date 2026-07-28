@@ -289,6 +289,20 @@ BOOST_FIXTURE_TEST_CASE(streamed_move_requires_priming, ControllerFixture, *boos
     BOOST_CHECK_THROW(controller->enqueue_streamed_move_request(0, k_dof, {}, {}, 3.0), std::invalid_argument);
 }
 
+// One point is not a trajectory: it says where the motion starts, which is where the arm already
+// is. The controller refuses to open a goal with fewer than `k_min_goal_points`, so priming with a
+// single point has to be caught here rather than becoming a goal the firmware rejects.
+BOOST_FIXTURE_TEST_CASE(streamed_move_rejects_single_point_prime, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    test::drive_mock_to_ready(controller);
+
+    auto samples = make_samples();
+    samples.resize(1);
+    BOOST_REQUIRE_LT(samples.size(), robot::k_min_goal_points);
+
+    BOOST_CHECK_THROW(controller->enqueue_streamed_move_request(0, k_dof, std::move(samples), {}, 3.0), std::invalid_argument);
+}
+
 BOOST_FIXTURE_TEST_CASE(streamed_move_completes_after_close, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     auto move = start_streamed_move();
