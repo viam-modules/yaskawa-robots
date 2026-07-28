@@ -546,7 +546,7 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
         auto move = robot_->enqueue_streamed_move_request(
             group_index_,
             static_cast<uint32_t>(velocity_limits_.size()),
-            std::move(primer),
+            primer,
             {},
             trajectory_sampling_freq_,
             std::nullopt,
