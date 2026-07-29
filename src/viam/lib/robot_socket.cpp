@@ -1393,6 +1393,16 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                             // the stream; otherwise the arm ran out of points before the trajectory
                             // was over -- either we failed to keep it fed, or (streamed) the
                             // producer could not keep up.
+                            //
+                            // There is deliberately no grace period here: once the arm has stopped
+                            // mid-trajectory the motion is already wrong, and waiting to see whether
+                            // more points show up would only decide how long to stand still before
+                            // admitting it. The cost is that a streamed producer which stalls even
+                            // once -- long enough for the controller's queue to drain -- loses the
+                            // whole move with no way to resume, and has to re-issue it from the
+                            // arm's new position. If that turns out to be too brittle in practice,
+                            // the fix belongs upstream in how much trajectory we buffer ahead, not
+                            // in tolerating an arm that has already stopped.
                             const auto unsent = staged.size() + stream->pending_count();
                             LOGGING(debug) << "goal SUCCEEDED: unsent=" << unsent << " closed=" << stream->closed();
                             if (unsent > 0 || !stream->closed()) {
