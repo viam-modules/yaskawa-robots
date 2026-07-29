@@ -503,10 +503,10 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
     const std::function<boost::optional<std::vector<trajectory_point>>()>& batch_source,
     const std::function<bool(trajectory_update)>& update_handler,
     const viam::sdk::ProtoStruct&) {
-    // How the producer side of the stream ended: one of three clean exits, or a producer-side
+    // How the producer side of the stream ended: one of four clean exits, or a producer-side
     // error carried as an exception to rethrow. The unlocked teardown below turns each into a
     // return or a throw.
-    enum class exit_reason : std::uint8_t { k_completed, k_halted_by_update_handler, k_move_finished_early };
+    enum class exit_reason : std::uint8_t { k_completed, k_halted_by_update_handler, k_cancelled, k_move_finished_early };
     struct loop_result {
         std::future<void> completion;
         std::variant<exit_reason, std::exception_ptr> outcome;
@@ -565,6 +565,17 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
 
                     const auto batch = batch_source();
                     if (!batch) {
+                        // A disengaged batch source is ambiguous: either the producer reached
+                        // end-of-stream, or the RPC is being torn down. The two need opposite
+                        // handling -- `close` lets the arm run out the points it is already holding,
+                        // `abort` stops it where it is -- so ask the context which one this is
+                        // instead of assuming end-of-stream. Reading the observer is only legal on
+                        // the thread that received it, which is the thread running this loop.
+                        if (const auto& observer = viam::sdk::GrpcContextObserver::current();
+                            observer && observer->context().IsCancelled()) {
+                            move.stream->abort("move cancelled: the client cancelled the stream");
+                            return exit_reason::k_cancelled;
+                        }
                         // End of stream. A false return means the goal monitor retired the move
                         // before we got here, handled the same as any other early finish.
                         return move.stream->close() ? exit_reason::k_completed : exit_reason::k_move_finished_early;
@@ -614,8 +625,11 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
             result->completion.get();
             return stream_outcome::k_completed;
         case exit_reason::k_halted_by_update_handler:
-            // We aborted at the handler's request, so the move completing with a cancellation error
-            // is the expected outcome, not a fault. Swallow it.
+        case exit_reason::k_cancelled:
+            // We aborted -- at the handler's request, or because the client cancelled -- so the move
+            // completing with a cancellation error is the expected outcome, not a fault. Swallow it.
+            // Both map to the same `stream_outcome`; the SDK has no separate cancelled value, and a
+            // cancelled RPC has nobody left to report to anyway.
             try {
                 result->completion.get();
             } catch (...) {  // NOLINT(bugprone-empty-catch): intentional
