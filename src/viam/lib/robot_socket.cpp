@@ -91,6 +91,9 @@ bool MoveStream::close() {
 
 void MoveStream::abort(std::string_view message) {
     const std::lock_guard lock{mutex_};
+    if (finished_) {
+        return;
+    }
     closed_ = true;
     if (!abort_reason_) {
         abort_reason_ = std::string{message};
@@ -1300,7 +1303,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
 
     // Derive poll interval from trajectory sampling frequency
     constexpr auto k_logging_freq = 250;
-    LOGGING(debug) << "execute_trajectory: spawning monitor thread, staged=" << staged.size() << " pending=" << stream->pending_count();
+    LOGGING(debug) << "execute_trajectory: spawning monitor thread, staged=" << staged.size() << " pending=" << stream->pending_count()
+                   << " async_cancel_monitor=" << (async_cancel_monitor ? "installed" : "absent");
     // Single thread handles both chunk streaming and goal monitoring
     std::thread([promise = std::move(promise),
                  self = weak_from_this(),
@@ -1337,7 +1341,12 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                 // context) and, for a streamed move, the producer aborting the stream because it
                 // faulted or was torn down. Both stop the arm and fail the move.
                 const auto abort_reason = stream->abort_reason();
-                if (abort_reason || (async_cancel_monitor && async_cancel_monitor())) {
+                const bool async_cancelled = async_cancel_monitor && async_cancel_monitor();
+                if (abort_reason || async_cancelled) {
+                    LOGGING(info) << "group " << group_index
+                                  << " cancelling move: trigger=" << (abort_reason ? "stream abort" : "async cancel monitor")
+                                  << " reason=" << abort_reason.value_or("gRPC context cancelled") << " staged=" << staged.size()
+                                  << " pending=" << stream->pending_count();
                     try {
                         if (!shared->stop(group_index)) {
                             LOGGING(warning) << "stop on cancellation did not return as stopped";

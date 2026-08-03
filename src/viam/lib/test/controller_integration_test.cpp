@@ -277,6 +277,8 @@ BOOST_AUTO_TEST_SUITE_END()
 // second MSG_MOVE_GOAL into the active goal's queue; the mock rejects it outright
 // (`mock_robot_accept_goal` refuses while a goal is ACTIVE), which is the same limitation the
 // `move_large_offset` case notes. Every trajectory here therefore fits in the first chunk.
+// That path has been exercised on hardware, including partial accepts, but has no automated
+// coverage. Closing the gap means teaching the mock to merge an append into an ACTIVE goal.
 
 BOOST_AUTO_TEST_SUITE(streamed_move_lifecycle)
 

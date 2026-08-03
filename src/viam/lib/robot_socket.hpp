@@ -551,7 +551,8 @@ class MoveStream {
 
     /// Close the stream and record why it will never complete normally (client cancellation, a
     /// malformed point). The monitor notices on its next tick, stops the arm, and fails the
-    /// move with `message`.
+    /// move with `message`. A no-op once the consumer has finished the move, and only the first
+    /// reason is kept, so the earliest cause of failure is the one reported.
     void abort(std::string_view message);
 
     /// True once the consumer is done with this stream, i.e. further `extend`/`close` are no-ops.

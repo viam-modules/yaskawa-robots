@@ -565,19 +565,19 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
 
                     const auto batch = batch_source();
                     if (!batch) {
-                        // A disengaged batch source is ambiguous: either the producer reached
-                        // end-of-stream, or the RPC is being torn down. The two need opposite
-                        // handling -- `close` lets the arm run out the points it is already holding,
-                        // `abort` stops it where it is -- so ask the context which one this is
-                        // instead of assuming end-of-stream. Reading the observer is only legal on
-                        // the thread that received it, which is the thread running this loop.
+                        // A disengaged batch source means end-of-stream or a torn-down RPC, and the
+                        // two need opposite handling: `close` lets the arm run out the points it
+                        // holds, `abort` stops it. Ask the context rather than assuming.
                         if (const auto& observer = viam::sdk::GrpcContextObserver::current();
                             observer && observer->context().IsCancelled()) {
+                            VIAM_SDK_LOG(info) << "streamed move: batch source disengaged and the call is cancelled, aborting the move";
                             move.stream->abort("move cancelled: the client cancelled the stream");
                             return exit_reason::k_cancelled;
                         }
                         // End of stream. A false return means the goal monitor retired the move
                         // before we got here, handled the same as any other early finish.
+                        VIAM_SDK_LOG(debug) << "streamed move: end of stream, closing with " << move.stream->pending_count()
+                                            << " points still buffered";
                         return move.stream->close() ? exit_reason::k_completed : exit_reason::k_move_finished_early;
                     }
                     if (batch->empty()) {
@@ -610,13 +610,23 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
         return stream_outcome::k_completed;
     }
 
+    // Drain the completion when we have already decided to report something else. The exception is
+    // deliberately not propagated, but a genuine arm fault can land here at the same instant the
+    // client tears down, so log it rather than let it vanish behind a clean outcome.
+    const auto drain_completion = [&result](std::string_view reporting) {
+        try {
+            result->completion.get();
+        } catch (const std::exception& e) {
+            VIAM_SDK_LOG(warn) << "streamed move: reporting " << reporting << ", but the move itself failed: " << e.what();
+        } catch (...) {
+            VIAM_SDK_LOG(warn) << "streamed move: reporting " << reporting << ", but the move itself failed with an unknown exception";
+        }
+    };
+
     if (const auto* error = std::get_if<std::exception_ptr>(&result->outcome)) {
         // Wait for our abort to take effect so a retry can't race the dying move, then rethrow the
         // original error rather than the abort's stand-in.
-        try {
-            result->completion.get();
-        } catch (...) {  // NOLINT(bugprone-empty-catch): intentional
-        }
+        drain_completion("a producer-side error");
         std::rethrow_exception(*error);
     }
 
@@ -627,13 +637,10 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
         case exit_reason::k_halted_by_update_handler:
         case exit_reason::k_cancelled:
             // We aborted -- at the handler's request, or because the client cancelled -- so the move
-            // completing with a cancellation error is the expected outcome, not a fault. Swallow it.
-            // Both map to the same `stream_outcome`; the SDK has no separate cancelled value, and a
-            // cancelled RPC has nobody left to report to anyway.
-            try {
-                result->completion.get();
-            } catch (...) {  // NOLINT(bugprone-empty-catch): intentional
-            }
+            // completing with a cancellation error is expected, not a fault. Both map to the same
+            // `stream_outcome`; the SDK has no separate cancelled value, and a cancelled RPC has
+            // nobody left to report to anyway.
+            drain_completion("a halted stream");
             return stream_outcome::k_halted_by_update_handler;
         case exit_reason::k_move_finished_early:
             // The move retired before end-of-stream. In practice that is a fault, which `get()`
@@ -699,6 +706,9 @@ pose YaskawaArm::get_end_position(const ProtoStruct&) {
 }
 
 void YaskawaArm::stop(const ProtoStruct&) {
+    // Worth logging: viam-server calls this on session expiry, so it is how a disconnected client's
+    // move actually gets stopped, on a very different timescale from our own cancellation paths.
+    VIAM_SDK_LOG(info) << "stop: stop API called for group " << group_index_;
     if (!robot_->stop(group_index_)) {
         // we were not checking this before. Add a log to see how often it occurs
         VIAM_SDK_LOG(warn) << "stop did not error but did not return as stopped";

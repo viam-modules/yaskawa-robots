@@ -153,6 +153,28 @@ BOOST_AUTO_TEST_CASE(abort_stops_further_points) {
     BOOST_CHECK(!stream.extend(tagged_points({1.0})));
 }
 
+// `extend`/`close` no-op once finished; `abort` has to agree, or a completed move could be
+// reported as cancelled.
+BOOST_AUTO_TEST_CASE(abort_after_finish_is_a_no_op) {
+    robot::MoveStream stream;
+    stream.finish();
+
+    stream.abort("too late");
+
+    BOOST_CHECK(!stream.abort_reason().has_value());
+}
+
+// `finish` retires the stream; it does not erase why the move failed.
+BOOST_AUTO_TEST_CASE(finish_preserves_an_earlier_abort_reason) {
+    robot::MoveStream stream;
+    stream.abort("client went away");
+    stream.finish();
+
+    const auto reason = stream.abort_reason();
+    BOOST_REQUIRE(reason.has_value());
+    BOOST_CHECK_EQUAL(*reason, "client went away");
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_SUITE(move_stream_consumer)
