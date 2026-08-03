@@ -982,7 +982,7 @@ void YaskawaController::establish_connections_(std::stop_token token) {
             known_groups_.clear();
             known_groups_.reserve(caps.groups.size());
             for (const auto& grp : caps.groups) {
-                known_groups_.push_back(grp.group_id);
+                known_groups_.push_back(grp);
             }
         }
 
@@ -1538,7 +1538,36 @@ bool YaskawaController::checkGroupIndex(uint32_t group_index) {
         return false;
     }
     const std::shared_lock lock{known_groups_mutex_};
-    return std::find(known_groups_.begin(), known_groups_.end(), static_cast<uint8_t>(group_index)) != known_groups_.end();
+    return find_group_(static_cast<uint8_t>(group_index)) != nullptr;
+}
+
+const GroupCapability* YaskawaController::find_group_(uint8_t group_id) const {
+    const auto it = std::ranges::find(known_groups_, group_id, &GroupCapability::group_id);
+    return it == known_groups_.end() ? nullptr : &*it;
+}
+
+std::chrono::microseconds YaskawaController::interpolation_period(uint32_t group_index) const {
+    validate_group_(group_index);
+    const std::shared_lock lock{known_groups_mutex_};
+    const auto* group = find_group_(static_cast<uint8_t>(group_index));
+    if (group == nullptr || group->interpolation_period_us <= 0) {
+        throw std::runtime_error(std::format("controller did not report an interpolation period for group_index {}", group_index));
+    }
+    return std::chrono::microseconds{group->interpolation_period_us};
+}
+
+void YaskawaController::validate_sampling_freq_(uint32_t group_index, double sampling_freq_hz) const {
+    const auto period = interpolation_period(group_index);
+    const auto max_hz = 1e6 / static_cast<double>(period.count());
+    if (sampling_freq_hz > max_hz) {
+        throw std::invalid_argument(
+            std::format("trajectory sampling frequency {} Hz exceeds what group_index {} can execute: the controller interpolates every "
+                        "{} us, so it cannot consume points faster than {} Hz",
+                        sampling_freq_hz,
+                        group_index,
+                        period.count(),
+                        max_hz));
+    }
 }
 
 void YaskawaController::validate_group_(uint32_t group_index) const {
@@ -1546,8 +1575,7 @@ void YaskawaController::validate_group_(uint32_t group_index) const {
     // Protocol stores group_id as uint8_t, so anything outside that range can't possibly
     // match a cached entry. Check explicitly so a wide value (e.g. 256 with the same low byte
     // as a real group) doesn't silently wrap to a false positive.
-    if (group_index <= std::numeric_limits<uint8_t>::max() &&
-        std::find(known_groups_.begin(), known_groups_.end(), static_cast<uint8_t>(group_index)) != known_groups_.end()) {
+    if (group_index <= std::numeric_limits<uint8_t>::max() && find_group_(static_cast<uint8_t>(group_index)) != nullptr) {
         return;
     }
     // Build "[0, 1]" style summary of what *is* configured. When the cache is empty, the
@@ -1564,7 +1592,7 @@ void YaskawaController::validate_group_(uint32_t group_index) const {
             if (i > 0) {
                 known += ", ";
             }
-            known += std::to_string(static_cast<int>(known_groups_[i]));
+            known += std::to_string(static_cast<int>(known_groups_[i].group_id));
         }
     }
     throw std::runtime_error(std::format("group_index {} is not configured on this controller ({})", group_index, known));

@@ -656,6 +656,12 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     bool checkGroupIndex(uint32_t group_index);
     CapabilitiesMessage get_capabilities();
 
+    /// How often `group_index` can consume a trajectory point, from the capabilities handshake.
+    /// The controller advances its interpolation by at least this much per cycle, so points
+    /// spaced more closely than this cannot be executed as timed. Throws if the group is unknown,
+    /// which includes the case where no connection has completed yet.
+    std::chrono::microseconds interpolation_period(uint32_t group_index) const;
+
     /// Start executing `stream` on the arm. The first chunk goes out synchronously (so a
     /// rejected goal is reported to the caller as a throw), and a monitor thread then polls the
     /// goal, feeds further chunks as the controller's queue drains, and completes the returned
@@ -690,7 +696,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // Writes happen on the FSM connection thread (rare — once per connect); reads happen on
     // whichever thread calls a group-keyed public method. shared_mutex lets concurrent readers
     // proceed without contention; the lookup itself is a few comparisons over a small vector.
-    std::vector<uint8_t> known_groups_;
+    std::vector<GroupCapability> known_groups_;
     mutable std::shared_mutex known_groups_mutex_;
 
     // Per-group move locking: prevents concurrent moves on the same group
@@ -723,6 +729,16 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // public method so misconfigured arms fail loudly with the known-groups list rather than
     // surfacing the server's generic `VIAM_ERROR_INVALID_PAYLOAD`.
     void validate_group_(uint32_t group_index) const;
+
+    /// Look up a cached group by its protocol id, or null if the cache has no such entry.
+    /// Callers must already hold `known_groups_mutex_`, and must not retain the pointer beyond
+    /// that lock: a disconnect clears the cache.
+    const GroupCapability* find_group_(uint8_t group_id) const;
+
+    /// Reject a sampling frequency the controller cannot keep up with. Sampling faster than the
+    /// interpolation period produces points the controller has to consume more than one of per
+    /// cycle, so the arm runs the trajectory faster than it was timed for.
+    void validate_sampling_freq_(uint32_t group_index, double sampling_freq_hz) const;
 
     std::unique_ptr<state_> fsm_;
 

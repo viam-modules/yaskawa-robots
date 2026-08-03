@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -150,3 +151,15 @@ trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point
 // Converts a whole batch of streamed points, preserving order. Throws std::invalid_argument if
 // `dof` is not something the protocol can carry, or for any reason `convert_streamed_point` does.
 std::vector<trajectory_point_t> convert_streamed_batch(const std::vector<viam::sdk::Arm::trajectory_point>& batch, std::size_t dof);
+
+// Rejects a batch whose points are spaced more closely than the controller can interpolate. The
+// controller advances by at least one interpolation period per cycle, so it cannot execute points
+// that are closer together than that; it consumes them faster than real time instead, and the arm
+// runs a trajectory nobody asked for. `previous` carries the last accepted point's time in, so
+// spacing is checked across batch boundaries as well as within a batch, and is updated to this
+// batch's last point on return. An empty batch leaves it alone.
+//
+// Throws std::invalid_argument naming the offending gap.
+void check_streamed_spacing(const std::vector<viam::sdk::Arm::trajectory_point>& batch,
+                            std::chrono::microseconds interpolation_period,
+                            std::optional<std::chrono::microseconds>& previous);

@@ -197,3 +197,54 @@ BOOST_AUTO_TEST_CASE(one_bad_point_fails_the_batch) {
 }
 
 BOOST_AUTO_TEST_SUITE_END()
+
+// A 4ms interpolation period is what the controllers we target report, so 250 Hz is the fastest
+// stream they can execute.
+BOOST_AUTO_TEST_SUITE(streamed_spacing)
+
+constexpr auto k_period = std::chrono::microseconds{4000};
+
+BOOST_AUTO_TEST_CASE(spacing_at_the_interpolation_period_is_accepted) {
+    const std::vector<Arm::trajectory_point> batch{make_point(0us, 0.0, 0.0), make_point(4000us, 1.0, 0.0), make_point(8000us, 2.0, 0.0)};
+
+    std::optional<std::chrono::microseconds> previous;
+    BOOST_CHECK_NO_THROW(check_streamed_spacing(batch, k_period, previous));
+    BOOST_REQUIRE(previous.has_value());
+    BOOST_CHECK(*previous == 8000us);
+}
+
+BOOST_AUTO_TEST_CASE(spacing_below_the_interpolation_period_is_rejected) {
+    const std::vector<Arm::trajectory_point> batch{make_point(0us, 0.0, 0.0), make_point(3999us, 1.0, 0.0)};
+
+    std::optional<std::chrono::microseconds> previous;
+    BOOST_CHECK_THROW(check_streamed_spacing(batch, k_period, previous), std::invalid_argument);
+}
+
+// The gap between the last point of one batch and the first of the next is a real gap in the
+// trajectory, so batching must not be a way to smuggle points in too fast.
+BOOST_AUTO_TEST_CASE(spacing_is_checked_across_batch_boundaries) {
+    std::optional<std::chrono::microseconds> previous;
+    const std::vector<Arm::trajectory_point> first{make_point(0us, 0.0, 0.0), make_point(4000us, 1.0, 0.0)};
+    BOOST_REQUIRE_NO_THROW(check_streamed_spacing(first, k_period, previous));
+
+    const std::vector<Arm::trajectory_point> second{make_point(5000us, 2.0, 0.0)};
+    BOOST_CHECK_THROW(check_streamed_spacing(second, k_period, previous), std::invalid_argument);
+}
+
+// The first point has nothing to be spaced from, so any start time is fine.
+BOOST_AUTO_TEST_CASE(the_first_point_is_not_checked) {
+    const std::vector<Arm::trajectory_point> batch{make_point(1us, 0.0, 0.0)};
+
+    std::optional<std::chrono::microseconds> previous;
+    BOOST_CHECK_NO_THROW(check_streamed_spacing(batch, k_period, previous));
+}
+
+BOOST_AUTO_TEST_CASE(an_empty_batch_leaves_the_previous_time_alone) {
+    std::optional<std::chrono::microseconds> previous{4000us};
+
+    BOOST_CHECK_NO_THROW(check_streamed_spacing({}, k_period, previous));
+    BOOST_REQUIRE(previous.has_value());
+    BOOST_CHECK(*previous == 4000us);
+}
+
+BOOST_AUTO_TEST_SUITE_END()

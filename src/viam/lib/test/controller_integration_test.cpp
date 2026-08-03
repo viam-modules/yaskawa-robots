@@ -305,6 +305,23 @@ BOOST_FIXTURE_TEST_CASE(streamed_move_rejects_single_point_prime, ControllerFixt
     BOOST_CHECK_THROW(controller->enqueue_streamed_move_request(0, k_dof, std::move(samples), {}, 3.0), std::invalid_argument);
 }
 
+// The mock reports a 4ms interpolation period, so it cannot consume points faster than 250 Hz.
+// Sampling above that asks the controller for more points per cycle than it can execute, which
+// would run the trajectory faster than it was timed for rather than fail loudly.
+BOOST_FIXTURE_TEST_CASE(move_rejects_sampling_faster_than_interpolation, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    test::drive_mock_to_ready(controller);
+
+    BOOST_CHECK_EQUAL(controller->interpolation_period(0).count(), 4000);
+    BOOST_CHECK_THROW(controller->enqueue_streamed_move_request(0, k_dof, make_samples(), {}, 300.0), std::invalid_argument);
+
+    auto samples = make_samples();
+    BOOST_CHECK_THROW(controller->enqueue_move_request(0, k_dof, std::move(samples), {}, 300.0), std::invalid_argument);
+
+    // Exactly at the limit is still executable, so it must not be rejected.
+    BOOST_CHECK_NO_THROW(controller->enqueue_streamed_move_request(0, k_dof, make_samples(), {}, 250.0));
+}
+
 BOOST_FIXTURE_TEST_CASE(streamed_move_completes_after_close, ControllerFixture, *boost::unit_test::timeout(15)) {
     connect();
     auto move = start_streamed_move();

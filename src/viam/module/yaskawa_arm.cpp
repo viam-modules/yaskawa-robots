@@ -84,6 +84,9 @@ extern "C" void free_orientation_vector_components(double* ds);
 namespace {
 
 constexpr double k_min_sampling_freq_hz = 1.0;
+// Coarse bound only, since config validation runs before any controller is reachable. The real
+// limit is the group's interpolation period, which the controller reports during the capabilities
+// handshake and enforces when a move is enqueued.
 constexpr double k_max_sampling_freq_hz = 250.0;
 constexpr double k_default_min_timestep_sec = 1e-2;
 
@@ -522,6 +525,12 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
     auto result = [&, rlock = std::move(rlock)]() -> std::optional<loop_result> {
         const auto dof = static_cast<std::size_t>(velocity_limits_.size());
 
+        // The producer picks the point times, so nothing upstream has checked them against what
+        // this controller can actually execute. Carried across batches so the gap at a batch
+        // boundary is checked like any other.
+        const auto interpolation_period = robot_->interpolation_period(group_index_);
+        std::optional<std::chrono::microseconds> last_point_time;
+
         // Pull until we have enough to open the goal with. The move has to be primed because the
         // FSM worker thread dispatches the first chunk, and that thread also drives the heartbeat
         // -- it must never block there waiting on a remote producer. Batches are whatever size the
@@ -536,6 +545,7 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
                 // already is. Nothing to execute either way.
                 return std::nullopt;
             }
+            check_streamed_spacing(*batch, interpolation_period, last_point_time);
             const auto converted = convert_streamed_batch(*batch, dof);
             primer.insert(primer.end(), converted.begin(), converted.end());
         }
@@ -584,6 +594,7 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
                         // The SDK dispatcher filters these out, but be defensive.
                         continue;
                     }
+                    check_streamed_spacing(*batch, interpolation_period, last_point_time);
                     // `extend` returns false once the goal monitor has retired the move -- a fault,
                     // or an arm that stopped early. Stop feeding a stream nobody is reading.
                     if (!move.stream->extend(convert_streamed_batch(*batch, dof))) {

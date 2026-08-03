@@ -230,6 +230,7 @@ std::future<void> YaskawaController::enqueue_move_request(uint32_t group_index,
                                                           std::optional<RealtimeTrajectoryLogger> logger,
                                                           std::function<bool()> async_cancel_monitor) {
     validate_group_(group_index);
+    validate_sampling_freq_(group_index, trajectory_sampling_freq);
     if (!fsm_) {
         throw std::runtime_error("controller FSM not initialized");
     }
@@ -251,6 +252,7 @@ YaskawaController::streamed_move YaskawaController::enqueue_streamed_move_reques
                                                                                   std::optional<RealtimeTrajectoryLogger> logger,
                                                                                   std::function<bool()> async_cancel_monitor) {
     validate_group_(group_index);
+    validate_sampling_freq_(group_index, trajectory_sampling_freq);
     if (!fsm_) {
         throw std::runtime_error("controller FSM not initialized");
     }

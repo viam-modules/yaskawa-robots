@@ -246,3 +246,20 @@ std::vector<trajectory_point_t> convert_streamed_batch(const std::vector<viam::s
     const auto converted = batch | std::views::transform([dof](const auto& point) { return convert_streamed_point(point, dof); });
     return {converted.begin(), converted.end()};
 }
+
+void check_streamed_spacing(const std::vector<viam::sdk::Arm::trajectory_point>& batch,
+                            std::chrono::microseconds interpolation_period,
+                            std::optional<std::chrono::microseconds>& previous) {
+    for (const auto& point : batch) {
+        if (previous) {
+            const auto gap = point.time - *previous;
+            if (gap < interpolation_period) {
+                throw std::invalid_argument(
+                    std::format("trajectory points are {} us apart, closer than the controller's {} us interpolation period",
+                                gap.count(),
+                                interpolation_period.count()));
+            }
+        }
+        previous = point.time;
+    }
+}
