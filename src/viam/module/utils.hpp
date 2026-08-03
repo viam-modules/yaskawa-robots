@@ -131,35 +131,35 @@ Eigen::Index number_of_dof_configured(const viam::sdk::ResourceConfig& config, c
 // Scalars are broadcast to target_dof elements. Arrays must match target_dof exactly.
 Eigen::VectorXd read_limit_vector(const viam::sdk::ResourceConfig& config, const std::string& attribute, Eigen::Index target_dof);
 
-// Converts an SDK `trajectory_point` into the wire's `trajectory_point_t`.
+// Converts an sdk trajectory_point into the trajectory_point_t we put on the wire.
 //
-// The SDK denominates every joint value in degrees and carries time as a microsecond offset from
-// the start of the stream; the controller wants radians and a `duration_t` split into whole
-// seconds plus nanoseconds. Both sides measure time from the start of the trajectory, so there is
-// nothing to accumulate here -- a point converts in isolation.
+// The sdk gives us every joint value in degrees and the time as a microsecond offset from the
+// start of the stream. The controller wants radians and a duration_t split into whole seconds plus
+// nanoseconds. Both sides measure time from the start of the trajectory, so we do not have to keep
+// a running total and each point converts on its own.
 //
-// Streamed points arrive already time-parameterized, so this path deliberately bypasses
-// trajex/TOTG and does not re-check the configured `speed_rad_per_sec` /
-// `acceleration_rad_per_sec2`: the caller owns the profile. The controller still validates the
-// first point's speed against its per-axis limits and the first position against
-// START_MAX_PULSE_DEVIATION, so an unreachable stream is rejected at the goal rather than run.
+// Streamed points come in already time parameterized, so this path skips trajex and does not
+// recheck the configured speed_rad_per_sec or acceleration_rad_per_sec2. The caller picked the
+// profile. The controller still checks the first point's speed against its per axis limits and the
+// first position against START_MAX_PULSE_DEVIATION, so a stream the arm cannot reach gets rejected
+// when we open the goal instead of being run.
 //
-// Throws std::invalid_argument if the point carries no constraints (velocities are required) or if
-// any of its joint vectors is not `dof` long.
+// Throws std::invalid_argument if the point has no constraints, since we need velocities, or if
+// any of its joint vectors is not dof long.
 trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point& point, std::size_t dof);
 
-// Converts a whole batch of streamed points, preserving order. Throws std::invalid_argument if
-// `dof` is not something the protocol can carry, or for any reason `convert_streamed_point` does.
+// Converts a whole batch of streamed points and keeps them in order. Throws std::invalid_argument
+// if the protocol cannot carry dof joints, or for any reason convert_streamed_point does.
 std::vector<trajectory_point_t> convert_streamed_batch(const std::vector<viam::sdk::Arm::trajectory_point>& batch, std::size_t dof);
 
-// Rejects a batch whose points are spaced more closely than the controller can interpolate. The
-// controller advances by at least one interpolation period per cycle, so it cannot execute points
-// that are closer together than that; it consumes them faster than real time instead, and the arm
-// runs a trajectory nobody asked for. `previous` carries the last accepted point's time in, so
-// spacing is checked across batch boundaries as well as within a batch, and is updated to this
-// batch's last point on return. An empty batch leaves it alone.
+// Rejects a batch whose points are closer together than the controller can interpolate. The
+// controller moves forward by at least one interpolation period every cycle, so it cannot run
+// points that are closer together than that. It takes them faster than real time instead, and the
+// arm runs a trajectory the caller did not ask for. Pass the time of the last point we accepted in
+// through previous, so we check the gap between two batches as well as the gaps inside one, and we
+// set it to this batch's last point before returning. An empty batch leaves it alone.
 //
-// Throws std::invalid_argument naming the offending gap.
+// Throws std::invalid_argument saying which gap was too small.
 void check_streamed_spacing(const std::vector<viam::sdk::Arm::trajectory_point>& batch,
                             std::chrono::microseconds interpolation_period,
                             std::optional<std::chrono::microseconds>& previous);

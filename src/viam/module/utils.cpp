@@ -38,8 +38,8 @@ viam::yaskawa::LogLevel string_to_log_level(const std::string& level_str) {
     return viam::yaskawa::LogLevel::INFO;
 }
 
-// The SDK stub already validated time ordering and per-point arity, so the only thing left to
-// guard is that the caller is talking about this arm's joints.
+// the sdk stub already checked the time ordering and the size of each point, so all we have left
+// to check is that the caller is talking about this arm's joints.
 void check_streamed_arity(const std::vector<double>& src, std::size_t dof, const char* field) {
     if (src.size() != dof) {
         throw std::invalid_argument(std::format("trajectory point {} has {} joints, arm has {}", field, src.size(), dof));
@@ -204,16 +204,16 @@ void apply_move_limit(Eigen::VectorXd& limits, const boost::variant<double, std:
 }
 
 trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point& point, std::size_t dof) {
-    // The controller drives a velocity-parameterized queue, so a position-only point has no meaning
-    // to it. Rather than synthesize velocities by differencing -- which would silently invent a
-    // profile the caller did not ask for -- require them.
+    // the controller's queue is parameterized by velocity, so a point with only positions in it
+    // does not mean anything to it. we could work out velocities by differencing the positions, but
+    // that would invent a profile the caller never asked for, so require them instead.
     if (!point.constraints) {
         throw std::invalid_argument("trajectory point is missing constraints (velocities are required)");
     }
 
     const auto& velocities = point.constraints->velocities_degs_per_sec;
-    // The controller ignores accelerations today, but the wire struct carries them, so pass through
-    // whatever the caller supplied instead of dropping it.
+    // the controller ignores accelerations right now, but the wire struct has room for them, so
+    // send whatever the caller gave us instead of dropping it.
     const auto* accelerations = point.constraints->accelerations_degs_per_sec2.get_ptr();
 
     check_streamed_arity(point.positions, dof, "positions");
@@ -223,8 +223,8 @@ trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point
     }
 
     trajectory_point_t pt{};
-    // `trajectory_point_t` is a packed wire struct, so its arrays are filled element by element: a
-    // reference or pointer cannot bind to a packed field.
+    // trajectory_point_t is a packed struct, so we have to fill its arrays one element at a time.
+    // a reference or a pointer cannot bind to a packed field.
     for (std::size_t i = 0; i < dof; ++i) {
         pt.positions[i] = degrees_to_radians(point.positions[i]);
         pt.velocities[i] = degrees_to_radians(velocities[i]);

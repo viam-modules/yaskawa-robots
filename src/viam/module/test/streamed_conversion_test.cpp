@@ -18,7 +18,7 @@ namespace {
 
 constexpr std::size_t k_dof = 6;
 
-// A well-formed 6-DOF point, all joints at the same value, so tests can perturb one thing at a
+// a good 6 dof point with every joint at the same value, so a test can change one thing at a
 // time.
 Arm::trajectory_point make_point(std::chrono::microseconds time,
                                  double position_deg,
@@ -58,8 +58,8 @@ BOOST_AUTO_TEST_CASE(accelerations_convert_when_present) {
     }
 }
 
-// Accelerations are optional on the wire and the controller ignores them anyway, so a point
-// without them converts cleanly rather than being rejected.
+// accelerations are optional on the wire and the controller ignores them anyway, so a point
+// without them should convert fine instead of being rejected.
 BOOST_AUTO_TEST_CASE(accelerations_default_to_zero_when_absent) {
     const auto converted = convert_streamed_point(make_point(0us, 10.0, 5.0), k_dof);
 
@@ -68,8 +68,8 @@ BOOST_AUTO_TEST_CASE(accelerations_default_to_zero_when_absent) {
     }
 }
 
-// Joints past the arm's DOF are left at zero rather than carrying stale data: the wire struct is
-// always NUMBER_OF_DOF wide regardless of how many joints the arm has.
+// the wire struct is always NUMBER_OF_DOF wide no matter how many joints the arm has, so we leave
+// the joints past the end at zero instead of letting old data sit there.
 BOOST_AUTO_TEST_CASE(unused_joints_stay_zero) {
     const auto converted = convert_streamed_point(make_point(0us, 45.0, 45.0, 45.0), k_dof);
 
@@ -112,9 +112,9 @@ BOOST_AUTO_TEST_CASE(whole_second_leaves_no_remainder) {
     BOOST_CHECK_EQUAL(converted.time_from_start.nanos, 0U);
 }
 
-// `duration_t` is unsigned, so a negative offset has no representation. The SDK stub requires the
-// first point to be at zero and the rest to increase, but a bad time must fail loudly rather than
-// wrap around into an enormous one.
+// duration_t is unsigned so there is no way to hold a negative offset. the sdk stub already
+// requires the first point to be at zero and the rest to increase, but if a bad time does get here
+// we want it to fail rather than wrap around into a huge one.
 BOOST_AUTO_TEST_CASE(negative_time_is_rejected) {
     BOOST_CHECK_THROW(convert_streamed_point(make_point(-1us, 0.0, 0.0), k_dof), std::exception);
 }
@@ -123,8 +123,8 @@ BOOST_AUTO_TEST_SUITE_END()
 
 BOOST_AUTO_TEST_SUITE(streamed_point_validation)
 
-// The controller drives a velocity-parameterized queue, so a position-only point is rejected
-// rather than having velocities synthesized for it.
+// the controller's queue is parameterized by velocity, so we reject a point that only has
+// positions instead of making up velocities for it.
 BOOST_AUTO_TEST_CASE(missing_constraints_is_rejected) {
     Arm::trajectory_point point;
     point.time = 0us;
@@ -187,8 +187,8 @@ BOOST_AUTO_TEST_CASE(zero_dof_is_rejected) {
     BOOST_CHECK_THROW(convert_streamed_batch({}, 0), std::invalid_argument);
 }
 
-// One bad point fails the whole batch: partially feeding a trajectory to the arm would leave it
-// executing a motion the caller never described.
+// one bad point fails the whole batch. feeding the arm part of a trajectory would leave it running
+// a motion the caller never described.
 BOOST_AUTO_TEST_CASE(one_bad_point_fails_the_batch) {
     std::vector<Arm::trajectory_point> batch{make_point(0us, 0.0, 0.0), make_point(1'000'000us, 90.0, 10.0)};
     batch[1].constraints = boost::none;
@@ -198,8 +198,8 @@ BOOST_AUTO_TEST_CASE(one_bad_point_fails_the_batch) {
 
 BOOST_AUTO_TEST_SUITE_END()
 
-// A 4ms interpolation period is what the controllers we target report, so 250 Hz is the fastest
-// stream they can execute.
+// the controllers we care about report a 4ms interpolation period, so 250 Hz is the fastest stream
+// they can run.
 BOOST_AUTO_TEST_SUITE(streamed_spacing)
 
 constexpr auto k_period = std::chrono::microseconds{4000};
@@ -220,8 +220,8 @@ BOOST_AUTO_TEST_CASE(spacing_below_the_interpolation_period_is_rejected) {
     BOOST_CHECK_THROW(check_streamed_spacing(batch, k_period, previous), std::invalid_argument);
 }
 
-// The gap between the last point of one batch and the first of the next is a real gap in the
-// trajectory, so batching must not be a way to smuggle points in too fast.
+// the gap between the last point of one batch and the first of the next is a real gap in the
+// trajectory, so splitting points across batches should not get them past the check.
 BOOST_AUTO_TEST_CASE(spacing_is_checked_across_batch_boundaries) {
     std::optional<std::chrono::microseconds> previous;
     const std::vector<Arm::trajectory_point> first{make_point(0us, 0.0, 0.0), make_point(4000us, 1.0, 0.0)};
@@ -231,7 +231,7 @@ BOOST_AUTO_TEST_CASE(spacing_is_checked_across_batch_boundaries) {
     BOOST_CHECK_THROW(check_streamed_spacing(second, k_period, previous), std::invalid_argument);
 }
 
-// The first point has nothing to be spaced from, so any start time is fine.
+// the first point has nothing before it, so any start time is fine.
 BOOST_AUTO_TEST_CASE(the_first_point_is_not_checked) {
     const std::vector<Arm::trajectory_point> batch{make_point(1us, 0.0, 0.0)};
 

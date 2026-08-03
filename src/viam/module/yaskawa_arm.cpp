@@ -84,9 +84,8 @@ extern "C" void free_orientation_vector_components(double* ds);
 namespace {
 
 constexpr double k_min_sampling_freq_hz = 1.0;
-// Coarse bound only, since config validation runs before any controller is reachable. The real
-// limit is the group's interpolation period, which the controller reports during the capabilities
-// handshake and enforces when a move is enqueued.
+// this is a rough bound, since we validate the config before we can reach a controller. the real
+// limit comes from the group's interpolation period, which we check when a move is enqueued.
 constexpr double k_max_sampling_freq_hz = 250.0;
 constexpr double k_default_min_timestep_sec = 1e-2;
 
@@ -506,9 +505,8 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
     const std::function<boost::optional<std::vector<trajectory_point>>()>& batch_source,
     const std::function<bool(trajectory_update)>& update_handler,
     const viam::sdk::ProtoStruct&) {
-    // How the producer side of the stream ended: one of four clean exits, or a producer-side
-    // error carried as an exception to rethrow. The unlocked teardown below turns each into a
-    // return or a throw.
+    // how the producer side of the stream ended. either one of four clean exits, or an error we
+    // carry as an exception so we can rethrow it once the move is done.
     enum class exit_reason : std::uint8_t { k_completed, k_halted_by_update_handler, k_cancelled, k_move_finished_early };
     struct loop_result {
         std::future<void> completion;
@@ -517,32 +515,32 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
 
     std::shared_lock rlock{config_mutex_};
 
-    // Locked phase: prime the move, then feed it. The read lock is moved in here so it releases
-    // when this lambda returns, before we wait on the move's completion -- a streamed move can run
-    // arbitrarily long, and reconfigure shouldn't be pinned behind the wait. We do hold it across
-    // the blocking `batch_source()` calls to keep `robot_` valid; a stalled client is broken out of
-    // by gRPC tearing the RPC down.
+    // prime the move, then feed it. we move the read lock in here so it is released when this
+    // lambda returns, before we wait for the move to finish. a streamed move can run for a long
+    // time and we do not want reconfigure stuck behind it. we do hold the lock across the blocking
+    // batch_source() calls so robot_ stays valid, and if the client stalls grpc will tear down the
+    // rpc and break us out.
     auto result = [&, rlock = std::move(rlock)]() -> std::optional<loop_result> {
         const auto dof = static_cast<std::size_t>(velocity_limits_.size());
 
-        // The producer picks the point times, so nothing upstream has checked them against what
-        // this controller can actually execute. Carried across batches so the gap at a batch
-        // boundary is checked like any other.
+        // the producer picks the point times, so nobody has checked them against what this
+        // controller can actually run. we carry the last time across batches so the gap between
+        // two batches gets checked too.
         const auto interpolation_period = robot_->interpolation_period(group_index_);
         std::optional<std::chrono::microseconds> last_point_time;
 
-        // Pull until we have enough to open the goal with. The move has to be primed because the
-        // FSM worker thread dispatches the first chunk, and that thread also drives the heartbeat
-        // -- it must never block there waiting on a remote producer. Batches are whatever size the
-        // sender chose, including one point each, so accumulate across them rather than assuming
-        // the first batch is enough to start a goal.
+        // pull until we have enough points to open the goal with. we have to prime the move
+        // because the fsm worker thread sends the first chunk, and that thread also sends the
+        // heartbeat, so it can never block waiting on a remote producer. the sender picks the batch
+        // size and it might be one point, so we accumulate across batches instead of assuming the
+        // first one is big enough.
         std::vector<trajectory_point_t> primer;
         while (primer.size() < robot::k_min_goal_points) {
             const auto batch = batch_source();
             if (!batch) {
-                // The stream ended before it described any motion: either no points at all, or a
-                // lone point, which is the trajectory's starting state and so where the arm
-                // already is. Nothing to execute either way.
+                // the stream ended before it described any motion. either we got no points, or we
+                // got one point, which is where the trajectory starts and so where the arm already
+                // is. nothing to do either way.
                 return std::nullopt;
             }
             check_streamed_spacing(*batch, interpolation_period, last_point_time);
@@ -550,9 +548,9 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
             primer.insert(primer.end(), converted.begin(), converted.end());
         }
 
-        // TODO(RSDK-14267): realtime telemetry is not wired up for streamed trajectories.
-        // `RealtimeTrajectoryLogger` wants the whole planned trajectory up front, which a stream by
-        // definition does not have, so streamed moves run without a logger for now.
+        // TODO(RSDK-14267): we do not have realtime telemetry for streamed trajectories yet.
+        // RealtimeTrajectoryLogger needs the whole trajectory up front and a stream does not have
+        // that, so for now streamed moves run without a logger.
         auto move = robot_->enqueue_streamed_move_request(
             group_index_,
             static_cast<uint32_t>(velocity_limits_.size()),
@@ -567,46 +565,47 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
             outcome = [&]() -> exit_reason {
                 while (true) {
                     if (!update_handler({})) {
-                        // On the server side the handler only returns false when the gRPC call is
-                        // being torn down, i.e. the same thing an async cancel means: stop the arm.
+                        // on the server the handler only returns false when the grpc call is being
+                        // torn down, which means the same thing as an async cancel, so stop the arm.
                         move.stream->abort("move cancelled: update handler asked the stream to stop");
                         return exit_reason::k_halted_by_update_handler;
                     }
 
                     const auto batch = batch_source();
                     if (!batch) {
-                        // A disengaged batch source means end-of-stream or a torn-down RPC, and the
-                        // two need opposite handling: `close` lets the arm run out the points it
-                        // holds, `abort` stops it. Ask the context rather than assuming.
+                        // an empty batch source means either end of stream or a torn down rpc, and
+                        // we handle those two in opposite ways. close lets the arm finish the points
+                        // it has, abort stops it. check the context instead of guessing.
                         if (const auto& observer = viam::sdk::GrpcContextObserver::current();
                             observer && observer->context().IsCancelled()) {
                             VIAM_SDK_LOG(info) << "streamed move: batch source disengaged and the call is cancelled, aborting the move";
                             move.stream->abort("move cancelled: the client cancelled the stream");
                             return exit_reason::k_cancelled;
                         }
-                        // End of stream. A false return means the goal monitor retired the move
-                        // before we got here, handled the same as any other early finish.
+                        // end of stream. if close returns false the goal monitor already finished
+                        // the move before we got here, which we treat like any other early finish.
                         VIAM_SDK_LOG(debug) << "streamed move: end of stream, closing with " << move.stream->pending_count()
                                             << " points still buffered";
                         return move.stream->close() ? exit_reason::k_completed : exit_reason::k_move_finished_early;
                     }
                     if (batch->empty()) {
-                        // The SDK dispatcher filters these out, but be defensive.
+                        // the sdk dispatcher should filter these out, but check anyway.
                         continue;
                     }
                     check_streamed_spacing(*batch, interpolation_period, last_point_time);
-                    // `extend` returns false once the goal monitor has retired the move -- a fault,
-                    // or an arm that stopped early. Stop feeding a stream nobody is reading.
+                    // extend returns false once the goal monitor has finished the move, either from
+                    // a fault or because the arm stopped early. no point feeding a stream that
+                    // nobody is reading.
                     if (!move.stream->extend(convert_streamed_batch(*batch, dof))) {
                         return exit_reason::k_move_finished_early;
                     }
                 }
             }();
         } catch (...) {
-            // A producer-side error: a malformed point, or an update handler that threw. Abort so
-            // the monitor stops the arm rather than running out the points it already holds; the
-            // unlocked phase waits for that to land and then rethrows the original error, which is
-            // more specific than this stand-in.
+            // the producer gave us something bad, like a malformed point, or the update handler
+            // threw. abort so the monitor stops the arm instead of running out the points it
+            // already has. we wait for that abort below and then rethrow the original error, since
+            // it says more than the message we pass to abort.
             move.stream->abort("move failed: error while feeding the trajectory stream");
             outcome = std::current_exception();
         }
@@ -614,16 +613,16 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
         return loop_result{std::move(move.completion), std::move(outcome)};
     }();
 
-    // NOTE: the configuration read lock is no longer held after the above statement. Do not touch
-    // members other than to wait on the move's completion future.
+    // we no longer hold the config read lock. do not touch any members past this point, the only
+    // thing left to do is wait for the move to finish.
 
     if (!result) {
         return stream_outcome::k_completed;
     }
 
-    // Drain the completion when we have already decided to report something else. The exception is
-    // deliberately not propagated, but a genuine arm fault can land here at the same instant the
-    // client tears down, so log it rather than let it vanish behind a clean outcome.
+    // wait on the move when we have already decided to report something else. we do not want to
+    // propagate the exception, but a real arm fault can land here at the same time the client goes
+    // away, so log it instead of dropping it.
     const auto drain_completion = [&result](std::string_view reporting) {
         try {
             result->completion.get();
@@ -635,8 +634,8 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
     };
 
     if (const auto* error = std::get_if<std::exception_ptr>(&result->outcome)) {
-        // Wait for our abort to take effect so a retry can't race the dying move, then rethrow the
-        // original error rather than the abort's stand-in.
+        // wait for the abort to land so a retry does not race the dying move, then rethrow the
+        // error the producer gave us.
         drain_completion("a producer-side error");
         std::rethrow_exception(*error);
     }
@@ -647,21 +646,21 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
             return stream_outcome::k_completed;
         case exit_reason::k_halted_by_update_handler:
         case exit_reason::k_cancelled:
-            // We aborted -- at the handler's request, or because the client cancelled -- so the move
-            // completing with a cancellation error is expected, not a fault. Both map to the same
-            // `stream_outcome`; the SDK has no separate cancelled value, and a cancelled RPC has
-            // nobody left to report to anyway.
+            // we aborted, either because the handler asked us to or because the client cancelled,
+            // so a cancellation error here is expected and not a fault. both cases report the same
+            // outcome. the sdk does not have a cancelled value, and a cancelled rpc has nobody left
+            // to report to anyway.
             drain_completion("a halted stream");
             return stream_outcome::k_halted_by_update_handler;
         case exit_reason::k_move_finished_early:
-            // The move retired before end-of-stream. In practice that is a fault, which `get()`
-            // rethrows. A clean completion here would mean the arm finished a motion we never told
-            // it was done with; surface that rather than hide it.
+            // the move finished before the stream did. that is usually a fault, which get() will
+            // rethrow. if it completed cleanly then the arm finished a motion we never told it was
+            // done with, so report that instead of hiding it.
             result->completion.get();
             throw std::runtime_error("arm reported trajectory completion before end-of-stream");
     }
 
-    // Unreachable: the switch covers every `exit_reason`.
+    // we should never get here, the switch covers every exit_reason.
     throw std::logic_error("move_through_joint_positions_streamed: unhandled exit_reason");
 }
 
@@ -717,8 +716,9 @@ pose YaskawaArm::get_end_position(const ProtoStruct&) {
 }
 
 void YaskawaArm::stop(const ProtoStruct&) {
-    // Worth logging: viam-server calls this on session expiry, so it is how a disconnected client's
-    // move actually gets stopped, on a very different timescale from our own cancellation paths.
+    // worth logging. viam-server calls this when a session expires, so this is how a move gets
+    // stopped when a client disconnects instead of cancelling, and it takes much longer than our
+    // own cancel paths.
     VIAM_SDK_LOG(info) << "stop: stop API called for group " << group_index_;
     if (!robot_->stop(group_index_)) {
         // we were not checking this before. Add a log to see how often it occurs

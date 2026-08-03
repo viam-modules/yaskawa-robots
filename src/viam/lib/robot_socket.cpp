@@ -1238,9 +1238,9 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
     if (!stream) {
         throw std::runtime_error("execute_trajectory: no trajectory stream");
     }
-    // The producer can give up before the FSM ever dispatches the move (the client cancelled, or a
-    // later point in the stream was malformed). Bail before commanding any motion -- the monitor
-    // thread's abort check only helps once the goal is already running.
+    // the producer can give up before the fsm ever sends the move, either because the client
+    // cancelled or because a later point was malformed. bail out before we command any motion,
+    // since the monitor thread's abort check only helps once the goal is already running.
     if (const auto abort_reason = stream->abort_reason()) {
         throw std::runtime_error(*abort_reason);
     }
@@ -1259,17 +1259,18 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
     }
     LOGGING(debug) << "execute_trajectory: acquired move lock for group " << group_index;
 
-    // Scope guard clears the per-group lock on any exit path, and retires the stream so a
-    // producer still feeding a streamed move learns it is over.
+    // the scope guard clears the per group lock on any way out, and finishes the stream so a
+    // producer still feeding a streamed move finds out it is over.
     // Dismissed after the monitoring thread is successfully created (which takes over cleanup responsibility).
     ScopeGuard cleanup{[this, group_index, stream]() {
         stream->finish();
         group_move_in_progress_[group_index] = false;
     }};
 
-    // Send the first chunk. `staged` is the tail of what we last pulled out of the stream: points
-    // taken from it but not yet accepted by the controller. The controller needs at least two
-    // points to open a goal, so a streamed move must prime the stream before getting here.
+    // send the first chunk. staged holds what is left over from the last time we pulled from the
+    // stream, so points we have taken but the controller has not accepted yet. the controller needs
+    // at least two points to open a goal, so a streamed move has to prime the stream before it gets
+    // here.
     auto staged = stream->take(k_chunk_size);
     if (staged.empty()) {
         throw std::runtime_error("execute_trajectory: trajectory stream has no points to start from");
@@ -1312,8 +1313,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                  axes_controlled,
                  logger = std::move(logger),
                  async_cancel_monitor = std::move(async_cancel_monitor)]() mutable {
-        // Scope guard clears per-group lock when thread exits (success or failure), and retires
-        // the stream so a producer still feeding it stops.
+        // the scope guard clears the per group lock when this thread exits, whether it worked or
+        // not, and finishes the stream so a producer still feeding it stops.
         const ScopeGuard thread_cleanup{[&self, &stream, group_index]() {
             LOGGING(debug) << "monitor thread exiting: releasing move lock for group " << group_index;
             stream->finish();
@@ -1333,9 +1334,10 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                     return;
                 }
 
-                // Two ways a caller kills an in-flight move: the async monitor (a cancelled gRPC
-                // context) and, for a streamed move, the producer aborting the stream because it
-                // faulted or was torn down. Both stop the arm and fail the move.
+                // a caller can kill a move that is already running in two ways. the async monitor
+                // sees a cancelled grpc context, or for a streamed move the producer aborts the
+                // stream because it hit an error or was torn down. both stop the arm and fail the
+                // move.
                 const auto abort_reason = stream->abort_reason();
                 const bool async_cancelled = async_cancel_monitor && async_cancel_monitor();
                 if (abort_reason || async_cancelled) {
@@ -1370,9 +1372,9 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
 
                     switch (status_msg.state) {
                         case GOAL_STATE_ACTIVE:
-                            // Feed the controller more points when its queue is running low. For a
-                            // unary move that drains a trajectory we already hold; for a streamed
-                            // move it also picks up whatever the producer has extended since the
+                            // give the controller more points when its queue is getting low. for a
+                            // unary move that just drains a trajectory we already have. for a
+                            // streamed move it also picks up whatever the producer added since the
                             // last tick.
                             if (staged.empty()) {
                                 staged = stream->take(k_chunk_size);
@@ -1384,8 +1386,9 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
 
                                     const auto chunk_accepted = shared->send_goal_(group_index, axes_controlled, staged, {});
                                     LOGGING(debug) << "chunk accepted: " << chunk_accepted.num_trajectory_accepted << " points";
-                                    // A partial accept means the controller's queue filled up; keep
-                                    // the tail staged and offer it again on the next tick.
+                                    // if the controller only took some of them then its queue
+                                    // filled up, so keep the rest staged and offer it again next
+                                    // tick.
                                     const auto consumed =
                                         std::min(static_cast<size_t>(chunk_accepted.num_trajectory_accepted), staged.size());
                                     staged.erase(staged.begin(), std::next(staged.begin(), static_cast<ptrdiff_t>(consumed)));
@@ -1393,21 +1396,20 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                             }
                             break;
                         case GOAL_STATE_SUCCEEDED: {
-                            // The arm finished the trajectory it was given. That is only the end of
+                            // the arm finished the trajectory we gave it. that is only the end of
                             // the move if we have nothing left to send and the producer has closed
-                            // the stream; otherwise the arm ran out of points before the trajectory
-                            // was over -- either we failed to keep it fed, or (streamed) the
-                            // producer could not keep up.
+                            // the stream. otherwise the arm ran out of points early, either because
+                            // we did not keep it fed or, for a streamed move, because the producer
+                            // could not keep up.
                             //
-                            // There is deliberately no grace period here: once the arm has stopped
-                            // mid-trajectory the motion is already wrong, and waiting to see whether
-                            // more points show up would only decide how long to stand still before
-                            // admitting it. The cost is that a streamed producer which stalls even
-                            // once -- long enough for the controller's queue to drain -- loses the
-                            // whole move with no way to resume, and has to re-issue it from the
-                            // arm's new position. If that turns out to be too brittle in practice,
-                            // the fix belongs upstream in how much trajectory we buffer ahead, not
-                            // in tolerating an arm that has already stopped.
+                            // we do not give it a grace period on purpose. once the arm has stopped
+                            // partway through, the motion is already wrong, and waiting to see if
+                            // more points turn up would only pick how long we stand still before
+                            // saying so. the downside is that a streamed producer that stalls once
+                            // for long enough to drain the controller's queue loses the whole move
+                            // and has to reissue it from wherever the arm ended up. if that turns
+                            // out to be too fragile, the fix is to buffer more trajectory ahead of
+                            // the arm, not to keep going once the arm has stopped.
                             const auto unsent = staged.size() + stream->pending_count();
                             LOGGING(debug) << "goal SUCCEEDED: unsent=" << unsent << " closed=" << stream->closed();
                             if (unsent > 0 || !stream->closed()) {

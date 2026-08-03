@@ -507,66 +507,71 @@ class UdpBroadcastListener {
 
 class GoalRequestHandle;
 
-/// The fewest points the controller will open a goal with: `MIN_NUMBER_OF_POINTS_PER_TRAJECTORY`
-/// in the MotoPlus firmware, which the wire protocol does not export, so it is mirrored here.
-/// Sending fewer is rejected outright with `VIAM_ERROR_TRAJ_EMPTY`. A single point describes only
-/// where the trajectory starts, which is where the arm already is -- there is no motion in it.
+/// The fewest points the controller will open a goal with. This is
+/// MIN_NUMBER_OF_POINTS_PER_TRAJECTORY in the MotoPlus firmware, and the wire protocol does not
+/// send it to us, so we have to keep our own copy. If we send fewer the controller rejects the
+/// goal with VIAM_ERROR_TRAJ_EMPTY. One point on its own is just where the trajectory starts,
+/// which is where the arm already is, so there is no motion in it.
 inline constexpr std::size_t k_min_goal_points = 2;
 
-/// The trajectory of a single move, handed from whoever produced it to the goal monitor that
-/// feeds it to the controller. A unary move fills one in and closes it before the move is ever
-/// enqueued; a streamed move keeps extending it while the arm is already running.
+/// The trajectory for a single move, handed from whoever produced it to the goal monitor that
+/// feeds it to the controller. A unary move fills one in and closes it before the move is even
+/// enqueued. A streamed move keeps adding to it while the arm is already running.
 ///
-/// The producer (a gRPC handler thread, for a streamed move) and the consumer (the goal monitor
-/// thread spawned by `execute_trajectory`) touch this concurrently, so every member takes the
-/// lock. Points are not bounded: the controller's own queue and the monitor's
-/// `queue_threshold` gate pace the hardware, and a producer that outruns the arm only grows
-/// this buffer.
+/// The producer and the consumer use this at the same time, so every method takes the lock. For a
+/// streamed move the producer is a grpc handler thread and the consumer is the goal monitor thread
+/// that execute_trajectory spawns. We do not bound the number of points we hold. The controller's
+/// queue and the monitor's queue_threshold decide how fast the arm gets fed, so a producer that
+/// outruns the arm just makes this buffer bigger.
 ///
-/// The phase only moves forward: open -> closed (producer said end-of-stream) -> finished (the
-/// consumer is done with it, whether it drained the points, faulted, or was cancelled). Once
-/// finished, `extend`/`close` report false rather than throwing, which is how a producer learns
-/// the monitor completed the move out from under it.
+/// A stream only moves in one direction, from open, to closed once the producer says it is done
+/// sending, to finished once the consumer is done with it. The consumer finishes a stream whether
+/// it used all the points, hit a fault, or was cancelled. After that extend and close return false
+/// instead of throwing, which is how the producer finds out that the monitor already ended the
+/// move without it.
 class MoveStream {
    public:
     MoveStream() = default;
 
-    /// Seed a stream that is complete from the outset: the unary move path.
+    /// Build a stream that is already complete. This is what the unary move path uses.
     explicit MoveStream(std::vector<trajectory_point_t> samples);
 
-    /// Append more points. Returns false if the consumer has already finished the move, or if
-    /// the stream was closed; in both cases the points are dropped.
+    /// Add more points. Returns false and drops the points if the stream was closed, or if the
+    /// consumer has already finished the move.
     bool extend(const std::vector<trajectory_point_t>& points);
 
-    /// Declare end-of-stream. Returns false if the consumer has already finished the move.
+    /// Say that we are done sending points. Returns false if the consumer already finished the
+    /// move.
     bool close();
 
-    /// Close the stream and record why it will never complete normally (client cancellation, a
-    /// malformed point). The monitor notices on its next tick, stops the arm, and fails the
-    /// move with `message`. A no-op once the consumer has finished the move, and only the first
-    /// reason is kept, so the earliest cause of failure is the one reported.
+    /// Close the stream and say why it is never going to finish normally, for example the client
+    /// cancelled or sent a malformed point. The monitor picks this up on its next tick, stops the
+    /// arm, and fails the move with the message. This does nothing once the consumer has finished
+    /// the move. We keep the first reason we are given, so the caller hears about whatever went
+    /// wrong first.
     void abort(std::string_view message);
 
-    /// True once the consumer is done with this stream, i.e. further `extend`/`close` are no-ops.
+    /// True once the consumer is done with this stream, so extend and close no longer do
+    /// anything.
     bool finished() const;
 
-    /// Remove and return up to `max_points` points from the front of the buffer.
+    /// Take up to max_points points off the front of the buffer.
     std::vector<trajectory_point_t> take(std::size_t max_points);
 
-    /// True once the producer has declared end-of-stream.
+    /// True once the producer has said it is done sending points.
     bool closed() const;
 
-    /// True when the producer is done and every point it sent has been taken.
+    /// True when the producer is done sending and we have taken every point it sent.
     bool drained() const;
 
-    /// Points sent by the producer but not yet taken.
+    /// How many points the producer has sent that we have not taken yet.
     std::size_t pending_count() const;
 
-    /// The abort message, if the producer aborted the stream.
+    /// The message from abort, if the producer aborted the stream.
     std::optional<std::string> abort_reason() const;
 
-    /// Mark the stream as no longer consumable. Idempotent; called on every exit path of the
-    /// goal monitor so a producer blocked on this move stops feeding it.
+    /// Mark the stream as done. Safe to call more than once. The goal monitor calls this on every
+    /// path out so that a producer still feeding this move stops.
     void finish();
 
    private:
@@ -656,10 +661,10 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     bool checkGroupIndex(uint32_t group_index);
     CapabilitiesMessage get_capabilities();
 
-    /// How often `group_index` can consume a trajectory point, from the capabilities handshake.
-    /// The controller advances its interpolation by at least this much per cycle, so points
-    /// spaced more closely than this cannot be executed as timed. Throws if the group is unknown,
-    /// which includes the case where no connection has completed yet.
+    /// How often the group can take a trajectory point, which the controller tells us during the
+    /// capabilities handshake. The controller moves its interpolation forward by at least this much
+    /// every cycle, so it cannot run points that are closer together than this. Throws if we do not
+    /// know the group, which includes the case where we have not finished connecting yet.
     std::chrono::microseconds interpolation_period(uint32_t group_index) const;
 
     /// Start executing `stream` on the arm. The first chunk goes out synchronously (so a
@@ -730,14 +735,14 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // surfacing the server's generic `VIAM_ERROR_INVALID_PAYLOAD`.
     void validate_group_(uint32_t group_index) const;
 
-    /// Look up a cached group by its protocol id, or null if the cache has no such entry.
-    /// Callers must already hold `known_groups_mutex_`, and must not retain the pointer beyond
-    /// that lock: a disconnect clears the cache.
+    /// Find a cached group by its protocol id, or null if we do not have one. The caller has to
+    /// hold known_groups_mutex_ already, and cannot hang on to the pointer after releasing it,
+    /// since a disconnect clears the cache.
     const GroupCapability* find_group_(uint8_t group_id) const;
 
-    /// Reject a sampling frequency the controller cannot keep up with. Sampling faster than the
-    /// interpolation period produces points the controller has to consume more than one of per
-    /// cycle, so the arm runs the trajectory faster than it was timed for.
+    /// Reject a sampling frequency that the controller cannot keep up with. If we sample faster
+    /// than the interpolation period then the controller has to take more than one point per cycle,
+    /// and the arm ends up running the trajectory faster than we timed it for.
     void validate_sampling_freq_(uint32_t group_index, double sampling_freq_hz) const;
 
     std::unique_ptr<state_> fsm_;

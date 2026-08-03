@@ -59,9 +59,9 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
                                       const MoveOptions& options,
                                       const viam::sdk::ProtoStruct& extra) override;
 
-    /// @brief Execute a stream of already time-parameterized joint waypoints in order.
-    /// @param batch_source Pull-source for the next batch of waypoints.
-    /// @param update_handler Handler invoked for each update this arm emits.
+    /// @brief Run a stream of joint waypoints, in order, that are already time parameterized.
+    /// @param batch_source Call this to get the next batch of waypoints.
+    /// @param update_handler Called for each update this arm sends back.
     /// @param extra Any additional arguments to the method.
     /// @return How the stream ended.
     stream_outcome move_through_joint_positions_streamed(

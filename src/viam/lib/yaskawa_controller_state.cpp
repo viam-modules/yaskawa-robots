@@ -234,7 +234,7 @@ std::future<void> YaskawaController::enqueue_move_request(uint32_t group_index,
     if (!fsm_) {
         throw std::runtime_error("controller FSM not initialized");
     }
-    // A unary move is a stream that was complete before it started: one batch, already closed.
+    // a unary move is a stream that was already finished before it started, one batch and closed.
     return fsm_->enqueue_move_request(group_index,
                                       axes_controlled,
                                       std::make_shared<MoveStream>(std::move(samples)),
@@ -277,10 +277,10 @@ YaskawaController::streamed_move YaskawaController::enqueue_streamed_move_reques
 // move_request
 // ---------------------------------------------------------------
 
-// Both completion paths retire the stream. It is already finished when the goal monitor ran, but
-// a request can also be failed before it is ever dispatched (the FSM lost the connection, or
-// went not-ready), and a streamed producer needs to learn that from `extend`/`close` returning
-// false rather than feeding a move that will never run.
+// both of these finish the stream. it is already finished if the goal monitor ran, but we can also
+// fail a request before we ever send it, for example if the fsm lost the connection or went not
+// ready. a streamed producer needs to hear about that from extend and close returning false,
+// instead of feeding a move that is never going to run.
 void YaskawaController::state_::move_request::complete_success() {
     if (stream) {
         stream->finish();
