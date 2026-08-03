@@ -234,10 +234,14 @@ std::future<void> YaskawaController::enqueue_move_request(uint32_t group_index,
     if (!fsm_) {
         throw std::runtime_error("controller FSM not initialized");
     }
-    // a unary move is a stream that was already finished before it started, one batch and closed.
+    // a unary move already has its whole trajectory, so close the stream as soon as we have seeded
+    // it. the monitor has to know nothing else is coming, or it reads the end of the trajectory as
+    // us failing to keep the arm fed.
+    auto stream = std::make_shared<MoveStream>(std::move(samples));
+    stream->close();
     return fsm_->enqueue_move_request(group_index,
                                       axes_controlled,
-                                      std::make_shared<MoveStream>(std::move(samples)),
+                                      std::move(stream),
                                       std::move(tolerance),
                                       trajectory_sampling_freq,
                                       std::move(logger),
@@ -261,8 +265,8 @@ YaskawaController::streamed_move YaskawaController::enqueue_streamed_move_reques
             "streamed move must be primed with at least {} trajectory points, got {}", k_min_goal_points, initial_samples.size()));
     }
 
-    auto stream = std::make_shared<MoveStream>();
-    stream->extend(initial_samples);
+    // seed the stream with the primer and leave it open, the producer still has points to send.
+    auto stream = std::make_shared<MoveStream>(initial_samples);
     auto completion = fsm_->enqueue_move_request(group_index,
                                                  axes_controlled,
                                                  stream,

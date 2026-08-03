@@ -37,34 +37,52 @@ std::vector<double> tags_of(const std::vector<trajectory_point_t>& points) {
 
 }  // namespace
 
-BOOST_AUTO_TEST_SUITE(move_stream_unary)
+BOOST_AUTO_TEST_SUITE(move_stream_seeded)
 
-// the unary move path wraps its finished trajectory in a stream. that stream starts out closed,
-// since the consumer has to know right away that nothing else is coming. otherwise it would think
-// the end of the trajectory was the producer falling behind.
-BOOST_AUTO_TEST_CASE(seeded_stream_is_born_closed) {
+// the constructor only fills the buffer, it does not close the stream. close is the only thing that
+// closes one, so nobody has to work out which constructor they called to know what phase they are
+// in.
+BOOST_AUTO_TEST_CASE(seeded_stream_starts_open) {
     robot::MoveStream stream{tagged_points({1.0, 2.0, 3.0})};
 
-    BOOST_CHECK(stream.closed());
+    BOOST_CHECK(!stream.closed());
     BOOST_CHECK(!stream.drained());
     BOOST_CHECK_EQUAL(stream.pending_count(), 3U);
     BOOST_CHECK(!stream.finished());
     BOOST_CHECK(!stream.abort_reason().has_value());
 }
 
-BOOST_AUTO_TEST_CASE(seeded_stream_rejects_further_points) {
-    robot::MoveStream stream{tagged_points({1.0})};
+// with no points we get an empty open stream, which is where a streamed move starts.
+BOOST_AUTO_TEST_CASE(default_constructed_stream_is_open_and_empty) {
+    robot::MoveStream stream;
 
-    BOOST_CHECK(!stream.extend(tagged_points({2.0})));
-    BOOST_CHECK_EQUAL(stream.pending_count(), 1U);
+    BOOST_CHECK(!stream.closed());
+    BOOST_CHECK(!stream.drained());
+    BOOST_CHECK_EQUAL(stream.pending_count(), 0U);
+    BOOST_CHECK(stream.extend(tagged_points({1.0})));
 }
 
-BOOST_AUTO_TEST_CASE(empty_seeded_stream_is_drained) {
-    const robot::MoveStream stream{{}};
+// a streamed move seeds the stream with the points it primed the goal with and then keeps feeding
+// it, so seeding must not stop us adding more.
+BOOST_AUTO_TEST_CASE(seeded_stream_can_still_be_extended) {
+    robot::MoveStream stream{tagged_points({1.0})};
+
+    BOOST_CHECK(stream.extend(tagged_points({2.0})));
+    BOOST_CHECK_EQUAL(stream.pending_count(), 2U);
+}
+
+// the unary path: seed the stream with the whole trajectory, then say we are done. the consumer has
+// to be able to tell that nothing else is coming, otherwise it reads the end of the trajectory as
+// the producer falling behind.
+BOOST_AUTO_TEST_CASE(seeding_then_closing_is_a_unary_move) {
+    robot::MoveStream stream{tagged_points({1.0, 2.0})};
+    BOOST_CHECK(stream.close());
 
     BOOST_CHECK(stream.closed());
+    BOOST_CHECK(!stream.drained());
+    BOOST_CHECK(!stream.extend(tagged_points({3.0})));
+    BOOST_CHECK_EQUAL(stream.take(2).size(), 2U);
     BOOST_CHECK(stream.drained());
-    BOOST_CHECK_EQUAL(stream.pending_count(), 0U);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

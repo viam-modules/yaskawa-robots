@@ -100,7 +100,9 @@ struct TestFixture {
     // helper: build simple trajectory samples and call execute_trajectory on the given group.
     std::unique_ptr<robot::GoalRequestHandle> do_move(uint32_t group_index = 0, double offset = 0.1) {
         test::drive_mock_to_ready(controller);
-        return controller->execute_trajectory(group_index, k_dof, std::make_shared<robot::MoveStream>(make_samples(offset)), {}, 3.0);
+        auto stream = std::make_shared<robot::MoveStream>(make_samples(offset));
+        stream->close();
+        return controller->execute_trajectory(group_index, k_dof, std::move(stream), {}, 3.0);
     }
 
     // helper: give the same trajectory to the streamed path, so a test can call extend, close or

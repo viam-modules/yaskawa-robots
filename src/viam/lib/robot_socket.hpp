@@ -531,10 +531,9 @@ inline constexpr std::size_t k_min_goal_points = 2;
 /// move without it.
 class MoveStream {
    public:
-    MoveStream() = default;
-
-    /// Build a stream that is already complete. This is what the unary move path uses.
-    explicit MoveStream(std::vector<trajectory_point_t> samples);
+    /// Start a stream, with the points we already have if we have any. Either way the stream is
+    /// open, so a unary move has to call close() once it has handed over its whole trajectory.
+    explicit MoveStream(std::vector<trajectory_point_t> samples = {});
 
     /// Add more points. Returns false and drops the points if the stream was closed, or if the
     /// consumer has already finished the move.
