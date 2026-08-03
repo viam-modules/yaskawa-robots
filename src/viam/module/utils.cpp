@@ -3,6 +3,7 @@
 #include <chrono>
 #include <format>
 #include <iomanip>
+#include <ranges>
 #include <sstream>
 #include <vector>
 
@@ -242,10 +243,6 @@ std::vector<trajectory_point_t> convert_streamed_batch(const std::vector<viam::s
     if (dof == 0 || dof > static_cast<std::size_t>(NUMBER_OF_DOF)) {
         throw std::invalid_argument(std::format("arm has {} joints, which the protocol cannot carry (max {})", dof, NUMBER_OF_DOF));
     }
-    std::vector<trajectory_point_t> out;
-    out.reserve(batch.size());
-    for (const auto& point : batch) {
-        out.push_back(convert_streamed_point(point, dof));
-    }
-    return out;
+    const auto converted = batch | std::views::transform([dof](const auto& point) { return convert_streamed_point(point, dof); });
+    return {converted.begin(), converted.end()};
 }

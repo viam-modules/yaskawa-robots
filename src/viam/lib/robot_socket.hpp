@@ -534,14 +534,6 @@ class MoveStream {
     /// Seed a stream that is complete from the outset: the unary move path.
     explicit MoveStream(std::vector<trajectory_point_t> samples);
 
-    MoveStream(const MoveStream&) = delete;
-    MoveStream& operator=(const MoveStream&) = delete;
-    MoveStream(MoveStream&&) = delete;
-    MoveStream& operator=(MoveStream&&) = delete;
-    ~MoveStream() = default;
-
-    // ---- producer side ----
-
     /// Append more points. Returns false if the consumer has already finished the move, or if
     /// the stream was closed; in both cases the points are dropped.
     bool extend(const std::vector<trajectory_point_t>& points);
@@ -557,8 +549,6 @@ class MoveStream {
 
     /// True once the consumer is done with this stream, i.e. further `extend`/`close` are no-ops.
     bool finished() const;
-
-    // ---- consumer side ----
 
     /// Remove and return up to `max_points` points from the front of the buffer.
     std::vector<trajectory_point_t> take(std::size_t max_points);

@@ -64,10 +64,6 @@ using namespace boost::asio;
 
 constexpr size_t k_chunk_size = 200;  // controller cannot exceed 200 points per message
 
-// ---------------------------------------------------------------
-// MoveStream
-// ---------------------------------------------------------------
-
 MoveStream::MoveStream(std::vector<trajectory_point_t> samples)
     : pending_(std::make_move_iterator(samples.begin()), std::make_move_iterator(samples.end())), closed_{true} {}
 

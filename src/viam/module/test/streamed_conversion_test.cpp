@@ -2,6 +2,7 @@
 #include <boost/test/unit_test.hpp>
 
 #include <chrono>
+#include <numbers>
 #include <stdexcept>
 #include <vector>
 
@@ -44,8 +45,8 @@ BOOST_AUTO_TEST_CASE(positions_and_velocities_convert_to_radians) {
     const auto converted = convert_streamed_point(make_point(0us, 180.0, 90.0), k_dof);
 
     for (std::size_t i = 0; i < k_dof; ++i) {
-        BOOST_CHECK_CLOSE(converted.positions[i], M_PI, 1e-9);
-        BOOST_CHECK_CLOSE(converted.velocities[i], M_PI / 2.0, 1e-9);
+        BOOST_CHECK_CLOSE(converted.positions[i], std::numbers::pi, 1e-9);
+        BOOST_CHECK_CLOSE(converted.velocities[i], std::numbers::pi / 2.0, 1e-9);
     }
 }
 
@@ -53,7 +54,7 @@ BOOST_AUTO_TEST_CASE(accelerations_convert_when_present) {
     const auto converted = convert_streamed_point(make_point(0us, 0.0, 0.0, 360.0), k_dof);
 
     for (std::size_t i = 0; i < k_dof; ++i) {
-        BOOST_CHECK_CLOSE(converted.accelerations[i], 2.0 * M_PI, 1e-9);
+        BOOST_CHECK_CLOSE(converted.accelerations[i], 2.0 * std::numbers::pi, 1e-9);
     }
 }
 
@@ -170,8 +171,8 @@ BOOST_AUTO_TEST_CASE(batch_preserves_order) {
     BOOST_CHECK_EQUAL(converted[0].time_from_start.sec, 0U);
     BOOST_CHECK_EQUAL(converted[1].time_from_start.sec, 1U);
     BOOST_CHECK_EQUAL(converted[2].time_from_start.sec, 2U);
-    BOOST_CHECK_CLOSE(converted[1].positions[0], M_PI / 2.0, 1e-9);
-    BOOST_CHECK_CLOSE(converted[2].positions[0], M_PI, 1e-9);
+    BOOST_CHECK_CLOSE(converted[1].positions[0], std::numbers::pi / 2.0, 1e-9);
+    BOOST_CHECK_CLOSE(converted[2].positions[0], std::numbers::pi, 1e-9);
 }
 
 BOOST_AUTO_TEST_CASE(empty_batch_converts_to_nothing) {
