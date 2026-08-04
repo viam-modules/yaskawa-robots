@@ -145,7 +145,9 @@ void example(asio::io_context& io_context) {
                 samples.push_back(pt);
             }
 
-            auto ret = robot->execute_trajectory(0, k_dof, std::move(samples), {}, 3.0);
+            auto stream = std::make_shared<robot::MoveStream>(std::move(samples));
+            stream->close();
+            auto ret = robot->execute_trajectory(0, k_dof, std::move(stream), {}, 3.0);
             std::cout << "will wait" << '\n';
             ret->wait();
         }

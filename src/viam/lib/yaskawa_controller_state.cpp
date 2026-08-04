@@ -164,7 +164,7 @@ bool YaskawaController::state_::is_disconnected() const {
 
 std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group_index,
                                                                   uint32_t axes_controlled,
-                                                                  std::vector<trajectory_point_t> samples,
+                                                                  std::shared_ptr<MoveStream> stream,
                                                                   std::vector<tolerance_t> tolerance,
                                                                   double trajectory_sampling_freq,
                                                                   std::optional<RealtimeTrajectoryLogger> logger,
@@ -184,7 +184,7 @@ std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group
         auto& req = move_requests_.emplace_back(move_request{
             .group_index = group_index,
             .axes_controlled = axes_controlled,
-            .samples = std::move(samples),
+            .stream = std::move(stream),
             .tolerance = std::move(tolerance),
             .trajectory_sampling_freq = trajectory_sampling_freq,
             .logger = std::move(logger),
@@ -230,26 +230,71 @@ std::future<void> YaskawaController::enqueue_move_request(uint32_t group_index,
                                                           std::optional<RealtimeTrajectoryLogger> logger,
                                                           std::function<bool()> async_cancel_monitor) {
     validate_group_(group_index);
+    validate_sampling_freq_(group_index, trajectory_sampling_freq);
     if (!fsm_) {
         throw std::runtime_error("controller FSM not initialized");
     }
+    // a unary move already has its whole trajectory, so close the stream as soon as we have seeded
+    // it. the monitor has to know nothing else is coming, or it reads the end of the trajectory as
+    // us failing to keep the arm fed.
+    auto stream = std::make_shared<MoveStream>(std::move(samples));
+    stream->close();
     return fsm_->enqueue_move_request(group_index,
                                       axes_controlled,
-                                      std::move(samples),
+                                      std::move(stream),
                                       std::move(tolerance),
                                       trajectory_sampling_freq,
                                       std::move(logger),
                                       std::move(async_cancel_monitor));
 }
 
+YaskawaController::streamed_move YaskawaController::enqueue_streamed_move_request(uint32_t group_index,
+                                                                                  uint32_t axes_controlled,
+                                                                                  const std::vector<trajectory_point_t>& initial_samples,
+                                                                                  std::vector<tolerance_t> tolerance,
+                                                                                  double trajectory_sampling_freq,
+                                                                                  std::optional<RealtimeTrajectoryLogger> logger,
+                                                                                  std::function<bool()> async_cancel_monitor) {
+    validate_group_(group_index);
+    validate_sampling_freq_(group_index, trajectory_sampling_freq);
+    if (!fsm_) {
+        throw std::runtime_error("controller FSM not initialized");
+    }
+    if (initial_samples.size() < k_min_goal_points) {
+        throw std::invalid_argument(std::format(
+            "streamed move must be primed with at least {} trajectory points, got {}", k_min_goal_points, initial_samples.size()));
+    }
+
+    // seed the stream with the primer and leave it open, the producer still has points to send.
+    auto stream = std::make_shared<MoveStream>(initial_samples);
+    auto completion = fsm_->enqueue_move_request(group_index,
+                                                 axes_controlled,
+                                                 stream,
+                                                 std::move(tolerance),
+                                                 trajectory_sampling_freq,
+                                                 std::move(logger),
+                                                 std::move(async_cancel_monitor));
+    return {std::move(stream), std::move(completion)};
+}
+
 // ---------------------------------------------------------------
 // move_request
 // ---------------------------------------------------------------
 
+// both of these finish the stream. it is already finished if the goal monitor ran, but we can also
+// fail a request before we ever send it, for example if the fsm lost the connection or went not
+// ready. a streamed producer needs to hear about that from extend and close returning false,
+// instead of feeding a move that is never going to run.
 void YaskawaController::state_::move_request::complete_success() {
+    if (stream) {
+        stream->finish();
+    }
     completion.set_value();
 }
 
 void YaskawaController::state_::move_request::complete_error(std::string_view message) {
+    if (stream) {
+        stream->finish();
+    }
     completion.set_exception(std::make_exception_ptr(std::runtime_error(std::string(message))));
 }

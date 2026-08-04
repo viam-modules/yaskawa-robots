@@ -13,6 +13,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <future>
 #include <iostream>
@@ -24,6 +25,7 @@
 #include <stdexcept>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <variant>
@@ -505,6 +507,80 @@ class UdpBroadcastListener {
 
 class GoalRequestHandle;
 
+/// The fewest points the controller will open a goal with. This is
+/// MIN_NUMBER_OF_POINTS_PER_TRAJECTORY in the MotoPlus firmware, and the wire protocol does not
+/// send it to us, so we have to keep our own copy. If we send fewer the controller rejects the
+/// goal with VIAM_ERROR_TRAJ_EMPTY. One point on its own is just where the trajectory starts,
+/// which is where the arm already is, so there is no motion in it.
+inline constexpr std::size_t k_min_goal_points = 2;
+
+/// The trajectory for a single move, handed from whoever produced it to the goal monitor that
+/// feeds it to the controller. A unary move fills one in and closes it before the move is even
+/// enqueued. A streamed move keeps adding to it while the arm is already running.
+///
+/// The producer and the consumer use this at the same time, so every method takes the lock. For a
+/// streamed move the producer is a grpc handler thread and the consumer is the goal monitor thread
+/// that execute_trajectory spawns. We do not bound the number of points we hold. The controller's
+/// queue and the monitor's queue_threshold decide how fast the arm gets fed, so a producer that
+/// outruns the arm just makes this buffer bigger.
+///
+/// A stream only moves in one direction, from open, to closed once the producer says it is done
+/// sending, to finished once the consumer is done with it. The consumer finishes a stream whether
+/// it used all the points, hit a fault, or was cancelled. After that extend and close return false
+/// instead of throwing, which is how the producer finds out that the monitor already ended the
+/// move without it.
+class MoveStream {
+   public:
+    /// Start a stream, with the points we already have if we have any. Either way the stream is
+    /// open, so a unary move has to call close() once it has handed over its whole trajectory.
+    explicit MoveStream(std::vector<trajectory_point_t> samples = {});
+
+    /// Add more points. Returns false and drops the points if the stream was closed, or if the
+    /// consumer has already finished the move.
+    bool extend(const std::vector<trajectory_point_t>& points);
+
+    /// Say that we are done sending points. Returns false if the consumer already finished the
+    /// move.
+    bool close();
+
+    /// Close the stream and say why it is never going to finish normally, for example the client
+    /// cancelled or sent a malformed point. The monitor picks this up on its next tick, stops the
+    /// arm, and fails the move with the message. This does nothing once the consumer has finished
+    /// the move. We keep the first reason we are given, so the caller hears about whatever went
+    /// wrong first.
+    void abort(std::string_view message);
+
+    /// True once the consumer is done with this stream, so extend and close no longer do
+    /// anything.
+    bool finished() const;
+
+    /// Take up to max_points points off the front of the buffer.
+    std::vector<trajectory_point_t> take(std::size_t max_points);
+
+    /// True once the producer has said it is done sending points.
+    bool closed() const;
+
+    /// True when the producer is done sending and we have taken every point it sent.
+    bool drained() const;
+
+    /// How many points the producer has sent that we have not taken yet.
+    std::size_t pending_count() const;
+
+    /// The message from abort, if the producer aborted the stream.
+    std::optional<std::string> abort_reason() const;
+
+    /// Mark the stream as done. Safe to call more than once. The goal monitor calls this on every
+    /// path out so that a producer still feeding this move stops.
+    void finish();
+
+   private:
+    mutable std::mutex mutex_;
+    std::deque<trajectory_point_t> pending_;
+    bool closed_{false};
+    bool finished_{false};
+    std::optional<std::string> abort_reason_;
+};
+
 class YaskawaController : public std::enable_shared_from_this<YaskawaController> {
    public:
     explicit YaskawaController(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config);
@@ -537,6 +613,27 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
                                            std::optional<RealtimeTrajectoryLogger> logger = std::nullopt,
                                            std::function<bool()> async_cancel_monitor = nullptr);
 
+    /// A streamed move: the stream to keep feeding, and the future that completes when the arm
+    /// finishes (or fails) the trajectory.
+    struct streamed_move {
+        std::shared_ptr<MoveStream> stream;
+        std::future<void> completion;
+    };
+
+    /// Enqueue a move whose trajectory is still arriving. `initial_samples` primes the stream so
+    /// the first goal can go out the moment the FSM dispatches the move: it must hold at least
+    /// `k_min_goal_points`, since the FSM worker thread cannot block waiting on a remote producer
+    /// (it also drives heartbeats) and the controller will not open a goal with fewer. Throws
+    /// std::invalid_argument if it holds fewer. Every later point goes in through
+    /// `MoveStream::extend`, and the producer must eventually `close` (or `abort`) the stream.
+    streamed_move enqueue_streamed_move_request(uint32_t group_index,
+                                                uint32_t axes_controlled,
+                                                const std::vector<trajectory_point_t>& initial_samples,
+                                                std::vector<tolerance_t> tolerance,
+                                                double trajectory_sampling_freq,
+                                                std::optional<RealtimeTrajectoryLogger> logger = std::nullopt,
+                                                std::function<bool()> async_cancel_monitor = nullptr);
+
     void send_test_trajectory();
     void turn_servo_power_on();
     void send_heartbeat();
@@ -563,9 +660,20 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     bool checkGroupIndex(uint32_t group_index);
     CapabilitiesMessage get_capabilities();
 
+    /// How often the group can take a trajectory point, which the controller tells us during the
+    /// capabilities handshake. The controller moves its interpolation forward by at least this much
+    /// every cycle, so it cannot run points that are closer together than this. Throws if we do not
+    /// know the group, which includes the case where we have not finished connecting yet.
+    std::chrono::microseconds interpolation_period(uint32_t group_index) const;
+
+    /// Start executing `stream` on the arm. The first chunk goes out synchronously (so a
+    /// rejected goal is reported to the caller as a throw), and a monitor thread then polls the
+    /// goal, feeds further chunks as the controller's queue drains, and completes the returned
+    /// handle. `stream` must already hold at least two points; a streamed move guarantees that
+    /// through `enqueue_streamed_move_request`'s `initial_samples`.
     std::unique_ptr<GoalRequestHandle> execute_trajectory(uint32_t group_index,
                                                           uint32_t axes_controlled,
-                                                          std::vector<trajectory_point_t> samples,
+                                                          std::shared_ptr<MoveStream> stream,
                                                           const std::vector<tolerance_t>& tolerance,
                                                           double trajectory_sampling_freq,
                                                           std::optional<RealtimeTrajectoryLogger> logger = std::nullopt,
@@ -592,7 +700,7 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // Writes happen on the FSM connection thread (rare — once per connect); reads happen on
     // whichever thread calls a group-keyed public method. shared_mutex lets concurrent readers
     // proceed without contention; the lookup itself is a few comparisons over a small vector.
-    std::vector<uint8_t> known_groups_;
+    std::vector<GroupCapability> known_groups_;
     mutable std::shared_mutex known_groups_mutex_;
 
     // Per-group move locking: prevents concurrent moves on the same group
@@ -625,6 +733,16 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // public method so misconfigured arms fail loudly with the known-groups list rather than
     // surfacing the server's generic `VIAM_ERROR_INVALID_PAYLOAD`.
     void validate_group_(uint32_t group_index) const;
+
+    /// Find a cached group by its protocol id, or null if we do not have one. The caller has to
+    /// hold known_groups_mutex_ already, and cannot hang on to the pointer after releasing it,
+    /// since a disconnect clears the cache.
+    const GroupCapability* find_group_(uint8_t group_id) const;
+
+    /// Reject a sampling frequency that the controller cannot keep up with. If we sample faster
+    /// than the interpolation period then the controller has to take more than one point per cycle,
+    /// and the arm ends up running the trajectory faster than we timed it for.
+    void validate_sampling_freq_(uint32_t group_index, double sampling_freq_hz) const;
 
     std::unique_ptr<state_> fsm_;
 
@@ -676,7 +794,7 @@ class YaskawaController::state_ {
 
     std::future<void> enqueue_move_request(uint32_t group_index,
                                            uint32_t axes_controlled,
-                                           std::vector<trajectory_point_t> samples,
+                                           std::shared_ptr<MoveStream> stream,
                                            std::vector<tolerance_t> tolerance,
                                            double trajectory_sampling_freq,
                                            std::optional<RealtimeTrajectoryLogger> logger = std::nullopt,
@@ -871,7 +989,10 @@ class YaskawaController::state_ {
     struct move_request {
         uint32_t group_index{0};
         uint32_t axes_controlled{0};
-        std::vector<trajectory_point_t> samples;
+        // The trajectory, whether it arrived all at once (unary) or is still arriving (streamed).
+        // Shared with the goal monitor thread once the move is dispatched, and, for a streamed
+        // move, with the producer that keeps extending it.
+        std::shared_ptr<MoveStream> stream;
         std::vector<tolerance_t> tolerance;
         double trajectory_sampling_freq{0.0};
         std::optional<RealtimeTrajectoryLogger> logger;

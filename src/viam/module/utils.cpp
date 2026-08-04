@@ -3,9 +3,11 @@
 #include <chrono>
 #include <format>
 #include <iomanip>
+#include <ranges>
 #include <sstream>
 #include <vector>
 
+#include <boost/numeric/conversion/cast.hpp>
 #include <boost/variant.hpp>
 
 #include <Eigen/Dense>
@@ -34,6 +36,14 @@ viam::yaskawa::LogLevel string_to_log_level(const std::string& level_str) {
     }
     // Default to WARNING
     return viam::yaskawa::LogLevel::INFO;
+}
+
+// the sdk stub already checked the time ordering and the size of each point, so all we have left
+// to check is that the caller is talking about this arm's joints.
+void check_streamed_arity(const std::vector<double>& src, std::size_t dof, const char* field) {
+    if (src.size() != dof) {
+        throw std::invalid_argument(std::format("trajectory point {} has {} joints, arm has {}", field, src.size(), dof));
+    }
 }
 }  // namespace
 
@@ -191,4 +201,65 @@ void apply_move_limit(Eigen::VectorXd& limits, const boost::variant<double, std:
         }
     };
     boost::apply_visitor(visitor{limits}, value);
+}
+
+trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point& point, std::size_t dof) {
+    // the controller's queue is parameterized by velocity, so a point with only positions in it
+    // does not mean anything to it. we could work out velocities by differencing the positions, but
+    // that would invent a profile the caller never asked for, so require them instead.
+    if (!point.constraints) {
+        throw std::invalid_argument("trajectory point is missing constraints (velocities are required)");
+    }
+
+    const auto& velocities = point.constraints->velocities_degs_per_sec;
+    // the controller ignores accelerations right now, but the wire struct has room for them, so
+    // send whatever the caller gave us instead of dropping it.
+    const auto* accelerations = point.constraints->accelerations_degs_per_sec2.get_ptr();
+
+    check_streamed_arity(point.positions, dof, "positions");
+    check_streamed_arity(velocities, dof, "velocities");
+    if (accelerations) {
+        check_streamed_arity(*accelerations, dof, "accelerations");
+    }
+
+    trajectory_point_t pt{};
+    // trajectory_point_t is a packed struct, so we have to fill its arrays one element at a time.
+    // a reference or a pointer cannot bind to a packed field.
+    for (std::size_t i = 0; i < dof; ++i) {
+        pt.positions[i] = degrees_to_radians(point.positions[i]);
+        pt.velocities[i] = degrees_to_radians(velocities[i]);
+        if (accelerations) {
+            pt.accelerations[i] = degrees_to_radians((*accelerations)[i]);
+        }
+    }
+
+    const auto secs = std::chrono::floor<std::chrono::seconds>(point.time);
+    const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(point.time - secs);
+    pt.time_from_start = {boost::numeric_cast<uint32_t>(secs.count()), boost::numeric_cast<uint32_t>(nanos.count())};
+    return pt;
+}
+
+std::vector<trajectory_point_t> convert_streamed_batch(const std::vector<viam::sdk::Arm::trajectory_point>& batch, std::size_t dof) {
+    if (dof == 0 || dof > static_cast<std::size_t>(NUMBER_OF_DOF)) {
+        throw std::invalid_argument(std::format("arm has {} joints, which the protocol cannot carry (max {})", dof, NUMBER_OF_DOF));
+    }
+    const auto converted = batch | std::views::transform([dof](const auto& point) { return convert_streamed_point(point, dof); });
+    return {converted.begin(), converted.end()};
+}
+
+void check_streamed_spacing(const std::vector<viam::sdk::Arm::trajectory_point>& batch,
+                            std::chrono::microseconds interpolation_period,
+                            std::optional<std::chrono::microseconds>& previous) {
+    for (const auto& point : batch) {
+        if (previous) {
+            const auto gap = point.time - *previous;
+            if (gap < interpolation_period) {
+                throw std::invalid_argument(
+                    std::format("trajectory points are {} us apart, closer than the controller's {} us interpolation period",
+                                gap.count(),
+                                interpolation_period.count()));
+            }
+        }
+        previous = point.time;
+    }
 }

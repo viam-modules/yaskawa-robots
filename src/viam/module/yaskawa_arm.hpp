@@ -2,7 +2,9 @@
 
 #include <atomic>
 #include <boost/asio/io_context.hpp>
+#include <boost/optional.hpp>
 #include <filesystem>
+#include <functional>
 #include <list>
 #include <memory>
 #include <optional>
@@ -56,6 +58,16 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     void move_through_joint_positions(const std::vector<std::vector<double>>& positions,
                                       const MoveOptions& options,
                                       const viam::sdk::ProtoStruct& extra) override;
+
+    /// @brief Run a stream of joint waypoints, in order, that are already time parameterized.
+    /// @param batch_source Call this to get the next batch of waypoints.
+    /// @param update_handler Called for each update this arm sends back.
+    /// @param extra Any additional arguments to the method.
+    /// @return How the stream ended.
+    stream_outcome move_through_joint_positions_streamed(
+        const std::function<boost::optional<std::vector<trajectory_point>>()>& batch_source,
+        const std::function<bool(trajectory_update)>& update_handler,
+        const viam::sdk::ProtoStruct& extra) override;
 
     /// @brief Get the cartesian pose of the end effector
     /// @param extra Any additional arguments to the method.
