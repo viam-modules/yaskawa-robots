@@ -543,6 +543,11 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
                 // is. nothing to do either way.
                 return std::nullopt;
             }
+            if (batch->empty()) {
+                // the sdk dispatcher should filter these out, but check anyway, the same way the
+                // feed loop below does.
+                continue;
+            }
             check_streamed_spacing(*batch, interpolation_period, last_point_time);
             const auto converted = convert_streamed_batch(*batch, dof);
             primer.insert(primer.end(), converted.begin(), converted.end());

@@ -1552,7 +1552,12 @@ std::chrono::microseconds YaskawaController::interpolation_period(uint32_t group
     validate_group_(group_index);
     const std::shared_lock lock{known_groups_mutex_};
     const auto* group = find_group_(static_cast<uint8_t>(group_index));
-    if (group == nullptr || group->interpolation_period_us <= 0) {
+    if (group == nullptr) {
+        // validate_group_ said the group was there, so we lost the connection in between and the
+        // cache has been cleared. say that, rather than blaming the interpolation period.
+        throw std::runtime_error(std::format("lost the controller connection while reading capabilities for group_index {}", group_index));
+    }
+    if (group->interpolation_period_us <= 0) {
         throw std::runtime_error(std::format("controller did not report an interpolation period for group_index {}", group_index));
     }
     return std::chrono::microseconds{group->interpolation_period_us};
