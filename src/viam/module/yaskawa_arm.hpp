@@ -141,7 +141,7 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     // Only the primary group (group_index_ == 0) runs it, so multiple arms sharing one controller
     // don't flash concurrently.
     void start_flash_on_start_();
-    void flash_on_start_task_(const std::stop_token& stop);
+    void flash_on_start_task_(const std::stop_token& stop, std::shared_ptr<YaskawaController> robot);
 
     template <template <typename> typename lock_type>
     void check_configured_(const lock_type<std::shared_mutex>&);
@@ -184,9 +184,8 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     std::optional<std::string> firmware_path_;
     std::optional<std::string> firmware_dest_name_;
 
-    // Background flash_on_start task. `in_flight` guards against stacking a second task across
-    // reconfigures; the thread is declared last so it is joined before the members it uses (robot_,
-    // config_mutex_) are destroyed.
-    std::atomic<bool> flash_on_start_in_flight_{false};
+    // Background flash_on_start task. Stacking is guarded by a claim on the controller
+    // (try_begin_flash), since that outlives the arm across a reconfigure. The thread is declared
+    // last so it is joined before the members it uses (robot_, config_mutex_) are destroyed.
     std::jthread flash_on_start_thread_;
 };

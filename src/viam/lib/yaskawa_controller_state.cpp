@@ -21,13 +21,17 @@ std::unique_ptr<YaskawaController::state_> YaskawaController::state_::create(Yas
     return state;
 }
 
-void YaskawaController::state_::shutdown() {
-    {
-        const std::lock_guard lock{mutex_};
-        shutdown_requested_ = true;
-    }
+void YaskawaController::state_::request_shutdown() {
+    // No lock: the worker holds mutex_ for its whole cycle, so taking it here would mean we could
+    // only ask the worker to stop while it was already idle. The flag is atomic and the wait below
+    // has no predicate, so the worst a missed notify costs us is one timeout.
+    shutdown_requested_.store(true, std::memory_order_release);
     // TODO(RSDK-13808) try jthread and stop_token
     worker_wakeup_cv_.notify_all();
+}
+
+void YaskawaController::state_::shutdown() {
+    request_shutdown();
     if (worker_thread_.joinable()) {
         worker_thread_.join();
     }
@@ -39,7 +43,7 @@ void YaskawaController::state_::shutdown() {
 
 void YaskawaController::state_::run_() {
     std::unique_lock lock{mutex_};
-    while (!shutdown_requested_) {
+    while (!shutdown_requested_.load(std::memory_order_acquire)) {
         try {
             upgrade_downgrade_();
             handle_move_request_();
@@ -49,9 +53,14 @@ void YaskawaController::state_::run_() {
         } catch (...) {
             LOGGING(warning) << "[fsm] " << controller_->host() << ": unknown exception in worker thread";
         }
-        // No predicate: any notify (e.g., from enqueue_move_request) returns control to the
-        // loop, the cycle re-runs, and shutdown is observed at the top of the next iteration.
-        worker_wakeup_cv_.wait_for(lock, get_timeout_());
+        // The predicate is what makes a notify that arrives before we get here still count. We
+        // hold mutex_ for the whole cycle, so request_shutdown cannot take it to notify us safely,
+        // and without the predicate its notify lands while we are still working and is lost, which
+        // costs teardown a full timeout. Move requests set wakeup_pending_ under the lock for the
+        // same reason.
+        worker_wakeup_cv_.wait_for(
+            lock, get_timeout_(), [this] { return shutdown_requested_.load(std::memory_order_acquire) || wakeup_pending_; });
+        wakeup_pending_ = false;
     }
 }
 
@@ -193,9 +202,19 @@ std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group
             .completion = {},
         });
         future = req.completion.get_future();
+        wakeup_pending_ = true;
     }
     worker_wakeup_cv_.notify_one();
     return future;
+}
+
+void YaskawaController::state_::abort_moves(uint32_t group_index, std::string_view reason) {
+    const std::lock_guard lock{mutex_};
+    for (auto& req : move_requests_) {
+        if (req.group_index == group_index && req.stream) {
+            req.stream->abort(reason);
+        }
+    }
 }
 
 // ---------------------------------------------------------------
@@ -275,6 +294,13 @@ YaskawaController::streamed_move YaskawaController::enqueue_streamed_move_reques
                                                  std::move(logger),
                                                  std::move(async_cancel_monitor));
     return {std::move(stream), std::move(completion)};
+}
+
+void YaskawaController::abort_moves(uint32_t group_index, std::string_view reason) {
+    if (!fsm_) {
+        return;
+    }
+    fsm_->abort_moves(group_index, reason);
 }
 
 // ---------------------------------------------------------------
