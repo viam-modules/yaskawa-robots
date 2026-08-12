@@ -336,7 +336,8 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     if (robot_ && (robot_->host() != new_host || robot_->tcp_port() != new_tcp_port)) {
         VIAM_SDK_LOG(info) << "connection target changed (" << robot_->host() << ":" << robot_->tcp_port() << " -> " << new_host << ":"
                            << new_tcp_port << "), resetting connection";
-        robot_->disconnect();
+        // Drop the old controller rather than disconnecting it, for the same reason the destructor
+        // does: a sibling arm may still be pointed at that host.
         robot_.reset();
     }
     threshold_ = find_config_attribute<double>(config, "reject_move_request_threshold_rad");
@@ -725,6 +726,12 @@ void YaskawaArm::stop(const ProtoStruct&) {
     // stopped when a client disconnects instead of cancelling, and it takes much longer than our
     // own cancel paths.
     VIAM_SDK_LOG(info) << "stop: stop API called for group " << group_index_;
+    // Tell the move why it is ending before we stop the arm. The monitor checks the abort reason
+    // at the top of its next tick, so it reports this instead of noticing the goal ended early and
+    // reporting that the arm ran out of trajectory, which says nothing about what happened. We
+    // cannot be more specific than "the stop API": viam-server calls it for a client stop, for a
+    // session expiring, and on the way into a reconfigure, and none of that reaches us here.
+    robot_->abort_moves(group_index_, "move stopped by the arm's stop API");
     if (!robot_->stop(group_index_)) {
         // we were not checking this before. Add a log to see how often it occurs
         VIAM_SDK_LOG(warn) << "stop did not error but did not return as stopped";
@@ -824,30 +831,25 @@ void YaskawaArm::start_flash_on_start_() {
                               "(`firmware_path` unset and no packaged firmware); skipping";
         return;
     }
-    // Don't stack tasks across reconfigures: if one is still in flight, let it finish.
-    bool expected = false;
-    if (!flash_on_start_in_flight_.compare_exchange_strong(expected, true)) {
+    // Don't stack flashes: if one is still in flight, let it finish. The claim lives on the
+    // controller, not on this arm, because a reconfigure builds a whole new arm whose members
+    // start out cleared, so an arm-local flag would not see the outgoing arm's flash at all.
+    if (!robot_->try_begin_flash()) {
         VIAM_SDK_LOG(info) << "flash_on_start: a firmware check is already in progress; skipping";
         return;
     }
     VIAM_SDK_LOG(info) << "flash_on_start: will check controller firmware against " << fw_path->string() << " once the controller connects";
-    // Assigning over a previous jthread joins it first; that task has finished (in_flight was false),
+    // Assigning over a previous jthread joins it first; that task has finished (we hold the claim),
     // so the join is immediate.
-    flash_on_start_thread_ = std::jthread([this](const std::stop_token& stop) { flash_on_start_task_(stop); });
+    flash_on_start_thread_ =
+        std::jthread([this, robot = robot_](const std::stop_token& stop) mutable { flash_on_start_task_(stop, std::move(robot)); });
 }
 
-void YaskawaArm::flash_on_start_task_(const std::stop_token& stop) {
-    const auto clear_in_flight = make_scope_guard([this] { flash_on_start_in_flight_ = false; });
-
-    // Snapshot the controller so the (lock-free) wait below can't race a reconfigure swapping robot_.
-    std::shared_ptr<YaskawaController> robot;
-    {
-        const std::shared_lock rlock{config_mutex_};
-        robot = robot_;
-    }
-    if (!robot) {
-        return;
-    }
+void YaskawaArm::flash_on_start_task_(const std::stop_token& stop, std::shared_ptr<YaskawaController> robot) {
+    // The controller is handed to us rather than read off robot_, so the lock-free wait below
+    // cannot race a reconfigure swapping it, and so we release the flash claim on the same
+    // controller we took it from.
+    const auto release_claim = make_scope_guard([&robot] { robot->end_flash(); });
 
     // Wait until we can make a decision: either the controller connects (then compare build ids), or
     // it proves reachable-but-protocol-mismatched (an out-of-date controller that can't complete the
@@ -1175,13 +1177,11 @@ YaskawaArm::~YaskawaArm() {
         flash_on_start_thread_.join();
     }
     try {
-        // robot_ is only created partway through configure_() (after resource_root_ resolution,
-        // host validation, etc.). If construction threw before that point, the arm is destroyed
-        // with robot_ still null; guard so the dtor reports the real error instead of segfaulting
-        // on robot_->disconnect().
-        if (robot_) {
-            robot_->disconnect();
-        }
+        // Just drop our reference. The controller is shared between the arms on one host, and a
+        // reconfigure builds the replacement arm before this one is destroyed, so disconnecting
+        // here would tear down a connection that somebody else is still using, and nothing would
+        // ever build it back. ~YaskawaController disconnects when the last arm lets go.
+        robot_.reset();
     } catch (...) {
         const auto unconditional_abort = make_scope_guard([] { std::abort(); });
         try {
