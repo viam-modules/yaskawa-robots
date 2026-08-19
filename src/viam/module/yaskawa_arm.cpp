@@ -688,8 +688,23 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
         throw std::runtime_error(boost::str(boost::format("error reading kinematics file '%1%'") % sva_file_path.string()));
     }
 
-    // Convert to unsigned char vector
-    return KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
+    // The shipped file carries position bounds only, so we add the configured speed and
+    // acceleration on the way out. A MoveOptions override applies to one move and never touches
+    // these members, so what we publish is what an un-overridden move will use.
+    //
+    // RDK builds the machine's whole frame system from this call, so failing to attach limits must
+    // not fail the call. `validate_config_` accepts a configured DOF that disagrees with the
+    // model's joint count (a scalar paired with an array of another length, for instance), and that
+    // used to be harmless here because we returned the file untouched. We keep that behaviour and
+    // warn, since losing the limits is what every caller got before this existed.
+    try {
+        const auto patched = sva_with_joint_limits({temp_bytes.begin(), temp_bytes.end()}, velocity_limits_, acceleration_limits_);
+        return KinematicsDataSVA({patched.begin(), patched.end()});
+    } catch (const std::exception& e) {
+        VIAM_SDK_LOG(warn) << "get_kinematics: serving '" << sva_file_path.string()
+                           << "' without velocity or acceleration limits: " << e.what();
+        return KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
+    }
 }
 
 pose YaskawaArm::get_end_position(const ProtoStruct&) {

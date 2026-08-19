@@ -10,6 +10,8 @@
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/variant.hpp>
 
+#include <json/json.h>
+
 #include <Eigen/Dense>
 #include <viam/lib/robot_socket.hpp>
 #include <viam/sdk/common/proto_value.hpp>
@@ -171,6 +173,71 @@ Eigen::VectorXd read_limit_vector(const viam::sdk::ResourceConfig& config, const
         result[static_cast<Eigen::Index>(i)] = *elem;
     }
     return result;
+}
+
+std::string sva_with_joint_limits(const std::string& sva_json,
+                                  const Eigen::VectorXd& velocity_rad_per_sec,
+                                  const Eigen::VectorXd& acceleration_rad_per_sec2) {
+    if (velocity_rad_per_sec.size() != acceleration_rad_per_sec2.size()) {
+        throw std::invalid_argument(std::format("velocity limits ({} joints) and acceleration limits ({} joints) must be the same length",
+                                                velocity_rad_per_sec.size(),
+                                                acceleration_rad_per_sec2.size()));
+    }
+
+    Json::Value root;
+    {
+        std::istringstream in{sva_json};
+        const Json::CharReaderBuilder reader_builder;
+        std::string errs;
+        if (!Json::parseFromStream(reader_builder, in, &root, &errs)) {
+            throw std::invalid_argument(std::format("kinematics document is not valid JSON: {}", errs));
+        }
+    }
+
+    // We only know how to edit SVA. A URDF-backed document has no `joints` array to carry these
+    // fields, and converting it here would mean reimplementing RDK's URDF parser. An absent
+    // `kinematic_param_type` means SVA, matching how RDK reads it in `referenceframe/model_json.go`.
+    const std::string param_type = root.get("kinematic_param_type", "").asString();
+    if (!param_type.empty() && param_type != "SVA") {
+        throw std::invalid_argument(std::format("kinematics document is `{}`, not SVA, so it cannot carry joint limits", param_type));
+    }
+    if (!root.isMember("joints") || !root["joints"].isArray()) {
+        throw std::invalid_argument("kinematics document has no `joints` array");
+    }
+
+    Json::Value& joints = root["joints"];
+    if (static_cast<Eigen::Index>(joints.size()) != velocity_rad_per_sec.size()) {
+        throw std::invalid_argument(std::format(
+            "kinematics document has {} joints but {} joint limits were configured", joints.size(), velocity_rad_per_sec.size()));
+    }
+
+    for (Json::ArrayIndex i = 0; i < joints.size(); ++i) {
+        // Our limits are positional and in radians, which only means something for an independent
+        // revolute joint. A prismatic joint wants mm/s and RDK does not convert what we write, so a
+        // radian value would be read as millimeters. A mimic joint takes its limits from its source
+        // and RDK rejects the whole model if one carries limits of its own. We have no correct value
+        // for either, and we would rather fail than publish a document that is quietly wrong.
+        const std::string type = joints[i].get("type", "").asString();
+        if (type != "revolute") {
+            throw std::invalid_argument(std::format("joint `{}` is `{}`, and joint limits are only defined here for revolute joints",
+                                                    joints[i].get("id", "?").asString(),
+                                                    type));
+        }
+        if (joints[i].isMember("mimic")) {
+            throw std::invalid_argument(
+                std::format("joint `{}` is a mimic joint, which must not carry its own limits", joints[i].get("id", "?").asString()));
+        }
+
+        // We write whatever we were given, zero included, since only an absent field means
+        // unbounded and a zero limit is a real one.
+        const auto joint = static_cast<Eigen::Index>(i);
+        joints[i]["max_velocity"] = radians_to_degrees(velocity_rad_per_sec[joint]);
+        joints[i]["max_acceleration"] = radians_to_degrees(acceleration_rad_per_sec2[joint]);
+    }
+
+    Json::StreamWriterBuilder writer_builder;
+    writer_builder["indentation"] = "  ";
+    return Json::writeString(writer_builder, root);
 }
 
 void apply_move_limit(Eigen::VectorXd& limits, const boost::variant<double, std::vector<double>>& value) {

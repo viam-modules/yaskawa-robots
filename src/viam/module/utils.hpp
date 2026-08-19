@@ -131,6 +131,22 @@ Eigen::Index number_of_dof_configured(const viam::sdk::ResourceConfig& config, c
 // Scalars are broadcast to target_dof elements. Arrays must match target_dof exactly.
 Eigen::VectorXd read_limit_vector(const viam::sdk::ResourceConfig& config, const std::string& attribute, Eigen::Index target_dof);
 
+// Returns the SVA kinematics document with per-joint `max_velocity` and `max_acceleration` added,
+// so the motion service can see what this arm instance will actually honor rather than position
+// bounds alone. The limits are in radians, matching what we read from config, and are written as
+// the degrees the SVA schema uses.
+//
+// The two vectors are indexed in the document's own `joints` order, since the config gives us
+// positional arrays and no joint names. They must both be exactly as long as that array, and a
+// mismatch throws rather than patching the joints we happen to have values for, because a config
+// whose DOF disagrees with the model is not describing this arm.
+//
+// Throws std::invalid_argument if the document is not parseable, is not SVA, has no `joints`
+// array, or if either vector's length disagrees with the joint count.
+std::string sva_with_joint_limits(const std::string& sva_json,
+                                  const Eigen::VectorXd& velocity_rad_per_sec,
+                                  const Eigen::VectorXd& acceleration_rad_per_sec2);
+
 // Converts an sdk trajectory_point into the trajectory_point_t we put on the wire.
 //
 // The sdk gives us every joint value in degrees and the time as a microsecond offset from the
