@@ -121,6 +121,13 @@ BOOST_AUTO_TEST_CASE(test_zero_limits_are_written_not_dropped) {
     BOOST_CHECK_EQUAL(patched["joints"][1]["max_acceleration"].asDouble(), 0.0);
 }
 
+BOOST_AUTO_TEST_CASE(test_negative_limits_are_refused) {
+    // Unlike zero, a negative limit is not a limit. Config validation rejects one before it could
+    // reach us, so this only fires if that stops being true or a caller builds the vectors itself.
+    BOOST_CHECK_THROW(sva_with_joint_limits(k_sva_two_joints, vec({1.0, -1.0}), vec({1.0, 1.0})), std::invalid_argument);
+    BOOST_CHECK_THROW(sva_with_joint_limits(k_sva_two_joints, vec({1.0, 1.0}), vec({-1.0, 1.0})), std::invalid_argument);
+}
+
 BOOST_AUTO_TEST_CASE(test_absent_param_type_is_treated_as_sva) {
     // RDK reads a missing `kinematic_param_type` as SVA (referenceframe/model_json.go), so we have
     // to as well, or a shipped file that omits it loses its limits.

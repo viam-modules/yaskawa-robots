@@ -205,6 +205,8 @@ std::string sva_with_joint_limits(const std::string& sva_json,
         throw std::invalid_argument("kinematics document has no `joints` array");
     }
 
+    // This also catches limits we never populated, since a default-constructed Eigen vector is
+    // empty rather than a run of zeros, and zero would have been published as a real limit.
     Json::Value& joints = root["joints"];
     if (static_cast<Eigen::Index>(joints.size()) != velocity_rad_per_sec.size()) {
         throw std::invalid_argument(std::format(
@@ -228,9 +230,18 @@ std::string sva_with_joint_limits(const std::string& sva_json,
                 std::format("joint `{}` is a mimic joint, which must not carry its own limits", joints[i].get("id", "?").asString()));
         }
 
-        // We write whatever we were given, zero included, since only an absent field means
-        // unbounded and a zero limit is a real one.
+        // Zero we write, since only an absent field means unbounded and a zero limit is a real one
+        // saying the joint does not move. Negative is not a limit at all. Config validation already
+        // rejects it, but we check here too rather than leave this function correct only for as
+        // long as that stays true.
         const auto joint = static_cast<Eigen::Index>(i);
+        if (velocity_rad_per_sec[joint] < 0.0 || acceleration_rad_per_sec2[joint] < 0.0) {
+            throw std::invalid_argument(std::format("joint `{}` was given a negative limit ({} rad/s, {} rad/s²)",
+                                                    joints[i].get("id", "?").asString(),
+                                                    velocity_rad_per_sec[joint],
+                                                    acceleration_rad_per_sec2[joint]));
+        }
+
         joints[i]["max_velocity"] = radians_to_degrees(velocity_rad_per_sec[joint]);
         joints[i]["max_acceleration"] = radians_to_degrees(acceleration_rad_per_sec2[joint]);
     }
