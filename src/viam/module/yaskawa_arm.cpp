@@ -693,7 +693,7 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
     // these members, so what we publish is what an un-overridden move will use.
     //
     // RDK builds the machine's whole frame system from this call, so failing to attach limits must
-    // not fail the call. `validate_config_` accepts a configured DOF that disagrees with the
+    // not fail the call. validate_config_ accepts a configured DOF that disagrees with the
     // model's joint count (a scalar paired with an array of another length, for instance), and that
     // used to be harmless here because we returned the file untouched. We keep that behaviour and
     // warn, since losing the limits is what every caller got before this existed.

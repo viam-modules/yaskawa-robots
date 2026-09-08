@@ -129,7 +129,7 @@ BOOST_AUTO_TEST_CASE(test_negative_limits_are_refused) {
 }
 
 BOOST_AUTO_TEST_CASE(test_absent_param_type_is_treated_as_sva) {
-    // RDK reads a missing `kinematic_param_type` as SVA (referenceframe/model_json.go), so we have
+    // RDK reads a missing kinematic_param_type as SVA (referenceframe/model_json.go), so we have
     // to as well, or a shipped file that omits it loses its limits.
     constexpr char no_param_type[] = R"({
       "joints": [
@@ -145,8 +145,8 @@ BOOST_AUTO_TEST_CASE(test_absent_param_type_is_treated_as_sva) {
 BOOST_AUTO_TEST_CASE(test_non_revolute_and_mimic_joints_are_refused) {
     const auto limits = vec({degrees_to_radians(90.0)});
 
-    // RDK does not convert `max_velocity` for a prismatic joint, so a radian value would be read as
-    // millimetres per second. We have no mm/s to offer from a `speed_rad_per_sec` config.
+    // RDK does not convert max_velocity for a prismatic joint, so a radian value would be read as
+    // millimetres per second. We have no mm/s to offer from a speed_rad_per_sec config.
     constexpr char prismatic[] = R"({
       "kinematic_param_type": "SVA",
       "joints": [{"id": "rail", "type": "prismatic", "min": 0.0, "max": 500.0}]
@@ -161,12 +161,32 @@ BOOST_AUTO_TEST_CASE(test_non_revolute_and_mimic_joints_are_refused) {
     })";
     BOOST_CHECK_THROW(sva_with_joint_limits(mimic, limits, limits), std::invalid_argument);
 
-    // A joint with no `type` is not something RDK can build a frame from either.
+    // A joint with no type is not something RDK can build a frame from either.
     constexpr char untyped[] = R"({
       "kinematic_param_type": "SVA",
       "joints": [{"id": "mystery", "min": -1.0, "max": 1.0}]
     })";
     BOOST_CHECK_THROW(sva_with_joint_limits(untyped, limits, limits), std::invalid_argument);
+}
+
+BOOST_AUTO_TEST_CASE(test_joints_that_already_carry_limits_are_refused) {
+    // A limit already in the file is the model's own claim about the hardware. We have no rule for
+    // combining it with config yet, and silently overwriting it would let a config raise a hardware
+    // limit, so the patch refuses. No shipped model carries one today, so the shipped-model test
+    // below is also what tells us the day one does.
+    const auto limits = vec({degrees_to_radians(90.0)});
+
+    constexpr char with_velocity[] = R"({
+      "kinematic_param_type": "SVA",
+      "joints": [{"id": "joint_1", "type": "revolute", "min": -170.0, "max": 170.0, "max_velocity": 45.0}]
+    })";
+    BOOST_CHECK_THROW(sva_with_joint_limits(with_velocity, limits, limits), std::invalid_argument);
+
+    constexpr char with_acceleration[] = R"({
+      "kinematic_param_type": "SVA",
+      "joints": [{"id": "joint_1", "type": "revolute", "min": -170.0, "max": 170.0, "max_acceleration": 45.0}]
+    })";
+    BOOST_CHECK_THROW(sva_with_joint_limits(with_acceleration, limits, limits), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(test_every_shipped_model_patches_at_the_default_dof) {

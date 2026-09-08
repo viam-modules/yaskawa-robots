@@ -194,10 +194,10 @@ std::string sva_with_joint_limits(const std::string& sva_json,
         }
     }
 
-    // We only know how to edit SVA. A URDF-backed document has no `joints` array to carry these
+    // We only know how to edit SVA. A URDF-backed document has no joints array to carry these
     // fields, and converting it here would mean reimplementing RDK's URDF parser. An absent
-    // `kinematic_param_type` means SVA, matching how RDK reads it in `referenceframe/model_json.go`.
-    const std::string param_type = root.get("kinematic_param_type", "").asString();
+    // kinematic_param_type means SVA, matching how RDK reads it in referenceframe/model_json.go.
+    const auto param_type = root.get("kinematic_param_type", "").asString();
     if (!param_type.empty() && param_type != "SVA") {
         throw std::invalid_argument(std::format("kinematics document is `{}`, not SVA, so it cannot carry joint limits", param_type));
     }
@@ -219,7 +219,7 @@ std::string sva_with_joint_limits(const std::string& sva_json,
         // radian value would be read as millimeters. A mimic joint takes its limits from its source
         // and RDK rejects the whole model if one carries limits of its own. We have no correct value
         // for either, and we would rather fail than publish a document that is quietly wrong.
-        const std::string type = joints[i].get("type", "").asString();
+        const auto type = joints[i].get("type", "").asString();
         if (type != "revolute") {
             throw std::invalid_argument(std::format("joint `{}` is `{}`, and joint limits are only defined here for revolute joints",
                                                     joints[i].get("id", "?").asString(),
@@ -228,6 +228,17 @@ std::string sva_with_joint_limits(const std::string& sva_json,
         if (joints[i].isMember("mimic")) {
             throw std::invalid_argument(
                 std::format("joint `{}` is a mimic joint, which must not carry its own limits", joints[i].get("id", "?").asString()));
+        }
+
+        // A limit already in the file is the model's own claim about the hardware, and we have no
+        // rule yet for combining it with config. Overwriting it would let a config raise a hardware
+        // limit without anyone noticing, so we refuse until we decide how the two relate. No shipped
+        // model carries one today, which is exactly when a silent overwrite would go unnoticed.
+        if (joints[i].isMember("max_velocity") || joints[i].isMember("max_acceleration")) {
+            throw std::invalid_argument(
+                std::format("joint `{}` already carries a velocity or acceleration limit, which this module does not know how to "
+                            "combine with the configured one",
+                            joints[i].get("id", "?").asString()));
         }
 
         // Zero we write, since only an absent field means unbounded and a zero limit is a real one
