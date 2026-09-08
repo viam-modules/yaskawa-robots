@@ -96,8 +96,23 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     /// @brief Get the status of the arm.
     ProtoStruct get_status() override;
 
+    /// @brief Get the optional features supported by the arm. Manual mode is not
+    /// software-reachable (teach mode requires the pendant keyswitch), and
+    /// move_to_position is unimplemented.
+    Arm::properties get_properties(const ProtoStruct&) override {
+        return {false, false};
+    }
+
     // --------------- UNIMPLEMENTED FUNCTIONS ---------------
     void move_to_position(const pose&, const ProtoStruct&) override {
+        throw std::runtime_error("unimplemented");
+    }
+
+    void set_manual_mode(bool, std::chrono::seconds, const ProtoStruct&) override {
+        throw std::runtime_error("unimplemented");
+    }
+
+    bool get_manual_mode(const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
     }
 
