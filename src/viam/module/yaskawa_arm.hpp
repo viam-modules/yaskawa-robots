@@ -26,6 +26,13 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     using KinematicsData = ::viam::sdk::KinematicsData;
 
    public:
+    /// @brief Whether the trajex/totg trajectory generator is enabled by default.
+    static constexpr bool k_default_enable_new_trajectory_planner = true;
+
+    /// @brief Whether the legacy trajectory generator is enabled by default. When the new
+    /// generator is also enabled, legacy only runs if the new one fails to produce a trajectory.
+    static constexpr bool k_default_enable_legacy_trajectory_planner = false;
+
     /// @brief Returns the common ModelFamily for all implementations
     static const ModelFamily& model_family();
 
@@ -185,7 +192,8 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     Eigen::VectorXd acceleration_limits_;
     double trajectory_sampling_freq_{3.0};
     double waypoint_dedup_tolerance_rad_{1e-3};
-    bool use_new_trajectory_planner_{true};
+    bool use_new_trajectory_planner_{k_default_enable_new_trajectory_planner};
+    bool use_legacy_trajectory_planner_{k_default_enable_legacy_trajectory_planner};
     double path_tolerance_rad_{0.1};
     std::optional<double> collinearization_ratio_;
     double segmentation_threshold_rad_{0.005};

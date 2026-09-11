@@ -240,6 +240,15 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
             std::format("attribute `collinearization_ratio` must be between 0.0 and 2.0, got {}", *collinearization));
     }
 
+    const auto enable_new_planner =
+        find_config_attribute<bool>(cfg, "enable_new_trajectory_planner").value_or(YaskawaArm::k_default_enable_new_trajectory_planner);
+    const auto enable_legacy_planner = find_config_attribute<bool>(cfg, "enable_legacy_trajectory_planner")
+                                           .value_or(YaskawaArm::k_default_enable_legacy_trajectory_planner);
+    if (!enable_new_planner && !enable_legacy_planner) {
+        throw std::invalid_argument(
+            "at least one of `enable_new_trajectory_planner` or `enable_legacy_trajectory_planner` must be enabled");
+    }
+
     // Validate telemetry_output_path if provided
     auto telemetry_path = find_config_attribute<std::string>(cfg, "telemetry_output_path");
     if (telemetry_path && telemetry_path->empty()) {
@@ -381,7 +390,10 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     auto waypoint_dedup_tolerance_deg = find_config_attribute<double>(config, "waypoint_deduplication_tolerance_deg");
     waypoint_dedup_tolerance_rad_ =
         waypoint_dedup_tolerance_deg ? degrees_to_radians(*waypoint_dedup_tolerance_deg) : k_default_waypoint_dedup_tolerance_rads;
-    use_new_trajectory_planner_ = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(true);
+    use_new_trajectory_planner_ =
+        find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(k_default_enable_new_trajectory_planner);
+    use_legacy_trajectory_planner_ =
+        find_config_attribute<bool>(config, "enable_legacy_trajectory_planner").value_or(k_default_enable_legacy_trajectory_planner);
     path_tolerance_rad_ = find_config_attribute<double>(config, "path_tolerance_rad").value_or(0.1);
     collinearization_ratio_ = find_config_attribute<double>(config, "collinearization_ratio");
     segmentation_threshold_rad_ =
@@ -1075,47 +1087,50 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
             });
     }
 
-    planner.with_legacy(
-        [&](const auto&,
-            segment_accumulator& acc,
-            const totg::waypoint_accumulator& seg,
-            Path&&,
-            Trajectory&& traj,
-            std::chrono::microseconds elapsed) {
-            const double duration = traj.getDuration();
+    if (use_legacy_trajectory_planner_) {
+        planner.with_legacy(
+            [&](const auto&,
+                segment_accumulator& acc,
+                const totg::waypoint_accumulator& seg,
+                Path&&,
+                Trajectory&& traj,
+                std::chrono::microseconds elapsed) {
+                const double duration = traj.getDuration();
 
-            if (!std::isfinite(duration)) {
-                throw std::runtime_error("trajectory.getDuration() was not a finite number");
-            }
-            if (duration > 600) {
-                throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
-            }
-            if (duration < k_default_min_timestep_sec) {
-                VIAM_SDK_LOG(debug) << "duration of move is too small, assuming arm is at goal";
-                return;
-            }
+                if (!std::isfinite(duration)) {
+                    throw std::runtime_error("trajectory.getDuration() was not a finite number");
+                }
+                if (duration > 600) {
+                    throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
+                }
+                if (duration < k_default_min_timestep_sec) {
+                    VIAM_SDK_LOG(debug) << "duration of move is too small, assuming arm is at goal";
+                    return;
+                }
 
-            if (acc.samples.empty()) {
-                acc.samples.push_back(make_trajectory_point(traj.getPosition(0.0), traj.getVelocity(0.0), {0, 0}));
-            }
+                if (acc.samples.empty()) {
+                    acc.samples.push_back(make_trajectory_point(traj.getPosition(0.0), traj.getVelocity(0.0), {0, 0}));
+                }
 
-            sampling_func(acc.samples, duration, trajectory_sampling_freq_, [&](const double t, const double) {
-                const auto absolute_time = acc.cumulative_time + std::chrono::duration<double>(t);
-                auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
-                auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
-                return make_trajectory_point(
-                    traj.getPosition(t), traj.getVelocity(t), {static_cast<uint32_t>(secs.count()), static_cast<uint32_t>(nanos.count())});
+                sampling_func(acc.samples, duration, trajectory_sampling_freq_, [&](const double t, const double) {
+                    const auto absolute_time = acc.cumulative_time + std::chrono::duration<double>(t);
+                    auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
+                    auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
+                    return make_trajectory_point(traj.getPosition(t),
+                                                 traj.getVelocity(t),
+                                                 {static_cast<uint32_t>(secs.count()), static_cast<uint32_t>(nanos.count())});
+                });
+
+                acc.cumulative_time += std::chrono::duration<double>(duration);
+                acc.total_waypoints += seg.size();
+                acc.total_duration += duration;
+                acc.total_generation_time += std::chrono::duration<double>(elapsed).count();
+                ++acc.segment_count;
+            },
+            [&](const auto& p, const segment_accumulator&, const totg::waypoint_accumulator& seg, const std::exception& e) {
+                log_failure(p.serialize_for_replay(seg, e.what()));
             });
-
-            acc.cumulative_time += std::chrono::duration<double>(duration);
-            acc.total_waypoints += seg.size();
-            acc.total_duration += duration;
-            acc.total_generation_time += std::chrono::duration<double>(elapsed).count();
-            ++acc.segment_count;
-        },
-        [&](const auto& p, const segment_accumulator&, const totg::waypoint_accumulator& seg, const std::exception& e) {
-            log_failure(p.serialize_for_replay(seg, e.what()));
-        });
+    }
 
     auto result = planner.execute([&](const auto& p, auto trajex_out, auto legacy_out) -> std::optional<segment_accumulator> {
         if (trajex_out.receiver) {
