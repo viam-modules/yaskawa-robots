@@ -387,6 +387,30 @@ BOOST_FIXTURE_TEST_CASE(abort_mid_flight_stops_the_arm, ControllerFixture, *boos
     BOOST_CHECK(!server.robot().groups[0].in_motion);
 }
 
+// whoever stops the arm can say why, and the client's move fails with that reason rather than with
+// the monitor's account of what it saw, which is that the goal ended with points left over.
+BOOST_FIXTURE_TEST_CASE(abort_moves_reports_the_callers_reason, ControllerFixture, *boost::unit_test::timeout(20)) {
+    connect();
+    auto move = start_streamed_move(0, 1.0);
+
+    BOOST_REQUIRE(wait_for_goal_active());
+
+    controller->abort_moves(0, "move stopped by the arm's stop API");
+
+    BOOST_REQUIRE(move.completion.wait_for(std::chrono::seconds(15)) == std::future_status::ready);
+    BOOST_CHECK_EXCEPTION(move.completion.get(), std::runtime_error, [](const std::runtime_error& ex) {
+        return std::string(ex.what()).find("move stopped by the arm's stop API") != std::string::npos;
+    });
+    BOOST_CHECK(!server.robot().groups[0].in_motion);
+}
+
+// aborting a group that is not moving is a no-op, so a stop that races the end of a move does not
+// have to check first.
+BOOST_FIXTURE_TEST_CASE(abort_moves_on_an_idle_group_does_nothing, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    BOOST_CHECK_NO_THROW(controller->abort_moves(0, "nothing to stop"));
+}
+
 // once the move is over we finish the stream, so a producer that is still feeding it hears about
 // it from extend and close instead of piling points into a buffer nobody is going to read.
 BOOST_FIXTURE_TEST_CASE(producer_learns_the_move_is_over, ControllerFixture, *boost::unit_test::timeout(15)) {
@@ -805,6 +829,47 @@ BOOST_FIXTURE_TEST_CASE(disconnect_during_dual_group_motion, DualArmFixture, *bo
     // New move should work
     auto handle_new = do_move(0, 0.1);
     BOOST_CHECK_EQUAL(handle_new->wait(), GOAL_STATE_SUCCEEDED);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE(shared_controller)
+
+// The arms of one controller share it through the registry, so one arm being destroyed must leave
+// the connection alone. This used to break on reconfigure: the outgoing arm's destructor
+// disconnected the controller the incoming arm had already picked up, and nothing rebuilt the FSM,
+// so the new arm reported `disconnected` for as long as it lived.
+BOOST_AUTO_TEST_CASE(one_holder_leaving_does_not_disconnect_the_others, *boost::unit_test::timeout(30)) {
+    boost::asio::io_context io_ctx;
+    std::thread io_thread([&io_ctx]() {
+        auto guard = boost::asio::make_work_guard(io_ctx);
+        io_ctx.run();
+    });
+
+    {
+        const auto ports = test::FakeServer::allocate_ports();
+        test::FakeServer server(ports);
+        server.robot().mode = ROBOT_MODE_REMOTE;
+        server.start_udp_status_pump(10);
+
+        const auto cfg = make_config(ports.tcp_port);
+        auto first = robot::YaskawaController::get_or_create(io_ctx, cfg);
+        auto second = robot::YaskawaController::get_or_create(io_ctx, cfg);
+        BOOST_CHECK_EQUAL(first.get(), second.get());
+
+        test::wait_for_connected(first);
+        BOOST_REQUIRE(!second->is_disconnected());
+
+        first.reset();  // the arm that created it goes away
+
+        BOOST_CHECK(!second->is_disconnected());
+        BOOST_CHECK_NO_THROW(second->get_robot_status());
+
+        second->disconnect();
+    }
+
+    io_ctx.stop();
+    io_thread.join();
 }
 
 BOOST_AUTO_TEST_SUITE_END()

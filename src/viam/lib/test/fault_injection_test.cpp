@@ -106,10 +106,12 @@ BOOST_FIXTURE_TEST_CASE(server_disconnect_during_idle, FaultFixture, *boost::uni
     BOOST_CHECK_EQUAL(server.robot().servo_power_on, 1);
 }
 
-// Test 2: Server becomes unresponsive when it receives MSG_TEST_TRAJECTORY_COMMAND.
-// The fault blocks the server thread for ~5s before responding. Verify the
-// delay is observable (operation takes >3s instead of being near-instant).
-BOOST_FIXTURE_TEST_CASE(server_unresponsive_during_move, FaultFixture, *boost::unit_test::timeout(15)) {
+// Test 2: Server becomes unresponsive when it receives MSG_TEST_TRAJECTORY_COMMAND. The fault
+// blocks the server thread for ~5s, which is as long as we are willing to wait for any request, so
+// the caller gives up instead of sitting there. What matters is that the wait is bounded by us and
+// not by the controller: a controller that never answers used to block the caller forever, and
+// when that caller was the FSM worker thread it took teardown down with it.
+BOOST_FIXTURE_TEST_CASE(server_unresponsive_during_move, FaultFixture, *boost::unit_test::timeout(30)) {
     connect();
     controller->turn_servo_power_on();
 
@@ -117,29 +119,28 @@ BOOST_FIXTURE_TEST_CASE(server_unresponsive_during_move, FaultFixture, *boost::u
     server.inject_unresponsive_on(MSG_TEST_TRAJECTORY_COMMAND);
 
     auto start = std::chrono::steady_clock::now();
-    controller->send_test_trajectory();
-    auto elapsed = std::chrono::steady_clock::now() - start;
+    BOOST_CHECK_THROW(controller->send_test_trajectory(), std::runtime_error);
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start);
 
-    // The operation succeeded but was delayed by the fault
-    BOOST_CHECK_GT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 3);
+    // It waited for the timeout, and no longer than that.
+    BOOST_CHECK_GE(elapsed.count(), 4);
+    BOOST_CHECK_LE(elapsed.count(), 10);
 }
 
-// Test 3: Server becomes unresponsive on MSG_TURN_SERVO_POWER_ON.
-// The fault blocks the server thread for ~5s before responding. Verify the
-// delay is observable.
-BOOST_FIXTURE_TEST_CASE(server_unresponsive, FaultFixture, *boost::unit_test::timeout(15)) {
+// Test 3: Same, on MSG_TURN_SERVO_POWER_ON.
+BOOST_FIXTURE_TEST_CASE(server_unresponsive, FaultFixture, *boost::unit_test::timeout(30)) {
     connect();
 
     server.inject_unresponsive_on(MSG_TURN_SERVO_POWER_ON);
 
     auto start = std::chrono::steady_clock::now();
-    controller->turn_servo_power_on();
-    auto elapsed = std::chrono::steady_clock::now() - start;
+    BOOST_CHECK_THROW(controller->turn_servo_power_on(), std::runtime_error);
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start);
 
-    // The operation completed but was delayed by the fault (~5s instead of instant).
-    BOOST_CHECK_GT(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(), 3);
-    // servo_power_on is NOT set — the fault intercepted the command and returned OK
-    // without delegating to the mock robot handler. Verify the interception worked.
+    BOOST_CHECK_GE(elapsed.count(), 4);
+    BOOST_CHECK_LE(elapsed.count(), 10);
+    // servo_power_on is NOT set — the fault intercepted the command without delegating to the mock
+    // robot handler. Verify the interception worked.
     BOOST_CHECK_EQUAL(server.robot().servo_power_on, 0);
 }
 
@@ -189,6 +190,28 @@ BOOST_FIXTURE_TEST_CASE(reconnect_after_server_fault, FaultFixture, *boost::unit
     BOOST_CHECK_GE(server.robot().connection_count, 2U);
     BOOST_CHECK_NO_THROW(controller->turn_servo_power_on());
     BOOST_CHECK_EQUAL(server.robot().servo_power_on, 1);
+}
+
+// Teardown must not wait on the controller. We stall the server inside the request the FSM worker
+// thread makes every cycle, then disconnect. Closing the socket is what fails that request, so it
+// has to happen before we join the worker, otherwise we are joining a thread that is waiting on a
+// socket we have not closed yet. A controller that answers nothing at all makes that wait
+// permanent, which is how a reconfigure used to hang the whole module.
+BOOST_FIXTURE_TEST_CASE(disconnect_does_not_wait_on_a_stalled_controller, FaultFixture, *boost::unit_test::timeout(30)) {
+    connect();
+
+    // The fault blocks the server's TCP thread for ~5s once the heartbeat arrives.
+    server.inject_unresponsive_on(MSG_HEARTBEAT);
+    // The connected states run a cycle every 100ms, so this lands the worker inside the stall.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    const auto start = std::chrono::steady_clock::now();
+    controller->disconnect();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+
+    BOOST_TEST_MESSAGE("disconnect took " << elapsed.count() << "ms");
+    BOOST_CHECK_LT(elapsed.count(), 2000);
+    BOOST_CHECK(controller->is_disconnected());
 }
 
 // Test 6: Client disconnects while a trajectory is active. Verify the server

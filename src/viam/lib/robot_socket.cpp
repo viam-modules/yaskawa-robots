@@ -877,7 +877,7 @@ YaskawaController::YaskawaController(boost::asio::io_context& io_context, const 
 
     auto tcp_port = find_config_attribute<double>(config, "tcp_port");
     tcp_port_ = tcp_port ? static_cast<uint16_t>(*tcp_port) : static_cast<uint16_t>(TCP_PORT);
-    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_, tcp_port_);
+    tcp_socket_ = std::make_shared<TcpRobotSocket>(io_context_, host_, tcp_port_);
     broadcast_listener_ = std::make_unique<UdpBroadcastListener>(io_context_);
     // Diagnostic listener: independent of TCP/UDP control sockets, runs for controller lifetime.
     broadcast_listener_->start();
@@ -908,13 +908,17 @@ std::shared_ptr<YaskawaController> YaskawaController::get_or_create(boost::asio:
     if (!host_attr) {
         throw std::runtime_error("host attribute is required");
     }
-    const auto& host = *host_attr;
+    // Key on the port as well as the host, since two controllers on one box are two different
+    // controllers, and handing an arm the one listening on the other port would silently point it
+    // at the wrong robot.
+    const auto port = find_config_attribute<double>(config, "tcp_port");
+    const auto key = std::format("{}:{}", *host_attr, port ? static_cast<uint16_t>(*port) : static_cast<uint16_t>(TCP_PORT));
 
     const std::lock_guard lock(s_registry_mutex);
     // The registry stores weak_ptr — if the controller is still alive (held by YaskawaArm
     // instances), lock() returns the existing shared_ptr. A new controller is only created
     // if all references were released (weak_ptr expired).
-    auto it = s_controller_registry.find(host);
+    auto it = s_controller_registry.find(key);
     if (it != s_controller_registry.end()) {
         if (auto existing = it->second.lock()) {
             return existing;
@@ -922,7 +926,7 @@ std::shared_ptr<YaskawaController> YaskawaController::get_or_create(boost::asio:
         s_controller_registry.erase(it);
     }
     auto ctrl = std::make_shared<YaskawaController>(io_context, config);
-    s_controller_registry[host] = ctrl;
+    s_controller_registry[key] = ctrl;
     return ctrl;
 }
 
@@ -942,17 +946,21 @@ void YaskawaController::establish_connections_(std::stop_token token) {
     // Tear down any stale connection. No-op on the first call (sockets have not connected yet).
     // On reconnect, this drops the dead session before we replace tcp_socket_, since
     // TcpRobotSocket can't be reused after disconnect.
-    if (udp_socket_) {
-        std::exchange(udp_socket_, {})->disconnect();
+    {
+        const std::lock_guard lock{socket_mutex_};
+        if (auto stale = std::exchange(udp_socket_, {})) {
+            stale->disconnect();
+        }
+        if (auto stale = std::exchange(tcp_socket_, {})) {
+            stale->disconnect();
+        }
+        tcp_socket_ = std::make_shared<TcpRobotSocket>(io_context_, host_, tcp_port_);
     }
-    if (tcp_socket_) {
-        std::exchange(tcp_socket_, {})->disconnect();
-    }
-    tcp_socket_ = std::make_unique<TcpRobotSocket>(io_context_, host_, tcp_port_);
+    auto tcp = tcp_socket_locked_();
 
     try {
         check_cancel();
-        auto tcp_future = tcp_socket_->connect();
+        auto tcp_future = tcp->connect();
         if (tcp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
             throw std::runtime_error("TCP connect timed out");
         }
@@ -987,15 +995,19 @@ void YaskawaController::establish_connections_(std::stop_token token) {
         }
 
         check_cancel();
-        udp_socket_ = std::make_unique<UdpRobotSocket>(io_context_, robot_state_);
-        auto udp_future = udp_socket_->connect();
+        auto udp = std::make_shared<UdpRobotSocket>(io_context_, robot_state_);
+        {
+            const std::lock_guard lock{socket_mutex_};
+            udp_socket_ = udp;
+        }
+        auto udp_future = udp->connect();
         if (udp_future.wait_for(k_socket_timeout) != std::future_status::ready) {
             throw std::runtime_error("UDP connect timed out");
         }
         udp_future.get();
 
         check_cancel();
-        register_udp_port(udp_socket_->get_local_port());
+        register_udp_port(udp->get_local_port());
         // Verify the UDP path works end-to-end by requesting one robot status frame and
         // waiting for the response. Surfaces UDP connectivity failures here rather than on
         // the first real read. Uses the gate-less helper because the FSM is still in
@@ -1010,9 +1022,9 @@ void YaskawaController::establish_connections_(std::stop_token token) {
         broadcast_listener_->stop();
         broadcast_listener_->start();
     } catch (...) {
-        tcp_socket_->disconnect();
-        if (udp_socket_) {
-            udp_socket_->disconnect();
+        tcp->disconnect();
+        if (auto udp = udp_socket_locked_()) {
+            udp->disconnect();
         }
         throw;
     }
@@ -1030,17 +1042,56 @@ std::future<void> YaskawaController::connect() {
     });
 }
 
+std::shared_ptr<TcpRobotSocket> YaskawaController::tcp_socket_locked_() const {
+    const std::lock_guard lock{socket_mutex_};
+    return tcp_socket_;
+}
+
+std::shared_ptr<UdpRobotSocket> YaskawaController::udp_socket_locked_() const {
+    const std::lock_guard lock{socket_mutex_};
+    return udp_socket_;
+}
+
+Message YaskawaController::send_request_timed_(Message request, std::chrono::milliseconds timeout) {
+    const auto type = request.header.message_type;
+    auto socket = tcp_socket_locked_();
+    if (!socket) {
+        throw std::runtime_error(std::format("message {} failed: no TCP connection", static_cast<int>(type)));
+    }
+    auto future = socket->send_request(std::move(request));
+    if (future.wait_for(timeout) != std::future_status::ready) {
+        throw std::runtime_error(
+            std::format("message {} timed out after {}ms waiting for the controller", static_cast<int>(type), timeout.count()));
+    }
+    return future.get();
+}
+
+bool YaskawaController::try_begin_flash() {
+    bool expected = false;
+    return flash_in_flight_.compare_exchange_strong(expected, true);
+}
+
+void YaskawaController::end_flash() {
+    flash_in_flight_.store(false);
+}
+
 void YaskawaController::disconnect() {
     LOGGING(info) << "Yaskawa Controller disconnecting";
     controller_protocol_mismatch_.store(false, std::memory_order_release);
-    // Reset FSM first so its worker thread joins before we tear down the sockets it talks to.
+    // Ask the FSM to stop, then close the sockets, and only then join its worker thread. The order
+    // matters: the worker can be part way through a request when we get here, and closing the
+    // socket is what fails that request and lets the worker reach the end of its cycle. Joining
+    // first would mean waiting on a thread that is waiting on the socket we have not closed yet.
+    if (fsm_) {
+        fsm_->request_shutdown();
+    }
+    if (auto udp = udp_socket_locked_()) {
+        udp->disconnect();
+    }
+    if (auto tcp = tcp_socket_locked_()) {
+        tcp->disconnect();
+    }
     fsm_.reset();
-    if (udp_socket_) {
-        udp_socket_->disconnect();
-    }
-    if (tcp_socket_) {
-        tcp_socket_->disconnect();
-    }
     if (broadcast_listener_) {
         broadcast_listener_->stop();
     }
@@ -1055,7 +1106,7 @@ GoalStatusMessage YaskawaController::get_goal_status(int32_t goal_id) {
     cancel_goal_payload_t* req = reinterpret_cast<cancel_goal_payload_t*>(payload.data());
     req->goal_id = goal_id;
 
-    auto msg = tcp_socket_->send_request(Message(MSG_GET_GOAL_STATUS, std::move(payload))).get();
+    auto msg = send_request_timed_(Message(MSG_GET_GOAL_STATUS, std::move(payload)));
     if (msg.header.message_type == MSG_ERROR) {
         throw std::runtime_error(std::format("received an error message while getting status for goal id {}", goal_id));
     }
@@ -1066,7 +1117,7 @@ void YaskawaController::cancel_goal(int32_t goal_id) {
     std::vector<uint8_t> payload(sizeof(cancel_goal_payload_t));
     cancel_goal_payload_t* req = reinterpret_cast<cancel_goal_payload_t*>(payload.data());
     req->goal_id = goal_id;
-    auto msg = tcp_socket_->send_request(Message(MSG_CANCEL_GOAL, std::move(payload))).get();
+    auto msg = send_request_timed_(Message(MSG_CANCEL_GOAL, std::move(payload)));
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
         throw std::runtime_error(std::format("an error occurred while cancelling goal id {}: {}", goal_id, err));
@@ -1080,7 +1131,7 @@ void YaskawaController::setMotionMode(uint8_t mode) {
     motion_mode_payload_t* req = reinterpret_cast<motion_mode_payload_t*>(payload.data());
     req->motion_mode = mode;
 
-    auto msg = tcp_socket_->send_request(Message(MSG_SET_MOTION_MODE, std::move(payload))).get();
+    auto msg = send_request_timed_(Message(MSG_SET_MOTION_MODE, std::move(payload)));
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
         throw std::runtime_error(std::format("failed to set motion mode: {}", err));
@@ -1098,7 +1149,7 @@ void YaskawaController::check_connected_() const {
 
 void YaskawaController::send_test_trajectory() {
     check_connected_();
-    auto msg = tcp_socket_->send_request(Message(MSG_TEST_TRAJECTORY_COMMAND)).get();
+    auto msg = send_request_timed_(Message(MSG_TEST_TRAJECTORY_COMMAND));
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
         throw std::runtime_error(std::format("failed to send MSG_TEST_TRAJECTORY_COMMAND: {}", err));
@@ -1108,7 +1159,7 @@ void YaskawaController::send_test_trajectory() {
 
 void YaskawaController::turn_servo_power_on() {
     check_connected_();
-    auto msg = tcp_socket_->send_request(Message(MSG_TURN_SERVO_POWER_ON)).get();
+    auto msg = send_request_timed_(Message(MSG_TURN_SERVO_POWER_ON));
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
         throw std::runtime_error(std::format("failed to turn on arm servo power: {}", err));
@@ -1117,14 +1168,7 @@ void YaskawaController::turn_servo_power_on() {
 }
 
 void YaskawaController::send_heartbeat() {
-    if (!tcp_socket_) {
-        throw std::runtime_error("heartbeat failed: no TCP connection");
-    }
-    auto future = tcp_socket_->send_request(Message(MSG_HEARTBEAT));
-    if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
-        throw std::runtime_error("heartbeat timed out");
-    }
-    auto msg = future.get();
+    auto msg = send_request_timed_(Message(MSG_HEARTBEAT));
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
         throw std::runtime_error(std::format("failed to send heartbeat: {}", err));
@@ -1133,7 +1177,7 @@ void YaskawaController::send_heartbeat() {
 }
 
 void YaskawaController::send_test_error_command() {
-    auto msg = tcp_socket_->send_request(Message(MSG_TEST_ERROR_COMMAND)).get();
+    auto msg = send_request_timed_(Message(MSG_TEST_ERROR_COMMAND));
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
         throw std::runtime_error(std::format("failed to send MSG_TEST_ERROR_COMMAND: {}", err));
@@ -1143,7 +1187,7 @@ void YaskawaController::send_test_error_command() {
 
 void YaskawaController::get_error_info() {
     // currently unimplemented
-    auto msg = tcp_socket_->send_request(Message(MSG_GET_ERROR_INFO)).get();
+    auto msg = send_request_timed_(Message(MSG_GET_ERROR_INFO));
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
         throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_GET_ERROR_INFO), err));
@@ -1154,7 +1198,11 @@ void YaskawaController::get_error_info() {
 StatusMessage YaskawaController::get_group_position_velocity_torque(uint8_t group_index) {
     check_connected_();
     validate_group_(group_index);
-    auto future = udp_socket_->get_group_status(group_index);
+    auto udp = udp_socket_locked_();
+    if (!udp) {
+        throw std::runtime_error(std::format("get_group_position_velocity_torque(group {}): no UDP connection", group_index));
+    }
+    auto future = udp->get_group_status(group_index);
     if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
         throw std::runtime_error(std::format("get_group_position_velocity_torque(group {}) timed out", group_index));
     }
@@ -1162,7 +1210,11 @@ StatusMessage YaskawaController::get_group_position_velocity_torque(uint8_t grou
 }
 
 RobotStatusMessage YaskawaController::get_robot_status_blocking_() {
-    auto future = udp_socket_->get_robot_status();
+    auto udp = udp_socket_locked_();
+    if (!udp) {
+        throw std::runtime_error("UDP status request failed: no UDP connection");
+    }
+    auto future = udp->get_robot_status();
     if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
         throw std::runtime_error("UDP status request timed out");
     }
@@ -1180,11 +1232,7 @@ void YaskawaController::register_udp_port(uint16_t port) {
     port_payload->udp_port = port;
     port_payload->protocol_version = PROTOCOL_VERSION;
 
-    auto future = tcp_socket_->send_request(Message(MSG_REGISTER_UDP_PORT, std::move(payload)));
-    if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
-        throw std::runtime_error("register_udp_port timed out");
-    }
-    auto msg = future.get();
+    auto msg = send_request_timed_(Message(MSG_REGISTER_UDP_PORT, std::move(payload)));
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
         throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_REGISTER_UDP_PORT), err));
@@ -1194,7 +1242,7 @@ void YaskawaController::register_udp_port(uint16_t port) {
 
 void YaskawaController::reset_errors() {
     check_connected_();
-    auto msg = tcp_socket_->send_request(Message(MSG_RESET_ERRORS)).get();
+    auto msg = send_request_timed_(Message(MSG_RESET_ERRORS));
     const auto err = msg.get_error(MSG_OK);
     if (!err.empty()) {
         throw std::runtime_error(std::format("message {} failed: {}", static_cast<const int&>(MSG_RESET_ERRORS), err));
@@ -1221,7 +1269,7 @@ GoalAcceptedMessage YaskawaController::send_goal_(uint32_t group_index,
     append_to(static_cast<uint32_t>(tolerance.size()));
     boost::for_each(tolerance, append_to);
 
-    return GoalAcceptedMessage(tcp_socket_->send_request(Message(MSG_MOVE_GOAL, std::move(payload))).get());
+    return GoalAcceptedMessage(send_request_timed_(Message(MSG_MOVE_GOAL, std::move(payload))));
 }
 
 // Precondition: the arm must already be motion-ready (servos powered, trajectory mode set,
@@ -1461,7 +1509,11 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
 
 std::future<Message> YaskawaController::echo_trajectory() {
     // Echo trajectory command has no payload
-    return tcp_socket_->send_request(Message(MSG_ECHO_TRAJECTORY));
+    auto socket = tcp_socket_locked_();
+    if (!socket) {
+        throw std::runtime_error("echo_trajectory failed: no TCP connection");
+    }
+    return socket->send_request(Message(MSG_ECHO_TRAJECTORY));
 }
 bool YaskawaController::stop(uint32_t group_index) {
     check_connected_();
@@ -1469,7 +1521,7 @@ bool YaskawaController::stop(uint32_t group_index) {
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
     id->group_id = static_cast<int32_t>(group_index);
-    auto msg = tcp_socket_->send_request(Message(MSG_STOP_MOTION, std::move(payload))).get();
+    auto msg = send_request_timed_(Message(MSG_STOP_MOTION, std::move(payload)));
     const auto err = msg.get_error(MSG_STOP_MOTION);
     if (!err.empty()) {
         throw std::runtime_error(std::format("failed to stop arm motion: {}", err));
@@ -1495,7 +1547,7 @@ CartesianPosition YaskawaController::getCartPosition(uint32_t group_index) {
     std::vector<uint8_t> payload(sizeof(group_id_t));
     group_id_t* id = reinterpret_cast<group_id_t*>(payload.data());
     id->group_id = static_cast<int32_t>(group_index);
-    return CartesianPosition(tcp_socket_->send_request(Message(MSG_GET_CART, std::move(payload))).get());
+    return CartesianPosition(send_request_timed_(Message(MSG_GET_CART, std::move(payload))));
 }
 AnglePosition YaskawaController::cartPosToAngle(uint32_t group_index, CartesianPosition& pos) {
     check_connected_();
@@ -1509,7 +1561,7 @@ AnglePosition YaskawaController::cartPosToAngle(uint32_t group_index, CartesianP
     cid->cartesianCoord[3] = pos.rx;
     cid->cartesianCoord[4] = pos.ry;
     cid->cartesianCoord[5] = pos.rz;
-    return AnglePosition(tcp_socket_->send_request(Message(MSG_FROM_CART_TO_JOINT, std::move(payload))).get());
+    return AnglePosition(send_request_timed_(Message(MSG_FROM_CART_TO_JOINT, std::move(payload))));
 }
 CartesianPosition YaskawaController::angleToCartPos(uint32_t group_index, AnglePosition& pos) {
     check_connected_();
@@ -1523,7 +1575,7 @@ CartesianPosition YaskawaController::angleToCartPos(uint32_t group_index, AngleP
     pid->positionAngleDegree[3] = pos.pos[3];
     pid->positionAngleDegree[4] = pos.pos[4];
     pid->positionAngleDegree[5] = pos.pos[5];
-    return CartesianPosition(tcp_socket_->send_request(Message(MSG_FROM_JOINT_TO_CART, std::move(payload))).get());
+    return CartesianPosition(send_request_timed_(Message(MSG_FROM_JOINT_TO_CART, std::move(payload))));
 }
 
 bool YaskawaController::is_status_command(message_type_t type) {
@@ -1606,11 +1658,7 @@ void YaskawaController::validate_group_(uint32_t group_index) const {
 }
 
 CapabilitiesMessage YaskawaController::get_capabilities() {
-    auto future = tcp_socket_->send_request(Message(MSG_GET_CAPABILITIES));
-    if (future.wait_for(k_socket_timeout) != std::future_status::ready) {
-        throw std::runtime_error("get_capabilities timed out");
-    }
-    auto msg = future.get();
+    auto msg = send_request_timed_(Message(MSG_GET_CAPABILITIES));
     const auto err = msg.get_error(MSG_CAPABILITIES);
     if (!err.empty()) {
         throw std::runtime_error(std::format("MSG_GET_CAPABILITIES failed: {}", err));

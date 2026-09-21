@@ -84,7 +84,7 @@ class AsyncQueue : public std::enable_shared_from_this<AsyncQueue<T>> {
     }
 
    public:
-    explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)) {};
+    explicit AsyncQueue(private_, boost::asio::any_io_executor exec) : executor_(std::move(exec)){};
     static auto create(boost::asio::any_io_executor exec) {
         return std::make_shared<AsyncQueue<T>>(private_{}, std::move(exec));
     };
@@ -634,6 +634,13 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
                                                 std::optional<RealtimeTrajectoryLogger> logger = std::nullopt,
                                                 std::function<bool()> async_cancel_monitor = nullptr);
 
+    /// Abort whatever `group_index` is moving, giving the caller's reason. The monitor picks it up
+    /// on its next tick, stops the arm, and fails the move with that message, so the client hears
+    /// why its move ended instead of the generic "motion ended earlier than expected" it gets when
+    /// a goal just stops underneath us. Does nothing if the group is not moving. Keeps the first
+    /// reason if the move was already aborted.
+    void abort_moves(uint32_t group_index, std::string_view reason);
+
     void send_test_trajectory();
     void turn_servo_power_on();
     void send_heartbeat();
@@ -682,6 +689,18 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     /// Factory: returns an existing controller for the same host, or creates a new one.
     static std::shared_ptr<YaskawaController> get_or_create(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config);
 
+    /// How long we wait for the controller to answer a request before giving up on it. Every
+    /// request uses this, so a controller that stops answering costs us one timeout rather than
+    /// wedging whichever thread asked.
+    static constexpr std::chrono::seconds k_request_timeout{5};
+
+    /// Claim the right to flash this controller's firmware, or return false if someone else
+    /// already holds it. The claim lives on the controller rather than on an arm because the
+    /// controller is shared per host, and because a reconfigure builds a whole new arm whose
+    /// members start out cleared. Call `end_flash` when done, ideally through a scope guard.
+    bool try_begin_flash();
+    void end_flash();
+
    private:
     class state_;
     friend class state_;
@@ -691,9 +710,23 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     uint16_t tcp_port_;
     std::shared_ptr<State> robot_state_;
 
-    std::unique_ptr<TcpRobotSocket> tcp_socket_;
-    std::unique_ptr<UdpRobotSocket> udp_socket_;
+    // The sockets are shared_ptr, and every user takes a copy under socket_mutex_ before using
+    // one, because a reconnect replaces them while other threads are still mid-request. The copy
+    // keeps the old socket alive until that request is done with it.
+    std::shared_ptr<TcpRobotSocket> tcp_socket_;
+    std::shared_ptr<UdpRobotSocket> udp_socket_;
+    mutable std::mutex socket_mutex_;
     std::unique_ptr<UdpBroadcastListener> broadcast_listener_;
+
+    std::shared_ptr<TcpRobotSocket> tcp_socket_locked_() const;
+    std::shared_ptr<UdpRobotSocket> udp_socket_locked_() const;
+
+    /// Send a request and wait for the answer, giving up after `timeout`. Throws if the socket is
+    /// gone, if the controller does not answer in time, or with whatever the socket reported.
+    /// Every TCP request goes through here so that no caller can block forever on a controller
+    /// that has stopped talking, which matters most for the FSM worker thread, since it holds the
+    /// FSM lock for its whole cycle and shutdown has to wait for it.
+    Message send_request_timed_(Message request, std::chrono::milliseconds timeout = k_request_timeout);
 
     // Group enumeration cached from the capabilities handshake. Populated in
     // `establish_connections_` after `get_capabilities()` succeeds, cleared in `disconnect()`.
@@ -751,6 +784,9 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     // controller_protocol_mismatch() from other threads (e.g. the flash-on-start task).
     std::atomic<bool> controller_protocol_mismatch_{false};
 
+    // Held while someone is flashing this controller; see try_begin_flash.
+    std::atomic<bool> flash_in_flight_{false};
+
     static bool is_status_command(message_type_t type);
     Message create_status_response_from_cache(message_type_t requested_type) const;
     GoalAcceptedMessage send_goal_(uint32_t group_index,
@@ -786,6 +822,12 @@ class YaskawaController::state_ {
     ~state_();
 
     static std::unique_ptr<state_> create(YaskawaController* controller);
+
+    /// Tell the worker thread to stop, without waiting for it. The caller can then tear down what
+    /// the worker might be blocked on before calling shutdown() to join it.
+    void request_shutdown();
+
+    /// Request the stop and join the worker thread. Safe to call more than once.
     void shutdown();
 
     std::string describe() const;
@@ -799,6 +841,8 @@ class YaskawaController::state_ {
                                            double trajectory_sampling_freq,
                                            std::optional<RealtimeTrajectoryLogger> logger = std::nullopt,
                                            std::function<bool()> async_cancel_monitor = nullptr);
+
+    void abort_moves(uint32_t group_index, std::string_view reason);
 
    private:
     // ---------------------------------------------------------------
@@ -1036,7 +1080,13 @@ class YaskawaController::state_ {
     std::atomic<bool> is_disconnected_atomic_{true};
     std::thread worker_thread_;
     std::condition_variable worker_wakeup_cv_;
-    bool shutdown_requested_{false};
+    // Atomic so request_shutdown() can set it without taking mutex_, which the worker holds for
+    // its whole cycle. If we needed the lock to ask the worker to stop, we could not ask while it
+    // was busy, which is exactly when we need to.
+    std::atomic<bool> shutdown_requested_{false};
+    // Set under mutex_ when something wants the next cycle to run now rather than at the next
+    // timeout, currently only a newly queued move request. Cleared by the worker when it wakes.
+    bool wakeup_pending_{false};
 
     std::list<move_request> move_requests_;
 };
