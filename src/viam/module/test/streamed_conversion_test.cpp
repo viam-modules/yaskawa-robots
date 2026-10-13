@@ -254,22 +254,33 @@ BOOST_AUTO_TEST_CASE(each_joint_is_checked_against_its_own_limit) {
     limits.velocity_degs_per_sec << 10.0, 20.0, 30.0, 40.0, 50.0, 60.0;
     limits.acceleration_degs_per_sec2 << 15.0, 25.0, 35.0, 45.0, 55.0, 65.0;
 
-    auto at_limits = make_point(0us, 0.0, 0.0, 0.0);
-    for (std::size_t i = 0; i < k_dof; ++i) {
-        at_limits.constraints->velocities_degs_per_sec[i] = limits.velocity_degs_per_sec[static_cast<Eigen::Index>(i)];
-        (*at_limits.constraints->accelerations_degs_per_sec2)[i] = limits.acceleration_degs_per_sec2[static_cast<Eigen::Index>(i)];
-    }
-    BOOST_REQUIRE_NO_THROW(convert_streamed_point(at_limits, limits));
+    const std::vector<double> velocities_at_limit(limits.velocity_degs_per_sec.begin(), limits.velocity_degs_per_sec.end());
+    const std::vector<double> accelerations_at_limit(limits.acceleration_degs_per_sec2.begin(), limits.acceleration_degs_per_sec2.end());
+
+    // builds a fresh point rather than copying one, since gcc's -Wmaybe-uninitialized loses track
+    // of the boost::optional constraints in a copied point and fails the -Werror build.
+    const auto point_with = [](std::vector<double> velocities, std::vector<double> accelerations) {
+        Arm::trajectory_point point;
+        point.time = 0us;
+        point.positions = std::vector<double>(k_dof, 0.0);
+        Arm::trajectory_point::kinematic_constraints constraints;
+        constraints.velocities_degs_per_sec = std::move(velocities);
+        constraints.accelerations_degs_per_sec2 = std::move(accelerations);
+        point.constraints = std::move(constraints);
+        return point;
+    };
+
+    BOOST_REQUIRE_NO_THROW(convert_streamed_point(point_with(velocities_at_limit, accelerations_at_limit), limits));
 
     for (std::size_t i = 0; i < k_dof; ++i) {
         BOOST_TEST_CONTEXT("joint " << i) {
-            auto over_velocity = at_limits;
-            over_velocity.constraints->velocities_degs_per_sec[i] += 0.01;
-            BOOST_CHECK_THROW(convert_streamed_point(over_velocity, limits), std::invalid_argument);
+            auto over_velocities = velocities_at_limit;
+            over_velocities[i] += 0.01;
+            BOOST_CHECK_THROW(convert_streamed_point(point_with(over_velocities, accelerations_at_limit), limits), std::invalid_argument);
 
-            auto over_acceleration = at_limits;
-            (*over_acceleration.constraints->accelerations_degs_per_sec2)[i] += 0.01;
-            BOOST_CHECK_THROW(convert_streamed_point(over_acceleration, limits), std::invalid_argument);
+            auto over_accelerations = accelerations_at_limit;
+            over_accelerations[i] += 0.01;
+            BOOST_CHECK_THROW(convert_streamed_point(point_with(velocities_at_limit, over_accelerations), limits), std::invalid_argument);
         }
     }
 }
