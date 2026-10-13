@@ -1,6 +1,7 @@
 #include "utils.hpp"
 
 #include <chrono>
+#include <cmath>
 #include <format>
 #include <iomanip>
 #include <ranges>
@@ -45,6 +46,18 @@ viam::yaskawa::LogLevel string_to_log_level(const std::string& level_str) {
 void check_streamed_arity(const std::vector<double>& src, std::size_t dof, const char* field) {
     if (src.size() != dof) {
         throw std::invalid_argument(std::format("trajectory point {} has {} joints, arm has {}", field, src.size(), dof));
+    }
+}
+
+// written as "not within" rather than "over" so that a NaN fails the check instead of slipping
+// past it.
+void check_streamed_limits(const std::vector<double>& values, const Eigen::VectorXd& limits, const char* field, const char* units) {
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        const auto limit = limits[static_cast<Eigen::Index>(i)];
+        if (!(std::abs(values[i]) <= limit)) {
+            throw std::invalid_argument(
+                std::format("trajectory point joint {} {} {} {} exceeds limit {} {}", i, field, values[i], units, limit, units));
+        }
     }
 }
 }  // namespace
@@ -292,7 +305,25 @@ void apply_move_limit(Eigen::VectorXd& limits, const boost::variant<double, std:
     boost::apply_visitor(visitor{limits}, value);
 }
 
-trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point& point, std::size_t dof) {
+std::optional<double> parse_stream_limit_tolerance_ratio(const viam::sdk::ResourceConfig& cfg) {
+    auto ratio = find_config_attribute<double>(cfg, "stream_limit_tolerance_ratio");
+    // also rejects NaN, which would otherwise make every limit check fail.
+    if (ratio && !(*ratio >= 1.0)) {
+        throw std::invalid_argument(std::format("attribute `stream_limit_tolerance_ratio` must be >= 1, it is: {}", *ratio));
+    }
+    return ratio;
+}
+
+streamed_limits make_streamed_limits(const Eigen::VectorXd& velocity_rad_per_sec,
+                                     const Eigen::VectorXd& acceleration_rad_per_sec2,
+                                     double tolerance_ratio) {
+    return {(radians_to_degrees(velocity_rad_per_sec) * tolerance_ratio).eval(),
+            (radians_to_degrees(acceleration_rad_per_sec2) * tolerance_ratio).eval()};
+}
+
+trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point& point, const streamed_limits& limits) {
+    const auto dof = static_cast<std::size_t>(limits.velocity_degs_per_sec.size());
+
     // the controller's queue is parameterized by velocity, so a point with only positions in it
     // does not mean anything to it. we could work out velocities by differencing the positions, but
     // that would invent a profile the caller never asked for, so require them instead.
@@ -309,6 +340,13 @@ trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point
     check_streamed_arity(velocities, dof, "velocities");
     if (accelerations) {
         check_streamed_arity(*accelerations, dof, "accelerations");
+    }
+
+    // the controller ignores accelerations today, but we still hold them to the configured limit
+    // so a client cannot come to depend on that.
+    check_streamed_limits(velocities, limits.velocity_degs_per_sec, "velocity", "deg/s");
+    if (accelerations) {
+        check_streamed_limits(*accelerations, limits.acceleration_degs_per_sec2, "acceleration", "deg/s^2");
     }
 
     trajectory_point_t pt{};
@@ -328,11 +366,18 @@ trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point
     return pt;
 }
 
-std::vector<trajectory_point_t> convert_streamed_batch(const std::vector<viam::sdk::Arm::trajectory_point>& batch, std::size_t dof) {
+std::vector<trajectory_point_t> convert_streamed_batch(const std::vector<viam::sdk::Arm::trajectory_point>& batch,
+                                                       const streamed_limits& limits) {
+    const auto dof = static_cast<std::size_t>(limits.velocity_degs_per_sec.size());
     if (dof == 0 || dof > static_cast<std::size_t>(NUMBER_OF_DOF)) {
         throw std::invalid_argument(std::format("arm has {} joints, which the protocol cannot carry (max {})", dof, NUMBER_OF_DOF));
     }
-    const auto converted = batch | std::views::transform([dof](const auto& point) { return convert_streamed_point(point, dof); });
+    if (limits.acceleration_degs_per_sec2.size() != limits.velocity_degs_per_sec.size()) {
+        throw std::invalid_argument(std::format("arm has {} velocity limits but {} acceleration limits",
+                                                limits.velocity_degs_per_sec.size(),
+                                                limits.acceleration_degs_per_sec2.size()));
+    }
+    const auto converted = batch | std::views::transform([&limits](const auto& point) { return convert_streamed_point(point, limits); });
     return {converted.begin(), converted.end()};
 }
 
