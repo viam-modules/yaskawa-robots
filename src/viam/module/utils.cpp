@@ -51,12 +51,22 @@ void check_streamed_arity(const std::vector<double>& src, std::size_t dof, const
 
 // written as "not within" rather than "over" so that a NaN fails the check instead of slipping
 // past it.
-void check_streamed_limits(const std::vector<double>& values, const Eigen::VectorXd& limits, const char* field, const char* units) {
+void check_streamed_limits(std::chrono::microseconds time,
+                           const std::vector<double>& values,
+                           const Eigen::VectorXd& limits,
+                           const char* field,
+                           const char* units) {
     for (std::size_t i = 0; i < values.size(); ++i) {
         const auto limit = limits[static_cast<Eigen::Index>(i)];
         if (!(std::abs(values[i]) <= limit)) {
-            throw std::invalid_argument(
-                std::format("trajectory point joint {} {} {} {} exceeds limit {} {}", i, field, values[i], units, limit, units));
+            throw std::invalid_argument(std::format("trajectory point at time {} joint {} {} {} {} exceeds limit {} {}",
+                                                    std::chrono::duration<double>(time),
+                                                    i,
+                                                    field,
+                                                    values[i],
+                                                    units,
+                                                    limit,
+                                                    units));
         }
     }
 }
@@ -344,9 +354,9 @@ trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point
 
     // the controller ignores accelerations today, but we still hold them to the configured limit
     // so a client cannot come to depend on that.
-    check_streamed_limits(velocities, limits.velocity_degs_per_sec, "velocity", "deg/s");
+    check_streamed_limits(point.time, velocities, limits.velocity_degs_per_sec, "velocity", "deg/s");
     if (accelerations) {
-        check_streamed_limits(*accelerations, limits.acceleration_degs_per_sec2, "acceleration", "deg/s^2");
+        check_streamed_limits(point.time, *accelerations, limits.acceleration_degs_per_sec2, "acceleration", "deg/s^2");
     }
 
     trajectory_point_t pt{};
