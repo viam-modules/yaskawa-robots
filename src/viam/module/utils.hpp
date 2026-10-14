@@ -148,6 +148,24 @@ std::string sva_with_joint_limits(const std::string& sva_json,
                                   const Eigen::VectorXd& velocity_rad_per_sec,
                                   const Eigen::VectorXd& acceleration_rad_per_sec2);
 
+// Reads `stream_limit_tolerance_ratio` from config. Returns std::nullopt if it is absent.
+// Throws std::invalid_argument if it is not a number or is less than 1.
+std::optional<double> parse_stream_limit_tolerance_ratio(const viam::sdk::ResourceConfig& cfg);
+
+// Per-joint bounds that streamed trajectory points are checked against. They are held in the
+// degrees the sdk points carry, so the check needs no conversion and its errors read in the units
+// the client sent. Both vectors are one entry per joint, and their length is the arm's dof.
+struct streamed_limits {
+    Eigen::VectorXd velocity_degs_per_sec;
+    Eigen::VectorXd acceleration_degs_per_sec2;
+};
+
+// Builds streamed_limits from the configured limits, which are in radians, scaled by
+// tolerance_ratio so planner rounding just over a limit is not rejected.
+streamed_limits make_streamed_limits(const Eigen::VectorXd& velocity_rad_per_sec,
+                                     const Eigen::VectorXd& acceleration_rad_per_sec2,
+                                     double tolerance_ratio);
+
 // Converts an sdk trajectory_point into the trajectory_point_t we put on the wire.
 //
 // The sdk gives us every joint value in degrees and the time as a microsecond offset from the
@@ -155,19 +173,24 @@ std::string sva_with_joint_limits(const std::string& sva_json,
 // nanoseconds. Both sides measure time from the start of the trajectory, so we do not have to keep
 // a running total and each point converts on its own.
 //
-// Streamed points come in already time parameterized, so this path skips trajex and does not
-// recheck the configured speed_rad_per_sec or acceleration_rad_per_sec2. The caller picked the
-// profile. The controller still checks the first point's speed against its per axis limits and the
-// first position against START_MAX_PULSE_DEVIATION, so a stream the arm cannot reach gets rejected
-// when we open the goal instead of being run.
+// Streamed points come in already time parameterized, so this path skips trajex. The caller picked
+// the profile, but it must stay within the given limits: every velocity, and every acceleration
+// when the point carries them, is checked by magnitude against its joint's limit. The controller
+// still checks the first point's speed against its per axis limits and the first position against
+// START_MAX_PULSE_DEVIATION, so a stream the arm cannot reach gets rejected when we open the goal
+// instead of being run.
 //
-// Throws std::invalid_argument if the point has no constraints, since we need velocities, or if
-// any of its joint vectors is not dof long.
-trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point& point, std::size_t dof);
+// The arm's dof is the length of the limit vectors.
+//
+// Throws std::invalid_argument if the point has no constraints, since we need velocities, if any
+// of its joint vectors is not dof long, or if any velocity or acceleration exceeds its limit.
+trajectory_point_t convert_streamed_point(const viam::sdk::Arm::trajectory_point& point, const streamed_limits& limits);
 
 // Converts a whole batch of streamed points and keeps them in order. Throws std::invalid_argument
-// if the protocol cannot carry dof joints, or for any reason convert_streamed_point does.
-std::vector<trajectory_point_t> convert_streamed_batch(const std::vector<viam::sdk::Arm::trajectory_point>& batch, std::size_t dof);
+// if the protocol cannot carry the limits' dof, if the two limit vectors disagree on it, or for
+// any reason convert_streamed_point does.
+std::vector<trajectory_point_t> convert_streamed_batch(const std::vector<viam::sdk::Arm::trajectory_point>& batch,
+                                                       const streamed_limits& limits);
 
 // Rejects a batch whose points are closer together than the controller can interpolate. The
 // controller moves forward by at least one interpolation period every cycle, so it cannot run

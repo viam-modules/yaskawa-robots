@@ -33,6 +33,10 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     /// generator is also enabled, legacy only runs if the new one fails to produce a trajectory.
     static constexpr bool k_default_enable_legacy_trajectory_planner = false;
 
+    /// @brief Default factor by which streamed points may exceed the configured velocity and
+    /// acceleration limits, to absorb numerical drift from the client's planner.
+    static constexpr double k_default_stream_limit_tolerance_ratio = 1.01;
+
     /// @brief Returns the common ModelFamily for all implementations
     static const ModelFamily& model_family();
 
@@ -197,6 +201,7 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     double path_tolerance_rad_{0.1};
     std::optional<double> collinearization_ratio_;
     double segmentation_threshold_rad_{0.005};
+    double stream_limit_tolerance_ratio_{k_default_stream_limit_tolerance_ratio};
     std::optional<double> threshold_;
     boost::asio::io_context& io_context_;
     std::filesystem::path resource_root_;

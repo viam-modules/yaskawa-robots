@@ -211,6 +211,8 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
                        k_min_sampling_freq_hz % k_max_sampling_freq_hz % *sampling_freq));
     }
 
+    parse_stream_limit_tolerance_ratio(cfg);
+
     auto waypoint_dedup_tolerance = find_config_attribute<double>(cfg, "waypoint_deduplication_tolerance_deg");
     constexpr double k_min_waypoint_dedup_tolerance_deg = 0.0;
     constexpr double k_max_waypoint_dedup_tolerance_deg = 10.0;
@@ -398,6 +400,7 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     collinearization_ratio_ = find_config_attribute<double>(config, "collinearization_ratio");
     segmentation_threshold_rad_ =
         find_config_attribute<double>(config, "segmentation_threshold_rad").value_or(k_default_segmentation_threshold);
+    stream_limit_tolerance_ratio_ = parse_stream_limit_tolerance_ratio(config).value_or(k_default_stream_limit_tolerance_ratio);
 
     // Optionally flash the controller firmware on startup. Version-gated (RSDK-14150) and run in the
     // background so it neither blocks configure_ nor races the FSM connect; see start_flash_on_start_.
@@ -533,7 +536,10 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
     // batch_source() calls so robot_ stays valid, and if the client stalls grpc will tear down the
     // rpc and break us out.
     auto result = [&, rlock = std::move(rlock)]() -> std::optional<loop_result> {
-        const auto dof = static_cast<std::size_t>(velocity_limits_.size());
+        // streamed points are checked against the configured limits rather than any per-move
+        // override, since those are what we publish in the kinematics for the client to plan
+        // against.
+        const auto limits = make_streamed_limits(velocity_limits_, acceleration_limits_, stream_limit_tolerance_ratio_);
 
         // the producer picks the point times, so nobody has checked them against what this
         // controller can actually run. we carry the last time across batches so the gap between
@@ -561,7 +567,7 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
                 continue;
             }
             check_streamed_spacing(*batch, interpolation_period, last_point_time);
-            const auto converted = convert_streamed_batch(*batch, dof);
+            const auto converted = convert_streamed_batch(*batch, limits);
             primer.insert(primer.end(), converted.begin(), converted.end());
         }
 
@@ -613,7 +619,7 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
                     // extend returns false once the goal monitor has finished the move, either from
                     // a fault or because the arm stopped early. no point feeding a stream that
                     // nobody is reading.
-                    if (!move.stream->extend(convert_streamed_batch(*batch, dof))) {
+                    if (!move.stream->extend(convert_streamed_batch(*batch, limits))) {
                         return exit_reason::k_move_finished_early;
                     }
                 }
