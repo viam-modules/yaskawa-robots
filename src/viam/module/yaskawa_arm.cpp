@@ -571,16 +571,25 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
             primer.insert(primer.end(), converted.begin(), converted.end());
         }
 
-        // TODO(RSDK-14267): we do not have realtime telemetry for streamed trajectories yet.
-        // RealtimeTrajectoryLogger needs the whole trajectory up front and a stream does not have
-        // that, so for now streamed moves run without a logger.
+        // the goal monitor fills in the planned trajectory as it takes points off the stream. we
+        // deliberately leave out the limits and waypoints that the unary paths record. the client
+        // planned this trajectory against limits of its own choosing and there are no waypoints,
+        // so writing ours into the file would invite a reader to check the trajectory against
+        // constraints that never shaped it.
+        std::optional<RealtimeTrajectoryLogger> logger;
+        try {
+            logger.emplace(telemetry_output_path_, unix_time_iso8601(), model_.model_name(), group_index_);
+        } catch (const std::exception& e) {
+            VIAM_SDK_LOG(warn) << "Failed to create realtime trajectory logger: " << e.what();
+        }
+
         auto move = robot_->enqueue_streamed_move_request(
             group_index_,
             static_cast<uint32_t>(velocity_limits_.size()),
             primer,
             {},
             trajectory_sampling_freq_,
-            std::nullopt,
+            std::move(logger),
             [observer = viam::sdk::GrpcContextObserver::current()] { return observer && observer->context().IsCancelled(); });
 
         std::variant<exit_reason, std::exception_ptr> outcome;
@@ -1191,7 +1200,7 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
         logger->set_max_velocity(max_velocity_vec);
         logger->set_max_acceleration(max_acceleration_vec);
         logger->set_waypoints(original_waypoints);
-        logger->set_planned_trajectory(samples, static_cast<int>(max_velocity_vec.size()));
+        logger->extend_planned_trajectory(samples, static_cast<int>(max_velocity_vec.size()));
     }
 
     VIAM_SDK_LOG(debug) << "total trajectory points: " << samples.size();
