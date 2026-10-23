@@ -88,63 +88,28 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux builds in Ubuntu Noble container
+          # Linux builds in the C++ SDK's conan image, which ships conan, gcc 13,
+          # and a default profile with the viamconan remote already configured.
           - platform: linux/amd64
             runner: ubuntu-latest
-            container: ubuntu:noble
-            setup_type: debian
+            container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble
             artifact_name: module-linux-amd64
           - platform: linux/arm64
             runner: ubuntu-4cpu-arm
-            container: ubuntu:noble
-            setup_type: debian
+            container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble
             artifact_name: module-linux-arm64
           # macOS native build
           - platform: darwin/arm64
             runner: macos-26
-            setup_type: macos
             artifact_name: module-darwin-arm64
 
     # Container is only populated for Linux builds
     container: ${{ matrix.container }}
 
     steps:
-      # Debian/Ubuntu setup: Install system dependencies
-      - name: Install system dependencies (Debian)
-        if: matrix.setup_type == 'debian'
-        run: |
-          apt update
-          DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
-            build-essential \
-            ca-certificates \
-            curl \
-            g++ \
-            git \
-            gnupg \
-            jq \
-            lsb-release \
-            ninja-build \
-            pkg-config \
-            pipx \
-            sudo \
-            cmake \
-            wget
-
-      # Debian/Ubuntu setup: Install Conan via pip (not using conan-io/setup-conan for container compatibility)
-      - name: Install Conan (Debian)
-        if: matrix.setup_type == 'debian'
-        run: |
-          pipx install conan
-          pipx ensurepath
-          export PATH="$HOME/.local/bin:${PATH}"
-          conan profile detect
-
-      # macOS setup: Install Conan via Homebrew
       - name: Install Conan (macOS)
-        if: matrix.setup_type == 'macos'
-        run: |
-          brew install conan jq
-          conan profile detect
+        if: runner.os == 'macOS'
+        run: brew install conan
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -161,16 +126,11 @@ jobs:
       - name: Get firmware
         run: make get-firmware
 
-      # Build using setup.sh and build.sh scripts
-      - name: Setup C++ SDK
-        run: |
-          export PATH="$HOME/.local/bin:${PATH}"
-          ./bin/setup.sh
+      - name: Set up Conan
+        run: ./bin/setup.sh
 
       - name: Build module
-        run: |
-          export PATH="$HOME/.local/bin:${PATH}"
-          ./bin/build.sh
+        run: ./bin/build.sh
 
       # Attach module.tar.gz to workflow run
       - name: Attach build artifact

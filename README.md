@@ -230,9 +230,22 @@ Install the prerequisite support libraries. These include, but are not limited t
 
 First, if you don't already have it, you will need to install `conan`. On macOS this is as easy as `brew install conan`. On systems where the system package manager does not provide it, you will most likely need to create a virtualenv and then run `python -m pip install conan`. Or use your python project/package management system of choice.
 
-Next, you need to have conan build and install the prerequisite package by running the `./bin/setup.sh` script. This will take a while since it needs to compile Boost, gRPC, Eigen, and the Viam C++ SDK from source.
+Next, run `./bin/setup.sh` once. It creates a default conan profile and adds the `viamconan` remote, which hosts prebuilt binaries of the Viam C++ SDK and its heavy dependencies (gRPC, Protobuf, Boost, Abseil, OpenSSL).
 
-Finally, you can run the `bin/build.sh` script, which will build the Yaskawa Robots driver. This should be relatively quick, and you can run this repeatedly to re-run the build of the driver and produce `module.tar.gz`.
+Finally, run `./bin/build.sh` to build the module and produce `module.tar.gz`. Dependencies are downloaded prebuilt rather than compiled, so this takes minutes rather than an hour. On macOS it uses `etc/conan/macos.profile`. On Linux, build inside the C++ SDK's conan image so the toolchain matches CI:
+
+```
+docker run --rm -it --volume .:/src -w /src ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble ./bin/build.sh
+```
+
+Prebuilt binaries are only used when the dependency versions exactly match the ones the SDK release was built with. `conan.lock` pins those versions. When bumping `viam-cpp-sdk` in `conanfile.py`, regenerate it starting from the `conan.lock` attached to that SDK release on GitHub:
+
+```
+gh release download releases/v<version> -R viamrobotics/viam-cpp-sdk -p conan.lock -O sdk.lock
+conan lock create . <the profile and settings from bin/build.sh> --lockfile=sdk.lock --lockfile-partial --lockfile-out=conan.lock
+```
+
+Run the `conan lock create` once per platform (Linux amd64, Linux arm64, macOS) with `--lockfile-out` set to a separate file each time, then combine them with `conan lock merge --lockfile <file> ... --lockfile-out=conan.lock`.
 
 ## Running
 
