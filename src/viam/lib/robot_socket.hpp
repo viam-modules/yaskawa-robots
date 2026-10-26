@@ -671,13 +671,18 @@ class YaskawaController : public std::enable_shared_from_this<YaskawaController>
     /// goal, feeds further chunks as the controller's queue drains, and completes the returned
     /// handle. `stream` must already hold at least two points; a streamed move guarantees that
     /// through `enqueue_streamed_move_request`'s `initial_samples`.
+    ///
+    /// When `log_taken_points` is set, every point taken off `stream` is appended to the logger's
+    /// planned trajectory. A streamed move needs this because no one has its whole trajectory up
+    /// front. A unary move leaves it unset, since it records its plan before it is enqueued.
     std::unique_ptr<GoalRequestHandle> execute_trajectory(uint32_t group_index,
                                                           uint32_t axes_controlled,
                                                           std::shared_ptr<MoveStream> stream,
                                                           const std::vector<tolerance_t>& tolerance,
                                                           double trajectory_sampling_freq,
                                                           std::optional<RealtimeTrajectoryLogger> logger = std::nullopt,
-                                                          std::function<bool()> async_cancel_monitor = nullptr);
+                                                          std::function<bool()> async_cancel_monitor = nullptr,
+                                                          bool log_taken_points = false);
 
     /// Factory: returns an existing controller for the same host, or creates a new one.
     static std::shared_ptr<YaskawaController> get_or_create(boost::asio::io_context& io_context, const viam::sdk::ResourceConfig& config);
@@ -798,7 +803,8 @@ class YaskawaController::state_ {
                                            std::vector<tolerance_t> tolerance,
                                            double trajectory_sampling_freq,
                                            std::optional<RealtimeTrajectoryLogger> logger = std::nullopt,
-                                           std::function<bool()> async_cancel_monitor = nullptr);
+                                           std::function<bool()> async_cancel_monitor = nullptr,
+                                           bool log_taken_points = false);
 
    private:
     // ---------------------------------------------------------------
@@ -997,6 +1003,7 @@ class YaskawaController::state_ {
         double trajectory_sampling_freq{0.0};
         std::optional<RealtimeTrajectoryLogger> logger;
         std::function<bool()> async_cancel_monitor;
+        bool log_taken_points{false};
         std::unique_ptr<GoalRequestHandle> handle;
         std::promise<void> completion;
 

@@ -168,7 +168,8 @@ std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group
                                                                   std::vector<tolerance_t> tolerance,
                                                                   double trajectory_sampling_freq,
                                                                   std::optional<RealtimeTrajectoryLogger> logger,
-                                                                  std::function<bool()> async_cancel_monitor) {
+                                                                  std::function<bool()> async_cancel_monitor,
+                                                                  bool log_taken_points) {
     std::future<void> future;
     {
         const std::lock_guard lock{mutex_};
@@ -189,6 +190,7 @@ std::future<void> YaskawaController::state_::enqueue_move_request(uint32_t group
             .trajectory_sampling_freq = trajectory_sampling_freq,
             .logger = std::move(logger),
             .async_cancel_monitor = std::move(async_cancel_monitor),
+            .log_taken_points = log_taken_points,
             .handle = {},
             .completion = {},
         });
@@ -266,6 +268,8 @@ YaskawaController::streamed_move YaskawaController::enqueue_streamed_move_reques
     }
 
     // seed the stream with the primer and leave it open, the producer still has points to send.
+    // nobody has the whole trajectory up front, so the goal monitor records the planned trajectory
+    // as it takes points off the stream.
     auto stream = std::make_shared<MoveStream>(initial_samples);
     auto completion = fsm_->enqueue_move_request(group_index,
                                                  axes_controlled,
@@ -273,7 +277,8 @@ YaskawaController::streamed_move YaskawaController::enqueue_streamed_move_reques
                                                  std::move(tolerance),
                                                  trajectory_sampling_freq,
                                                  std::move(logger),
-                                                 std::move(async_cancel_monitor));
+                                                 std::move(async_cancel_monitor),
+                                                 /*log_taken_points=*/true);
     return {std::move(stream), std::move(completion)};
 }
 

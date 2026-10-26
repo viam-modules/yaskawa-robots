@@ -1234,7 +1234,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                                                                          const std::vector<tolerance_t>& tolerance,
                                                                          double trajectory_sampling_freq,
                                                                          std::optional<RealtimeTrajectoryLogger> logger,
-                                                                         std::function<bool()> async_cancel_monitor) {
+                                                                         std::function<bool()> async_cancel_monitor,
+                                                                         bool log_taken_points) {
     if (!stream) {
         throw std::runtime_error("execute_trajectory: no trajectory stream");
     }
@@ -1275,6 +1276,11 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
     if (staged.empty()) {
         throw std::runtime_error("execute_trajectory: trajectory stream has no points to start from");
     }
+    // recorded as soon as they are taken, before the controller sees them, so a goal the
+    // controller rejects still leaves its points in the log.
+    if (log_taken_points && logger.has_value()) {
+        logger->extend_planned_trajectory(staged, static_cast<int>(axes_controlled));
+    }
     const auto first_end = staged.size();
     LOGGING(debug) << "execute_trajectory: sending first chunk, group=" << group_index << " points=" << first_end;
     auto accepted = send_goal_(group_index, axes_controlled, staged, tolerance);
@@ -1312,7 +1318,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                  goal_status_polling_trigger = (k_logging_freq / static_cast<uint64_t>(trajectory_sampling_freq)),
                  axes_controlled,
                  logger = std::move(logger),
-                 async_cancel_monitor = std::move(async_cancel_monitor)]() mutable {
+                 async_cancel_monitor = std::move(async_cancel_monitor),
+                 log_taken_points]() mutable {
         // the scope guard clears the per group lock when this thread exits, whether it worked or
         // not, and finishes the stream so a producer still feeding it stops.
         const ScopeGuard thread_cleanup{[&self, &stream, group_index]() {
@@ -1378,6 +1385,9 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                             // last tick.
                             if (staged.empty()) {
                                 staged = stream->take(k_chunk_size);
+                                if (log_taken_points && logger.has_value()) {
+                                    logger->extend_planned_trajectory(staged, static_cast<int>(axes_controlled));
+                                }
                             }
                             if (!staged.empty()) {
                                 LOGGING(debug) << "queue size: " << status_msg.current_queue_size << " points";
