@@ -46,10 +46,10 @@ jobs:
         include:
         - arch: amd64
           runner: ubuntu-latest
-          digest: sha256:0a01a23206f91cccc956554744994be6d8e9169e1f87e5fd3618c1cdb48428f0
+          digest: sha256:be64d6ac165c02353eb1675641ef68cbcebe2d136ffc5e12ca24a1d034894964
         - arch: arm64
           runner: ubuntu-4cpu-arm
-          digest: sha256:86479bf4d202ff786908eac182c8b98c3d7e1326bbd67459928345555f1b35dc
+          digest: sha256:0ba1ab8e4957f2be2110cc9766c7595839cfb244baee2549b9428047bd682c9d
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -133,7 +133,7 @@ jobs:
       # Debian/Ubuntu setup: Install Conan via pip (not using conan-io/setup-conan for container compatibility)
       - name: Install Conan (Debian)
         if: matrix.setup_type == 'debian'
-        run: |  
+        run: |
           pipx install conan
           pipx ensurepath
           export PATH="$HOME/.local/bin:${PATH}"
