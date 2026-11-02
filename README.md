@@ -228,14 +228,18 @@ Install the prerequisite support libraries. These include, but are not limited t
 
 #### Build for Remote Deployment
 
-First, if you don't already have it, you will need to install `conan`. On macOS this is as easy as `brew install conan`. On systems where the system package manager does not provide it, you will most likely need to create a virtualenv and then run `python -m pip install conan`. Or use your python project/package management system of choice.
+First, if you don't already have it, you will need to install `conan`. On macOS this is as easy as `brew install conan`. On systems where the system package manager does not provide it, you will most likely need to create a virtualenv and then run `python -m pip install conan`. Or use your python project/package management system of choice. If you have not used conan before, create a default profile with `conan profile detect`.
 
-Next, run `./bin/setup.sh` once. It creates a default conan profile and adds the `viamconan` remote, which hosts prebuilt binaries of the Viam C++ SDK and its heavy dependencies (gRPC, Protobuf, Boost, Abseil, OpenSSL).
+Next, run the `./bin/setup.sh` script. It exports the Viam C++ SDK recipe into your conan cache (the SDK is not on conancenter) and adds the `viamconan` remote to your conan configuration. That remote hosts prebuilt binaries of the SDK and its heavy dependencies (gRPC, Protobuf, Boost, Abseil, OpenSSL), so the build downloads them instead of compiling them.
 
-Finally, run `./bin/build.sh` to build the module and produce `module.tar.gz`. Dependencies are downloaded prebuilt rather than compiled, so this takes minutes rather than an hour. On macOS it uses `etc/conan/macos.profile`. On Linux, build inside the C++ SDK's conan image so the toolchain matches CI:
+Finally, run the `bin/build.sh` script to build the module and produce `module.tar.gz`. On macOS it uses `etc/conan/macos.profile`, and on Linux `etc/conan/linux.profile` (gcc 13). With the `viamconan` remote this takes a few minutes; any dependency without a matching prebuilt binary is compiled from source.
+
+If you would rather not use the `viamconan` remote, run `VIAM_CONAN_NO_REMOTE=1 ./bin/setup.sh` instead. Conan then builds the SDK and its dependencies from conancenter sources, which takes about an hour the first time; later builds reuse your local conan cache.
+
+The prebuilt Linux binaries are built with gcc 13 on Ubuntu Noble. If your machine has a different compiler, build inside the C++ SDK's conan image, which matches CI:
 
 ```
-docker run --rm -it --volume .:/src -w /src ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble ./bin/build.sh
+docker run --rm -it --volume .:/src -w /src ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble bash -c "./bin/setup.sh && ./bin/build.sh"
 ```
 
 Prebuilt binaries are only used when the dependency versions exactly match the ones the SDK release was built with. `conan.lock` pins those versions. When bumping `viam-cpp-sdk` in `conanfile.py`, regenerate it starting from the `conan.lock` attached to that SDK release on GitHub:
@@ -244,6 +248,8 @@ Prebuilt binaries are only used when the dependency versions exactly match the o
 gh release download releases/v<version> -R viamrobotics/viam-cpp-sdk -p conan.lock -O sdk.lock
 conan lock create . <the profile and settings from bin/build.sh> --lockfile=sdk.lock --lockfile-partial --lockfile-out=conan.lock
 ```
+
+Also update `etc/conan/linux.profile` and `etc/conan/macos.profile` if the SDK changed the toolchain it publishes with.
 
 Run the `conan lock create` once per platform (Linux amd64, Linux arm64, macOS) with `--lockfile-out` set to a separate file each time, then combine them with `conan lock merge --lockfile <file> ... --lockfile-out=conan.lock`.
 

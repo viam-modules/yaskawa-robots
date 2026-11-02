@@ -1,6 +1,9 @@
 # Toolchain the Viam C++ SDK publishes its darwin binaries with; copied from the
 # SDK's etc/conan/macos.profile. bin/build.sh passes it with -pr:a so our
-# package IDs match those binaries. Keep in sync when bumping the SDK.
+# dependency package IDs match those binaries.
+#
+# compiler.cppstd is 17 to match the published dependencies; bin/build.sh
+# raises only our own package to C++20. Keep in sync when bumping the SDK.
 include(default)
 
 # macOS 14 Sonoma

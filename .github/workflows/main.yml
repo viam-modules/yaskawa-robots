@@ -89,7 +89,7 @@ jobs:
       matrix:
         include:
           # Linux builds in the C++ SDK's conan image, which ships conan, gcc 13,
-          # and a default profile with the viamconan remote already configured.
+          # and a default conan profile.
           - platform: linux/amd64
             runner: ubuntu-latest
             container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble
@@ -109,7 +109,9 @@ jobs:
     steps:
       - name: Install Conan (macOS)
         if: runner.os == 'macOS'
-        run: brew install conan
+        run: |
+          brew install conan
+          conan profile detect
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -126,7 +128,7 @@ jobs:
       - name: Get firmware
         run: make get-firmware
 
-      - name: Set up Conan
+      - name: Setup C++ SDK
         run: ./bin/setup.sh
 
       - name: Build module
