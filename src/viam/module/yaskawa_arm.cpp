@@ -1051,11 +1051,11 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
 
     totg::planner_base::config planner_cfg;
 
-    auto velocity_limits = xt::xarray<double>::from_shape({static_cast<size_t>(max_velocity_vec.size())});
+    auto velocity_limits = xvector<>::from_shape({static_cast<size_t>(max_velocity_vec.size())});
     std::ranges::copy(max_velocity_vec, velocity_limits.begin());
     planner_cfg.velocity_limits = std::move(velocity_limits);
 
-    auto acceleration_limits = xt::xarray<double>::from_shape({static_cast<size_t>(max_acceleration_vec.size())});
+    auto acceleration_limits = xvector<>::from_shape({static_cast<size_t>(max_acceleration_vec.size())});
     std::ranges::copy(max_acceleration_vec, acceleration_limits.begin());
     planner_cfg.acceleration_limits = std::move(acceleration_limits);
 
