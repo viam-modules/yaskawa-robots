@@ -288,6 +288,7 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
         "gp12",
         "gp180-120",
         "gp35l",
+        "gp8",
     };
 
     const auto arm = API::get<Arm>();
@@ -755,6 +756,11 @@ pose YaskawaArm::get_end_position(const ProtoStruct&) {
         // For the gp35l model that translation is 540mm (from gp35l_macro.xacro
         // joint_1_s origin xyz="0 0 0.540")
         p.coordinates.z += 540;
+    } else if (model_name == "gp8") {
+        // For the gp8 model that translation is 330mm (from gp8_macro.xacro
+        // joint_1_s origin xyz="0 0 0.330")
+        // https://github.com/ros-industrial/motoman/blob/846fbbc57c60223f12bf4795ea6404982d57709e/motoman_gp8_support/urdf/gp8_macro.xacro
+        p.coordinates.z += 330;
     } else {
         VIAM_SDK_LOG(warn) << "No pose offset applied for model: " << model_name;
     }

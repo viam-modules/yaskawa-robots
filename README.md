@@ -5,6 +5,7 @@ This repo is a [module](https://docs.viam.com/registry/#modular-resources) that 
 - GP12, as `viam:yaskawa-robots:gp12`
 - GP180-120, as `viam:yaskawa-robots:gp180-120`
 - GP35L, as `viam:yaskawa-robots:gp35l`
+- GP8, as `viam:yaskawa-robots:gp8`
 
 ## Configuration and Usage
 
@@ -257,4 +258,4 @@ Below is an image to show exactly how undermodeled the geometry is at this point
 The `gp180-120` model has a related, two-part adjustment for the same kind of false-collision problem. The y dimension of `link_2_l` was expanded by ~240mm beyond the raw mesh AABB so it covers the motor housing protruding from `link_3_u`, and `link_3_u`'s z dimension was then shrunk by ~300mm (centered higher) since the motor that geometry would have covered now lives in `link_2_l`'s box. The combined coverage still envelops the physical robot for external collision checks while letting the two links no longer collide with each other at extreme joint angles.
 
 > [!NOTE]
-> The `gp35l` kinematics generated from the URDF use raw mesh AABBs and have not yet been reviewed for false self-collisions. Similar adjustments may be needed before the model is ready for users.
+> The `gp35l` and `gp8` kinematics generated from the URDF use raw mesh AABBs and have not yet been reviewed for false self-collisions. Similar adjustments may be needed before the model is ready for users.
