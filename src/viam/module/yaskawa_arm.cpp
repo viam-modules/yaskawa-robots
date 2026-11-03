@@ -1050,10 +1050,15 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
     using namespace viam::trajex;
 
     totg::planner_base::config planner_cfg;
-    planner_cfg.velocity_limits = xt::xarray<double>::from_shape({static_cast<size_t>(max_velocity_vec.size())});
-    planner_cfg.acceleration_limits = xt::xarray<double>::from_shape({static_cast<size_t>(max_acceleration_vec.size())});
-    std::ranges::copy(max_velocity_vec, planner_cfg.velocity_limits.begin());
-    std::ranges::copy(max_acceleration_vec, planner_cfg.acceleration_limits.begin());
+
+    auto velocity_limits = xvector<>::from_shape({static_cast<size_t>(max_velocity_vec.size())});
+    std::ranges::copy(max_velocity_vec, velocity_limits.begin());
+    planner_cfg.velocity_limits = std::move(velocity_limits);
+
+    auto acceleration_limits = xvector<>::from_shape({static_cast<size_t>(max_acceleration_vec.size())});
+    std::ranges::copy(max_acceleration_vec, acceleration_limits.begin());
+    planner_cfg.acceleration_limits = std::move(acceleration_limits);
+
     planner_cfg.path_blend_tolerance = path_tolerance_rad_;
     planner_cfg.colinearization_ratio = collinearization_ratio_;
     planner_cfg.segment_totg = false;

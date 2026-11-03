@@ -131,7 +131,7 @@ enable_testing()
 FetchContent_Declare(
   trajex
   GIT_REPOSITORY https://github.com/viam-modules/trajex.git
-  GIT_TAG v0.100.0
+  GIT_TAG v0.101.0
 )
 
 find_package(xtl CONFIG REQUIRED)
