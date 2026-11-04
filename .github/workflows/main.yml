@@ -89,14 +89,16 @@ jobs:
       matrix:
         include:
           # Linux builds in the C++ SDK's conan image, which ships conan, gcc 13,
-          # and a default conan profile.
+          # and a default conan profile. Pinned to a dated tag so the release
+          # toolchain only changes deliberately; keep etc/conan/linux.profile and
+          # the README in sync when bumping it.
           - platform: linux/amd64
             runner: ubuntu-latest
-            container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble
+            container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble-2026-11.00
             artifact_name: module-linux-amd64
           - platform: linux/arm64
             runner: ubuntu-4cpu-arm
-            container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble
+            container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble-2026-11.00
             artifact_name: module-linux-arm64
           # macOS native build
           - platform: darwin/arm64

@@ -17,7 +17,7 @@ class yaskawa_robots(ConanFile):
     }
 
     default_options = {
-        "shared": False
+        "shared": True
     }
 
     def export_sources(self):
@@ -35,7 +35,7 @@ class yaskawa_robots(ConanFile):
         # Prebuilt binaries on viamconan only match the exact dependency versions
         # the SDK release was built with, which conan.lock pins. If you bump the
         # SDK here, regenerate conan.lock from that release's lockfile (see README)
-        # and update CMakeLists.txt and the Dockerfile to match.
+        # and update `bin/setup.sh`, CMakeLists.txt, and the Dockerfile to match.
         self.requires("viam-cpp-sdk/0.44.0")
         self.requires("eigen/[>=3.4 <5.0]")
         self.requires("boost/[>=1.80.0]")

@@ -1,5 +1,6 @@
 # Toolchain the Viam C++ SDK publishes its Linux binaries with: the default
-# profile of the ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble image.
+# profile of the ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble-2026-11.00
+# image that CI builds in.
 # bin/build.sh passes it with -pr:a so our dependency package IDs match those
 # binaries. A `conan profile detect` profile often differs (e.g. cppstd=gnu17),
 # which silently misses the cache and rebuilds everything from source.
