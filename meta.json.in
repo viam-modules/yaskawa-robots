@@ -19,6 +19,11 @@
       "api": "rdk:component:arm",
       "model": "viam:yaskawa-robots:gp35l",
       "markdown_link": "README.md#configuration-and-usage"
+    },
+    {
+      "api": "rdk:component:arm",
+      "model": "viam:yaskawa-robots:gp8",
+      "markdown_link": "README.md#configuration-and-usage"
     }
   ],
   "entrypoint": "@CMAKE_INSTALL_BINDIR@/yaskawa-robots"
