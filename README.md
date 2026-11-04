@@ -7,6 +7,8 @@ This repo is a [module](https://docs.viam.com/registry/#modular-resources) that 
 - GP35L, as `viam:yaskawa-robots:gp35l`
 - GP8, as `viam:yaskawa-robots:gp8`
 
+> **Setting up a new robot?** See [First-time setup](FIRST_SETUP.md) for bringing up a YRC1000 controller from scratch through to a working arm component.
+
 ## Configuration and Usage
 
 This model can be used to control a yaskawa robots arm from a machine running a viam-server. We recommend that the machine running the viam-server is using a wired ethernet connection for the best performance of this module. The following attribute template can be used to configure this model:
