@@ -1,7 +1,12 @@
 #define BOOST_TEST_MODULE ControllerIntegrationTest
 #include <boost/test/unit_test.hpp>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <boost/asio.hpp>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +14,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <json/json.h>
 #include <Eigen/Dense>
@@ -131,8 +137,9 @@ struct TestFixture {
 
 // Owns a scratch telemetry directory for tests that hand a RealtimeTrajectoryLogger to a move.
 struct TelemetryDir {
-    std::filesystem::path path = std::filesystem::temp_directory_path() /
-                                 ("controller_telemetry_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::path path =
+        std::filesystem::temp_directory_path() /
+        ("controller_telemetry_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
 
     TelemetryDir() {
         std::filesystem::create_directories(path);
@@ -473,6 +480,30 @@ BOOST_FIXTURE_TEST_CASE(abort_mid_flight_stops_the_arm, ControllerFixture, *boos
         return std::string(ex.what()).find("producer faulted mid-stream") != std::string::npos;
     });
     BOOST_CHECK(!server.robot().groups[0].in_motion);
+}
+
+// whoever stops the arm can say why, and the client's move fails with that reason rather than with
+// the monitor's account of what it saw, which is that the goal ended with points left over.
+BOOST_FIXTURE_TEST_CASE(abort_moves_reports_the_callers_reason, ControllerFixture, *boost::unit_test::timeout(20)) {
+    connect();
+    auto move = start_streamed_move(0, 1.0);
+
+    BOOST_REQUIRE(wait_for_goal_active());
+
+    controller->abort_moves(0, "move stopped by the arm's stop API");
+
+    BOOST_REQUIRE(move.completion.wait_for(std::chrono::seconds(15)) == std::future_status::ready);
+    BOOST_CHECK_EXCEPTION(move.completion.get(), std::runtime_error, [](const std::runtime_error& ex) {
+        return std::string(ex.what()).find("move stopped by the arm's stop API") != std::string::npos;
+    });
+    BOOST_CHECK(!server.robot().groups[0].in_motion);
+}
+
+// aborting a group that is not moving is a no-op, so a stop that races the end of a move does not
+// have to check first.
+BOOST_FIXTURE_TEST_CASE(abort_moves_on_an_idle_group_does_nothing, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    BOOST_CHECK_NO_THROW(controller->abort_moves(0, "nothing to stop"));
 }
 
 // once the move is over we finish the stream, so a producer that is still feeding it hears about
@@ -893,6 +924,92 @@ BOOST_FIXTURE_TEST_CASE(disconnect_during_dual_group_motion, DualArmFixture, *bo
     // New move should work
     auto handle_new = do_move(0, 0.1);
     BOOST_CHECK_EQUAL(handle_new->wait(), GOAL_STATE_SUCCEEDED);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE(shared_controller)
+
+// The arms of one controller share it through the registry, so one arm being destroyed must leave
+// the connection alone. This used to break on reconfigure: the outgoing arm's destructor
+// disconnected the controller the incoming arm had already picked up, and nothing rebuilt the FSM,
+// so the new arm reported `disconnected` for as long as it lived.
+BOOST_AUTO_TEST_CASE(one_holder_leaving_does_not_disconnect_the_others, *boost::unit_test::timeout(30)) {
+    boost::asio::io_context io_ctx;
+    std::thread io_thread([&io_ctx]() {
+        auto guard = boost::asio::make_work_guard(io_ctx);
+        io_ctx.run();
+    });
+
+    {
+        const auto ports = test::FakeServer::allocate_ports();
+        test::FakeServer server(ports);
+        server.robot().mode = ROBOT_MODE_REMOTE;
+        server.start_udp_status_pump(10);
+
+        const auto cfg = make_config(ports.tcp_port);
+        auto first = robot::YaskawaController::get_or_create(io_ctx, cfg);
+        auto second = robot::YaskawaController::get_or_create(io_ctx, cfg);
+        BOOST_CHECK_EQUAL(first.get(), second.get());
+
+        test::wait_for_connected(first);
+        BOOST_REQUIRE(!second->is_disconnected());
+
+        first.reset();  // the arm that created it goes away
+
+        BOOST_CHECK(!second->is_disconnected());
+        BOOST_CHECK_NO_THROW(second->get_robot_status());
+
+        second->disconnect();
+    }
+
+    io_ctx.stop();
+    io_thread.join();
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE(teardown)
+
+// Teardown while the FSM is stuck in a TCP connect must not wait for the connect timeout. A listener
+// with a full accept queue (listen(1) plus two connections nobody accepts) makes Linux drop the next
+// SYN, so the controller's connect hangs deterministically.
+BOOST_AUTO_TEST_CASE(disconnect_does_not_wait_on_a_hanging_connect, *boost::unit_test::timeout(30)) {
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    const int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    BOOST_REQUIRE_EQUAL(::bind(listen_fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)), 0);
+    BOOST_REQUIRE_EQUAL(::listen(listen_fd, 1), 0);
+    socklen_t len = sizeof(addr);
+    BOOST_REQUIRE_EQUAL(::getsockname(listen_fd, reinterpret_cast<sockaddr*>(&addr), &len), 0);
+    std::array<int, 2> fillers{};
+    for (int& fd : fillers) {
+        fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        BOOST_REQUIRE_EQUAL(::connect(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)), 0);
+    }
+
+    boost::asio::io_context io_ctx;
+    std::thread io_thread([&io_ctx]() {
+        auto guard = boost::asio::make_work_guard(io_ctx);
+        io_ctx.run();
+    });
+    {
+        auto controller = std::make_shared<robot::YaskawaController>(io_ctx, make_config(ntohs(addr.sin_port)));
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));  // let the FSM get stuck in the connect
+        BOOST_REQUIRE(controller->is_disconnected());
+
+        const auto start = std::chrono::steady_clock::now();
+        controller->disconnect();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+        BOOST_CHECK_LT(elapsed.count(), 1000);
+    }
+    io_ctx.stop();
+    io_thread.join();
+    for (const int fd : fillers) {
+        ::close(fd);
+    }
+    ::close(listen_fd);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
