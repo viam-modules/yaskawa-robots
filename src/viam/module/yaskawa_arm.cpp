@@ -211,6 +211,8 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
                        k_min_sampling_freq_hz % k_max_sampling_freq_hz % *sampling_freq));
     }
 
+    parse_stream_limit_tolerance_ratio(cfg);
+
     auto waypoint_dedup_tolerance = find_config_attribute<double>(cfg, "waypoint_deduplication_tolerance_deg");
     constexpr double k_min_waypoint_dedup_tolerance_deg = 0.0;
     constexpr double k_max_waypoint_dedup_tolerance_deg = 10.0;
@@ -238,6 +240,15 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     if (collinearization && (*collinearization < 0.0 || *collinearization > 2.0)) {
         throw std::invalid_argument(
             std::format("attribute `collinearization_ratio` must be between 0.0 and 2.0, got {}", *collinearization));
+    }
+
+    const auto enable_new_planner =
+        find_config_attribute<bool>(cfg, "enable_new_trajectory_planner").value_or(YaskawaArm::k_default_enable_new_trajectory_planner);
+    const auto enable_legacy_planner = find_config_attribute<bool>(cfg, "enable_legacy_trajectory_planner")
+                                           .value_or(YaskawaArm::k_default_enable_legacy_trajectory_planner);
+    if (!enable_new_planner && !enable_legacy_planner) {
+        throw std::invalid_argument(
+            "at least one of `enable_new_trajectory_planner` or `enable_legacy_trajectory_planner` must be enabled");
     }
 
     // Validate telemetry_output_path if provided
@@ -277,6 +288,7 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
         "gp12",
         "gp180-120",
         "gp35l",
+        "gp8",
     };
 
     const auto arm = API::get<Arm>();
@@ -382,11 +394,15 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     auto waypoint_dedup_tolerance_deg = find_config_attribute<double>(config, "waypoint_deduplication_tolerance_deg");
     waypoint_dedup_tolerance_rad_ =
         waypoint_dedup_tolerance_deg ? degrees_to_radians(*waypoint_dedup_tolerance_deg) : k_default_waypoint_dedup_tolerance_rads;
-    use_new_trajectory_planner_ = find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(true);
+    use_new_trajectory_planner_ =
+        find_config_attribute<bool>(config, "enable_new_trajectory_planner").value_or(k_default_enable_new_trajectory_planner);
+    use_legacy_trajectory_planner_ =
+        find_config_attribute<bool>(config, "enable_legacy_trajectory_planner").value_or(k_default_enable_legacy_trajectory_planner);
     path_tolerance_rad_ = find_config_attribute<double>(config, "path_tolerance_rad").value_or(0.1);
     collinearization_ratio_ = find_config_attribute<double>(config, "collinearization_ratio");
     segmentation_threshold_rad_ =
         find_config_attribute<double>(config, "segmentation_threshold_rad").value_or(k_default_segmentation_threshold);
+    stream_limit_tolerance_ratio_ = parse_stream_limit_tolerance_ratio(config).value_or(k_default_stream_limit_tolerance_ratio);
 
     // Optionally flash the controller firmware on startup. Version-gated (RSDK-14150) and run in the
     // background so it neither blocks configure_ nor races the FSM connect; see start_flash_on_start_.
@@ -522,7 +538,10 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
     // batch_source() calls so robot_ stays valid, and if the client stalls grpc will tear down the
     // rpc and break us out.
     auto result = [&, rlock = std::move(rlock)]() -> std::optional<loop_result> {
-        const auto dof = static_cast<std::size_t>(velocity_limits_.size());
+        // streamed points are checked against the configured limits rather than any per-move
+        // override, since those are what we publish in the kinematics for the client to plan
+        // against.
+        const auto limits = make_streamed_limits(velocity_limits_, acceleration_limits_, stream_limit_tolerance_ratio_);
 
         // the producer picks the point times, so nobody has checked them against what this
         // controller can actually run. we carry the last time across batches so the gap between
@@ -550,20 +569,29 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
                 continue;
             }
             check_streamed_spacing(*batch, interpolation_period, last_point_time);
-            const auto converted = convert_streamed_batch(*batch, dof);
+            const auto converted = convert_streamed_batch(*batch, limits);
             primer.insert(primer.end(), converted.begin(), converted.end());
         }
 
-        // TODO(RSDK-14267): we do not have realtime telemetry for streamed trajectories yet.
-        // RealtimeTrajectoryLogger needs the whole trajectory up front and a stream does not have
-        // that, so for now streamed moves run without a logger.
+        // the goal monitor fills in the planned trajectory as it takes points off the stream. we
+        // deliberately leave out the limits and waypoints that the unary paths record. the client
+        // planned this trajectory against limits of its own choosing and there are no waypoints,
+        // so writing ours into the file would invite a reader to check the trajectory against
+        // constraints that never shaped it.
+        std::optional<RealtimeTrajectoryLogger> logger;
+        try {
+            logger.emplace(telemetry_output_path_, unix_time_iso8601(), model_.model_name(), group_index_);
+        } catch (const std::exception& e) {
+            VIAM_SDK_LOG(warn) << "Failed to create realtime trajectory logger: " << e.what();
+        }
+
         auto move = robot_->enqueue_streamed_move_request(
             group_index_,
             static_cast<uint32_t>(velocity_limits_.size()),
             primer,
             {},
             trajectory_sampling_freq_,
-            std::nullopt,
+            std::move(logger),
             [observer = viam::sdk::GrpcContextObserver::current()] { return observer && observer->context().IsCancelled(); });
 
         std::variant<exit_reason, std::exception_ptr> outcome;
@@ -602,7 +630,7 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
                     // extend returns false once the goal monitor has finished the move, either from
                     // a fault or because the arm stopped early. no point feeding a stream that
                     // nobody is reading.
-                    if (!move.stream->extend(convert_streamed_batch(*batch, dof))) {
+                    if (!move.stream->extend(convert_streamed_batch(*batch, limits))) {
                         return exit_reason::k_move_finished_early;
                     }
                 }
@@ -689,8 +717,23 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
         throw std::runtime_error(boost::str(boost::format("error reading kinematics file '%1%'") % sva_file_path.string()));
     }
 
-    // Convert to unsigned char vector
-    return KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
+    // The shipped file carries position bounds only, so we add the configured speed and
+    // acceleration on the way out. A MoveOptions override applies to one move and never touches
+    // these members, so what we publish is what an un-overridden move will use.
+    //
+    // RDK builds the machine's whole frame system from this call, so failing to attach limits must
+    // not fail the call. validate_config_ accepts a configured DOF that disagrees with the
+    // model's joint count (a scalar paired with an array of another length, for instance), and that
+    // used to be harmless here because we returned the file untouched. We keep that behaviour and
+    // warn, since losing the limits is what every caller got before this existed.
+    try {
+        const auto patched = sva_with_joint_limits({temp_bytes.begin(), temp_bytes.end()}, velocity_limits_, acceleration_limits_);
+        return KinematicsDataSVA({patched.begin(), patched.end()});
+    } catch (const std::exception& e) {
+        VIAM_SDK_LOG(warn) << "get_kinematics: serving '" << sva_file_path.string()
+                           << "' without velocity or acceleration limits: " << e.what();
+        return KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
+    }
 }
 
 pose YaskawaArm::get_end_position(const ProtoStruct&) {
@@ -714,6 +757,11 @@ pose YaskawaArm::get_end_position(const ProtoStruct&) {
         // For the gp35l model that translation is 540mm (from gp35l_macro.xacro
         // joint_1_s origin xyz="0 0 0.540")
         p.coordinates.z += 540;
+    } else if (model_name == "gp8") {
+        // For the gp8 model that translation is 330mm (from gp8_macro.xacro
+        // joint_1_s origin xyz="0 0 0.330")
+        // https://github.com/ros-industrial/motoman/blob/846fbbc57c60223f12bf4795ea6404982d57709e/motoman_gp8_support/urdf/gp8_macro.xacro
+        p.coordinates.z += 330;
     } else {
         VIAM_SDK_LOG(warn) << "No pose offset applied for model: " << model_name;
     }
@@ -1010,10 +1058,15 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
     using namespace viam::trajex;
 
     totg::planner_base::config planner_cfg;
-    planner_cfg.velocity_limits = xt::xarray<double>::from_shape({static_cast<size_t>(max_velocity_vec.size())});
-    planner_cfg.acceleration_limits = xt::xarray<double>::from_shape({static_cast<size_t>(max_acceleration_vec.size())});
-    std::ranges::copy(max_velocity_vec, planner_cfg.velocity_limits.begin());
-    std::ranges::copy(max_acceleration_vec, planner_cfg.acceleration_limits.begin());
+
+    auto velocity_limits = xvector<>::from_shape({static_cast<size_t>(max_velocity_vec.size())});
+    std::ranges::copy(max_velocity_vec, velocity_limits.begin());
+    planner_cfg.velocity_limits = std::move(velocity_limits);
+
+    auto acceleration_limits = xvector<>::from_shape({static_cast<size_t>(max_acceleration_vec.size())});
+    std::ranges::copy(max_acceleration_vec, acceleration_limits.begin());
+    planner_cfg.acceleration_limits = std::move(acceleration_limits);
+
     planner_cfg.path_blend_tolerance = path_tolerance_rad_;
     planner_cfg.colinearization_ratio = collinearization_ratio_;
     planner_cfg.segment_totg = false;
@@ -1077,47 +1130,50 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
             });
     }
 
-    planner.with_legacy(
-        [&](const auto&,
-            segment_accumulator& acc,
-            const totg::waypoint_accumulator& seg,
-            Path&&,
-            Trajectory&& traj,
-            std::chrono::microseconds elapsed) {
-            const double duration = traj.getDuration();
+    if (use_legacy_trajectory_planner_) {
+        planner.with_legacy(
+            [&](const auto&,
+                segment_accumulator& acc,
+                const totg::waypoint_accumulator& seg,
+                Path&&,
+                Trajectory&& traj,
+                std::chrono::microseconds elapsed) {
+                const double duration = traj.getDuration();
 
-            if (!std::isfinite(duration)) {
-                throw std::runtime_error("trajectory.getDuration() was not a finite number");
-            }
-            if (duration > 600) {
-                throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
-            }
-            if (duration < k_default_min_timestep_sec) {
-                VIAM_SDK_LOG(debug) << "duration of move is too small, assuming arm is at goal";
-                return;
-            }
+                if (!std::isfinite(duration)) {
+                    throw std::runtime_error("trajectory.getDuration() was not a finite number");
+                }
+                if (duration > 600) {
+                    throw std::runtime_error("trajectory.getDuration() exceeds 10 minutes");
+                }
+                if (duration < k_default_min_timestep_sec) {
+                    VIAM_SDK_LOG(debug) << "duration of move is too small, assuming arm is at goal";
+                    return;
+                }
 
-            if (acc.samples.empty()) {
-                acc.samples.push_back(make_trajectory_point(traj.getPosition(0.0), traj.getVelocity(0.0), {0, 0}));
-            }
+                if (acc.samples.empty()) {
+                    acc.samples.push_back(make_trajectory_point(traj.getPosition(0.0), traj.getVelocity(0.0), {0, 0}));
+                }
 
-            sampling_func(acc.samples, duration, trajectory_sampling_freq_, [&](const double t, const double) {
-                const auto absolute_time = acc.cumulative_time + std::chrono::duration<double>(t);
-                auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
-                auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
-                return make_trajectory_point(
-                    traj.getPosition(t), traj.getVelocity(t), {static_cast<uint32_t>(secs.count()), static_cast<uint32_t>(nanos.count())});
+                sampling_func(acc.samples, duration, trajectory_sampling_freq_, [&](const double t, const double) {
+                    const auto absolute_time = acc.cumulative_time + std::chrono::duration<double>(t);
+                    auto secs = std::chrono::floor<std::chrono::seconds>(absolute_time);
+                    auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(absolute_time - secs);
+                    return make_trajectory_point(traj.getPosition(t),
+                                                 traj.getVelocity(t),
+                                                 {static_cast<uint32_t>(secs.count()), static_cast<uint32_t>(nanos.count())});
+                });
+
+                acc.cumulative_time += std::chrono::duration<double>(duration);
+                acc.total_waypoints += seg.size();
+                acc.total_duration += duration;
+                acc.total_generation_time += std::chrono::duration<double>(elapsed).count();
+                ++acc.segment_count;
+            },
+            [&](const auto& p, const segment_accumulator&, const totg::waypoint_accumulator& seg, const std::exception& e) {
+                log_failure(p.serialize_for_replay(seg, e.what()));
             });
-
-            acc.cumulative_time += std::chrono::duration<double>(duration);
-            acc.total_waypoints += seg.size();
-            acc.total_duration += duration;
-            acc.total_generation_time += std::chrono::duration<double>(elapsed).count();
-            ++acc.segment_count;
-        },
-        [&](const auto& p, const segment_accumulator&, const totg::waypoint_accumulator& seg, const std::exception& e) {
-            log_failure(p.serialize_for_replay(seg, e.what()));
-        });
+    }
 
     auto result = planner.execute([&](const auto& p, auto trajex_out, auto legacy_out) -> std::optional<segment_accumulator> {
         if (trajex_out.receiver) {
@@ -1157,7 +1213,7 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
         logger->set_max_velocity(max_velocity_vec);
         logger->set_max_acceleration(max_acceleration_vec);
         logger->set_waypoints(original_waypoints);
-        logger->set_planned_trajectory(samples, static_cast<int>(max_velocity_vec.size()));
+        logger->extend_planned_trajectory(samples, static_cast<int>(max_velocity_vec.size()));
     }
 
     VIAM_SDK_LOG(debug) << "total trajectory points: " << samples.size();

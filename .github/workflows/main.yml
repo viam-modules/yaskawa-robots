@@ -46,10 +46,10 @@ jobs:
         include:
         - arch: amd64
           runner: ubuntu-latest
-          digest: sha256:cd4e06aa7c6f4682675571d9b141bdbca1f04846db50aba9eee7ce23794af216
+          digest: sha256:be64d6ac165c02353eb1675641ef68cbcebe2d136ffc5e12ca24a1d034894964
         - arch: arm64
           runner: ubuntu-4cpu-arm
-          digest: sha256:204b567f77f86440053de7454fc42fbe155362a8f7a5992ef6e068de537ca957
+          digest: sha256:0ba1ab8e4957f2be2110cc9766c7595839cfb244baee2549b9428047bd682c9d
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -88,62 +88,31 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux builds in Ubuntu Noble container
+          # Linux builds in the C++ SDK's conan image, which ships conan, gcc 13,
+          # and a default conan profile. Pinned to a dated tag so the release
+          # toolchain only changes deliberately; keep etc/conan/linux.profile and
+          # the README in sync when bumping it.
           - platform: linux/amd64
             runner: ubuntu-latest
-            container: ubuntu:noble
-            setup_type: debian
+            container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble-2026-11.00
             artifact_name: module-linux-amd64
           - platform: linux/arm64
             runner: ubuntu-4cpu-arm
-            container: ubuntu:noble
-            setup_type: debian
+            container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble-2026-11.00
             artifact_name: module-linux-arm64
           # macOS native build
           - platform: darwin/arm64
             runner: macos-26
-            setup_type: macos
             artifact_name: module-darwin-arm64
 
     # Container is only populated for Linux builds
     container: ${{ matrix.container }}
 
     steps:
-      # Debian/Ubuntu setup: Install system dependencies
-      - name: Install system dependencies (Debian)
-        if: matrix.setup_type == 'debian'
-        run: |
-          apt update
-          DEBIAN_FRONTEND=noninteractive apt install -y --no-install-recommends \
-            build-essential \
-            ca-certificates \
-            curl \
-            g++ \
-            git \
-            gnupg \
-            jq \
-            lsb-release \
-            ninja-build \
-            pkg-config \
-            pipx \
-            sudo \
-            cmake \
-            wget
-
-      # Debian/Ubuntu setup: Install Conan via pip (not using conan-io/setup-conan for container compatibility)
-      - name: Install Conan (Debian)
-        if: matrix.setup_type == 'debian'
-        run: |  
-          pipx install conan
-          pipx ensurepath
-          export PATH="$HOME/.local/bin:${PATH}"
-          conan profile detect
-
-      # macOS setup: Install Conan via Homebrew
       - name: Install Conan (macOS)
-        if: matrix.setup_type == 'macos'
+        if: runner.os == 'macOS'
         run: |
-          brew install conan jq
+          brew install conan
           conan profile detect
 
       - name: Checkout
@@ -161,16 +130,11 @@ jobs:
       - name: Get firmware
         run: make get-firmware
 
-      # Build using setup.sh and build.sh scripts
       - name: Setup C++ SDK
-        run: |
-          export PATH="$HOME/.local/bin:${PATH}"
-          ./bin/setup.sh
+        run: ./bin/setup.sh
 
       - name: Build module
-        run: |
-          export PATH="$HOME/.local/bin:${PATH}"
-          ./bin/build.sh
+        run: ./bin/build.sh
 
       # Attach module.tar.gz to workflow run
       - name: Attach build artifact

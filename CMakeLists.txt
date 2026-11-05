@@ -88,7 +88,7 @@ include(FetchContent)
 FetchContent_Declare(
   viam-cpp-sdk
   GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-  GIT_TAG releases/v0.39.0 # Keep in sync with Dockerfile
+  GIT_TAG releases/v0.44.0 # Keep in sync with Dockerfile and conanfile.py
   GIT_SHALLOW TRUE
   SYSTEM
   # Without this patch command, using this as a SYSTEM package results
@@ -101,7 +101,7 @@ FetchContent_MakeAvailable(viam-cpp-sdk)
 
 find_package(Eigen3 3.4 CONFIG REQUIRED)
 find_package(jsoncpp REQUIRED)
-find_package(viam-cpp-sdk 0.39 CONFIG REQUIRED viamsdk)
+find_package(viam-cpp-sdk 0.44 CONFIG REQUIRED viamsdk)
 
 # Everything needs threads, and prefer -pthread if available
 set(THREADS_PREFER_PTHREAD_FLAG ON)
@@ -131,7 +131,7 @@ enable_testing()
 FetchContent_Declare(
   trajex
   GIT_REPOSITORY https://github.com/viam-modules/trajex.git
-  GIT_TAG v0.100.0
+  GIT_TAG v0.101.0
 )
 
 find_package(xtl CONFIG REQUIRED)
@@ -440,6 +440,31 @@ target_link_libraries(streamed_conversion_test
 )
 
 add_test(NAME streamed_conversion_test COMMAND streamed_conversion_test)
+
+add_executable(sva_joint_limits_test EXCLUDE_FROM_ALL)
+
+target_sources(sva_joint_limits_test
+  PRIVATE
+    src/viam/module/test/sva_joint_limits_test.cpp
+    src/viam/module/utils.cpp
+)
+
+target_link_libraries(sva_joint_limits_test
+  PRIVATE
+    viam-yaskawa
+    Boost::unit_test_framework
+    viam-cpp-sdk::viamsdk
+    jsoncpp_lib
+)
+
+# Inject the absolute path to the shipped `kinematics/` data so the test can check every model
+# document regardless of the cwd it is invoked from.
+target_compile_definitions(sva_joint_limits_test
+  PRIVATE
+    VIAM_YASKAWA_TEST_KINEMATICS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/kinematics"
+)
+
+add_test(NAME sva_joint_limits_test COMMAND sva_joint_limits_test)
 
 # Common sources and include dirs for integration tests that use the fake server
 set(INTEGRATION_TEST_SOURCES

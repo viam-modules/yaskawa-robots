@@ -5,6 +5,9 @@ This repo is a [module](https://docs.viam.com/registry/#modular-resources) that 
 - GP12, as `viam:yaskawa-robots:gp12`
 - GP180-120, as `viam:yaskawa-robots:gp180-120`
 - GP35L, as `viam:yaskawa-robots:gp35l`
+- GP8, as `viam:yaskawa-robots:gp8`
+
+> **Setting up a new robot?** See [First-time setup](FIRST_SETUP.md) for bringing up a YRC1000 controller from scratch through to a working arm component.
 
 ## Configuration and Usage
 
@@ -28,12 +31,14 @@ The following attributes are available for `viam:yaskawa-robots` arms:
 | `speed_rad_per_sec` | float or array | **Required** | Set the maximum desired speed of the arm joints in radians per second. Can be a single value (applied to all joints) or an array for per-joint limits. |
 | `acceleration_rad_per_sec2` | float or array | **Required** | Set the maximum desired acceleration of the arm joints in radians per second squared. Can be a single value (applied to all joints) or an array for per-joint limits. |
 | `reject_move_request_threshold_rad` | float | Optional | Rejects move requests when the difference between the current position and first waypoint is above threshold. **Range: 0 - 2&pi; radians** |
+| `stream_limit_tolerance_ratio` | float | Optional | Factor by which the velocities and accelerations on streamed trajectory points may exceed the configured `speed_rad_per_sec` and `acceleration_rad_per_sec2` limits, to allow for slight numerical drift from the planner. A point that exceeds a limit stops the streamed move. Must be >= 1. **Default 1.01** |
 | `trajectory_sampling_freq_hz` | float | Optional | Sampling frequency for trajectory generation in Hz. Higher values produce smoother trajectories but require more computation. **Default 3 Hz** (range: 1 - 250) |
 | `waypoint_deduplication_tolerance_deg` | float | Optional | Tolerance in degrees for deduplicating consecutive waypoints. Waypoints within this tolerance of each other are considered identical. **Default ~0.057 degrees** (1e-3 radians) (range: 0 - 10) |
 | `path_tolerance_rad` | float | Optional | Path tolerance for trajectory planning in radians. **Default 0.1 rad** (range: 0.0 - 3.0) |
 | `segmentation_threshold_rad` | float | Optional | Threshold for detecting direction reversals in waypoint paths. Lower values detect only sharp reversals; higher values are more sensitive. **Default 0.005 rad** (range: > 0, <= 0.1) |
 | `collinearization_ratio` | float | Optional | Waypoint collinearization parameter for trajectory smoothing. (range: 0.0 - 2.0) |
 | `enable_new_trajectory_planner` | bool | Optional | Enables the new trajectory planning algorithm. **Default true** |
+| `enable_legacy_trajectory_planner` | bool | Optional | Enables the legacy trajectory generator. When `enable_new_trajectory_planner` is also true, the legacy generator is only used if the new one fails to produce a trajectory. At least one of the two generators must be enabled. **Default false** |
 | `enable_auto_error_recovery` | bool | Optional | When true, the driver automatically calls `reset_errors` to clear software errors so the arm can recover without operator intervention. Set to false if you want errors to remain visible on the pendant for inspection before they're cleared. (Move requests will still trigger error recovery as part of waking the arm — this only gates the passive background path.) **Default true** |
 | `telemetry_output_path` | string | Optional | Path for writing telemetry data files. **Default: VIAM_MODULE_DATA environment variable** |
 | `group_index` | int | Optional | Control group index on the Yaskawa controller that this arm represents (see below). **Default 0** |
@@ -226,11 +231,30 @@ Install the prerequisite support libraries. These include, but are not limited t
 
 #### Build for Remote Deployment
 
-First, if you don't already have it, you will need to install `conan`. On macOS this is as easy as `brew install conan`. On systems where the system package manager does not provide it, you will most likely need to create a virtualenv and then run `python -m pip install conan`. Or use your python project/package management system of choice.
+First, if you don't already have it, you will need to install `conan`. On macOS this is as easy as `brew install conan`. On systems where the system package manager does not provide it, you will most likely need to create a virtualenv and then run `python -m pip install conan`. Or use your python project/package management system of choice. If you have not used conan before, create a default profile with `conan profile detect`.
 
-Next, you need to have conan build and install the prerequisite package by running the `./bin/setup.sh` script. This will take a while since it needs to compile Boost, gRPC, Eigen, and the Viam C++ SDK from source.
+Next, run the `./bin/setup.sh` script. It exports the Viam C++ SDK recipe into your conan cache (the SDK is not on conancenter) and adds the `viamconan` remote to your conan configuration. That remote hosts prebuilt binaries of the SDK and its heavy dependencies (gRPC, Protobuf, Boost, Abseil, OpenSSL), so the build downloads them instead of compiling them.
 
-Finally, you can run the `bin/build.sh` script, which will build the Yaskawa Robots driver. This should be relatively quick, and you can run this repeatedly to re-run the build of the driver and produce `module.tar.gz`.
+Finally, run the `bin/build.sh` script to build the module and produce `module.tar.gz`. On macOS it uses `etc/conan/macos.profile`, and on Linux `etc/conan/linux.profile` (gcc 13). With the `viamconan` remote this takes a few minutes; any dependency without a matching prebuilt binary is compiled from source.
+
+If you would rather not use the `viamconan` remote, run `VIAM_CONAN_NO_REMOTE=1 ./bin/setup.sh` instead. Conan then builds the SDK and its dependencies from conancenter sources, which takes about an hour the first time; later builds reuse your local conan cache.
+
+The prebuilt Linux binaries are built with gcc 13 on Ubuntu Noble. If your machine has a different compiler, build inside the C++ SDK's conan image, which matches CI:
+
+```
+docker run --rm -it --volume .:/src -w /src ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble-2026-11.00 bash -c "./bin/setup.sh && ./bin/build.sh"
+```
+
+Prebuilt binaries are only used when the dependency versions exactly match the ones the SDK release was built with. `conan.lock` pins those versions. When bumping `viam-cpp-sdk` in `conanfile.py`, regenerate it starting from the `conan.lock` attached to that SDK release on GitHub:
+
+```
+gh release download releases/v<version> -R viamrobotics/viam-cpp-sdk -p conan.lock -O sdk.lock
+conan lock create . <the profile and settings from bin/build.sh> --lockfile=sdk.lock --lockfile-partial --lockfile-out=conan.lock
+```
+
+Also update `etc/conan/linux.profile` and `etc/conan/macos.profile` if the SDK changed the toolchain it publishes with.
+
+Run the `conan lock create` once per platform (Linux amd64, Linux arm64, macOS) with `--lockfile-out` set to a separate file each time, then combine them with `conan lock merge --lockfile <file> ... --lockfile-out=conan.lock`.
 
 ## Running
 
@@ -255,4 +279,4 @@ Below is an image to show exactly how undermodeled the geometry is at this point
 The `gp180-120` model has a related, two-part adjustment for the same kind of false-collision problem. The y dimension of `link_2_l` was expanded by ~240mm beyond the raw mesh AABB so it covers the motor housing protruding from `link_3_u`, and `link_3_u`'s z dimension was then shrunk by ~300mm (centered higher) since the motor that geometry would have covered now lives in `link_2_l`'s box. The combined coverage still envelops the physical robot for external collision checks while letting the two links no longer collide with each other at extreme joint angles.
 
 > [!NOTE]
-> The `gp35l` kinematics generated from the URDF use raw mesh AABBs and have not yet been reviewed for false self-collisions. Similar adjustments may be needed before the model is ready for users.
+> The `gp35l` and `gp8` kinematics generated from the URDF use raw mesh AABBs and have not yet been reviewed for false self-collisions. Similar adjustments may be needed before the model is ready for users.

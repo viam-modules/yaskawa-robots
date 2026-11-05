@@ -26,6 +26,17 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     using KinematicsData = ::viam::sdk::KinematicsData;
 
    public:
+    /// @brief Whether the trajex/totg trajectory generator is enabled by default.
+    static constexpr bool k_default_enable_new_trajectory_planner = true;
+
+    /// @brief Whether the legacy trajectory generator is enabled by default. When the new
+    /// generator is also enabled, legacy only runs if the new one fails to produce a trajectory.
+    static constexpr bool k_default_enable_legacy_trajectory_planner = false;
+
+    /// @brief Default factor by which streamed points may exceed the configured velocity and
+    /// acceleration limits, to absorb numerical drift from the client's planner.
+    static constexpr double k_default_stream_limit_tolerance_ratio = 1.01;
+
     /// @brief Returns the common ModelFamily for all implementations
     static const ModelFamily& model_family();
 
@@ -96,8 +107,23 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     /// @brief Get the status of the arm.
     ProtoStruct get_status() override;
 
+    /// @brief Get the optional features supported by the arm. Manual mode is not
+    /// software-reachable (teach mode requires the pendant keyswitch), and
+    /// move_to_position is unimplemented.
+    Arm::properties get_properties(const ProtoStruct&) override {
+        return {false, false};
+    }
+
     // --------------- UNIMPLEMENTED FUNCTIONS ---------------
     void move_to_position(const pose&, const ProtoStruct&) override {
+        throw std::runtime_error("unimplemented");
+    }
+
+    void set_manual_mode(bool, std::chrono::seconds, const ProtoStruct&) override {
+        throw std::runtime_error("unimplemented");
+    }
+
+    bool get_manual_mode(const ProtoStruct&) override {
         throw std::runtime_error("unimplemented");
     }
 
@@ -170,10 +196,12 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     Eigen::VectorXd acceleration_limits_;
     double trajectory_sampling_freq_{3.0};
     double waypoint_dedup_tolerance_rad_{1e-3};
-    bool use_new_trajectory_planner_{true};
+    bool use_new_trajectory_planner_{k_default_enable_new_trajectory_planner};
+    bool use_legacy_trajectory_planner_{k_default_enable_legacy_trajectory_planner};
     double path_tolerance_rad_{0.1};
     std::optional<double> collinearization_ratio_;
     double segmentation_threshold_rad_{0.005};
+    double stream_limit_tolerance_ratio_{k_default_stream_limit_tolerance_ratio};
     std::optional<double> threshold_;
     boost::asio::io_context& io_context_;
     std::filesystem::path resource_root_;

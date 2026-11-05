@@ -3,11 +3,14 @@
 
 #include <boost/asio.hpp>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <list>
 #include <memory>
 #include <string>
 #include <thread>
 
+#include <json/json.h>
 #include <Eigen/Dense>
 #include <viam/sdk/config/resource.hpp>
 
@@ -123,6 +126,46 @@ struct TestFixture {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         return false;
+    }
+};
+
+// Owns a scratch telemetry directory for tests that hand a RealtimeTrajectoryLogger to a move.
+struct TelemetryDir {
+    std::filesystem::path path = std::filesystem::temp_directory_path() /
+                                 ("controller_telemetry_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+
+    TelemetryDir() {
+        std::filesystem::create_directories(path);
+    }
+
+    ~TelemetryDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+
+    std::filesystem::path log_path(const std::string& timestamp) const {
+        return path / "trajectory_logs" / (timestamp + "_gp12_realtime_trajectory.json");
+    }
+
+    // The logger writes its file when the goal monitor thread lets go of it, which can land just
+    // after the move's completion future is ready. Poll until the file parses, since we can also
+    // catch it after the truncate but before the write finishes.
+    Json::Value wait_and_parse(const std::string& timestamp, std::chrono::milliseconds timeout = std::chrono::seconds(5)) const {
+        const auto file = log_path(timestamp);
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        const Json::CharReaderBuilder builder;
+        std::string errs;
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (std::ifstream in(file); in.is_open()) {
+                Json::Value root;
+                if (Json::parseFromStream(builder, in, &root, &errs)) {
+                    return root;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        BOOST_FAIL("trajectory log was never written in full: " << file << " (last parse error: " << errs << ")");
+        return {};
     }
 };
 
@@ -336,6 +379,51 @@ BOOST_FIXTURE_TEST_CASE(streamed_move_completes_after_close, ControllerFixture, 
     auto* echoed = mock_robot_echo_trajectory(&server.robot(), 0);
     BOOST_REQUIRE(echoed != nullptr);
     BOOST_CHECK_EQUAL(echoed->trajectory_size, 2U);
+}
+
+// nobody has a streamed move's whole trajectory up front, so the goal monitor records each point
+// as it takes it off the stream, and samples the arm while the move runs.
+BOOST_FIXTURE_TEST_CASE(streamed_move_logs_planned_trajectory, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    test::drive_mock_to_ready(controller);
+    const TelemetryDir telemetry;
+    const std::string timestamp = "streamed";
+
+    auto move = controller->enqueue_streamed_move_request(
+        0, k_dof, make_samples(), {}, 3.0, robot::RealtimeTrajectoryLogger(telemetry.path.string(), timestamp, "gp12", 0));
+    BOOST_REQUIRE(move.stream->close());
+    BOOST_REQUIRE(move.completion.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+    BOOST_REQUIRE_NO_THROW(move.completion.get());
+
+    const auto root = telemetry.wait_and_parse(timestamp);
+    BOOST_REQUIRE(root["planned_trajectory"].isArray());
+    BOOST_REQUIRE_EQUAL(root["planned_trajectory"].size(), 2U);
+    BOOST_CHECK_CLOSE(root["planned_trajectory"][1]["time_from_start_sec"].asDouble(), 1.0, 1e-6);
+    BOOST_CHECK_CLOSE(root["planned_trajectory"][1]["positions_rad"][0].asDouble(), 0.1, 1e-6);
+    BOOST_CHECK_GT(root["realtime_samples"].size(), 0U);
+    BOOST_CHECK(root.isMember("goal_accepted_timestamps_ms"));
+}
+
+// a unary move records its plan before it is enqueued, so the goal monitor must not record the
+// same points again as it takes them.
+BOOST_FIXTURE_TEST_CASE(unary_move_logs_planned_trajectory_once, ControllerFixture, *boost::unit_test::timeout(15)) {
+    connect();
+    test::drive_mock_to_ready(controller);
+    const TelemetryDir telemetry;
+    const std::string timestamp = "unary";
+
+    auto samples = make_samples();
+    robot::RealtimeTrajectoryLogger logger(telemetry.path.string(), timestamp, "gp12", 0);
+    logger.extend_planned_trajectory(samples, k_dof);
+
+    auto completion = controller->enqueue_move_request(0, k_dof, std::move(samples), {}, 3.0, std::move(logger));
+    BOOST_REQUIRE(completion.wait_for(std::chrono::seconds(10)) == std::future_status::ready);
+    BOOST_REQUIRE_NO_THROW(completion.get());
+
+    const auto root = telemetry.wait_and_parse(timestamp);
+    BOOST_REQUIRE(root["planned_trajectory"].isArray());
+    BOOST_CHECK_EQUAL(root["planned_trajectory"].size(), 2U);
+    BOOST_CHECK_GT(root["realtime_samples"].size(), 0U);
 }
 
 // the arm running out of points only means the move is done if the producer said the trajectory

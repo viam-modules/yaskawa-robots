@@ -46,7 +46,11 @@ class RealtimeTrajectoryLogger {
     void set_max_acceleration(const Eigen::VectorXd& max_acceleration_rad_per_sec2);
     void set_goal_accepted_timestamp(int64_t timestamp_ms);
     void set_waypoints(const std::list<Eigen::VectorXd>& waypoints_rad);
-    void set_planned_trajectory(const std::vector<trajectory_point_t>& planned_trajectory_points, int num_axes = NUMBER_OF_DOF);
+
+    // Appends to the planned trajectory rather than replacing it, so a streamed move can record
+    // its points a chunk at a time as the goal monitor hands them to the controller. Each point
+    // carries its own absolute time_from_start, so chunks need no time offset to line up.
+    void extend_planned_trajectory(const std::vector<trajectory_point_t>& planned_trajectory_points, int num_axes = NUMBER_OF_DOF);
 
     void append_realtime_sample(const StatusMessage& status);
 

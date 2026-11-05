@@ -68,7 +68,7 @@ struct TempDirFixture {
         logger.set_max_velocity(velocity);
         logger.set_max_acceleration(acceleration);
         logger.set_waypoints(make_waypoints(waypoint_count));
-        logger.set_planned_trajectory(make_trajectory(trajectory_count));
+        logger.extend_planned_trajectory(make_trajectory(trajectory_count));
     }
 
     static Json::Value parse_json(const std::string& filepath) {
@@ -179,7 +179,7 @@ BOOST_AUTO_TEST_CASE(test_json_structure_validation) {
         logger.set_max_velocity(Eigen::VectorXd::Constant(6, 2.5));
         logger.set_max_acceleration(Eigen::VectorXd::Constant(6, 3.0));
         logger.set_waypoints(make_waypoints(2));
-        logger.set_planned_trajectory(make_trajectory(1));
+        logger.extend_planned_trajectory(make_trajectory(1));
 
         logger.append_realtime_sample(make_status(5000));
     }
@@ -207,6 +207,37 @@ BOOST_AUTO_TEST_CASE(test_json_structure_validation) {
     BOOST_CHECK(root["realtime_samples"].isArray());
     BOOST_CHECK_EQUAL(root["realtime_samples"].size(), 1);
     BOOST_CHECK_EQUAL(root["realtime_samples"][0]["timestamp_ms"].asInt64(), 5000);
+}
+
+// A streamed move records its trajectory a chunk at a time, so successive calls must append
+// rather than replace, and each point keeps the absolute time it was given.
+BOOST_AUTO_TEST_CASE(test_extend_planned_trajectory_accumulates) {
+    const std::string timestamp = "1234567895";
+    std::string filepath = log_path(timestamp);
+
+    const auto make_point = [](double position, uint32_t sec, uint32_t nanos) {
+        trajectory_point_t pt{};
+        pt.positions[0] = position;
+        pt.time_from_start = {sec, nanos};
+        return pt;
+    };
+
+    {
+        robot::RealtimeTrajectoryLogger logger(temp_dir.string(), timestamp, "gp12", 0);
+        logger.extend_planned_trajectory({make_point(1.0, 0, 500'000'000), make_point(2.0, 1, 0)});
+        logger.extend_planned_trajectory({make_point(3.0, 1, 250'000'000)});
+    }
+
+    auto root = parse_json(filepath);
+    BOOST_REQUIRE(root["planned_trajectory"].isArray());
+    BOOST_REQUIRE_EQUAL(root["planned_trajectory"].size(), 3);
+
+    BOOST_CHECK_CLOSE(root["planned_trajectory"][0]["time_from_start_sec"].asDouble(), 0.5, 1e-6);
+    BOOST_CHECK_CLOSE(root["planned_trajectory"][1]["time_from_start_sec"].asDouble(), 1.0, 1e-6);
+    BOOST_CHECK_CLOSE(root["planned_trajectory"][2]["time_from_start_sec"].asDouble(), 1.25, 1e-6);
+
+    BOOST_CHECK_EQUAL(root["planned_trajectory"][0]["positions_rad"][0].asDouble(), 1.0);
+    BOOST_CHECK_EQUAL(root["planned_trajectory"][2]["positions_rad"][0].asDouble(), 3.0);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
