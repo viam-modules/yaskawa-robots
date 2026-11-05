@@ -38,6 +38,7 @@
 #include <ostream>
 #include <ranges>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <type_traits>
@@ -470,13 +471,13 @@ std::future<Message> TcpRobotSocket::send_request(Message request) {
 }
 
 void TcpRobotSocket::disconnect() {
-    if (connected_) {
-        connected_ = false;
-        session_->queue_->close();
-        session_->queue_->clear();
-        if (session_->socket_.is_open()) {
-            session_->socket_.close();
-        }
+    // Not gated on connected_: closing the socket also aborts an in-flight async_connect, so
+    // teardown does not have to wait out the connect timeout.
+    connected_ = false;
+    session_->queue_->close();
+    session_->queue_->clear();
+    if (session_->socket_.is_open()) {
+        session_->socket_.close();
     }
 }
 
@@ -931,9 +932,8 @@ std::shared_ptr<YaskawaController> YaskawaController::get_or_create(boost::asio:
 }
 
 void YaskawaController::establish_connections_(std::stop_token token) {
-    // Cancellation is cooperative: we can't abort an in-flight TCP/UDP op, so the worst-case
-    // latency on shutdown is one per-op timeout (k_socket_timeout). Between ops we throw if
-    // stop was requested so the caller (FSM) winds down quickly.
+    // Cancellation: the stop_callback below closes the sockets, which fails the op in flight, and
+    // between ops we check the token so a cancelled attempt does not start the next one.
     // TODO(RSDK-14029) replace polled stop_token with boost::asio cancellation — the blocking
     // ops below are already asio coroutines, so a cancellation_signal could abort them in-flight
     // instead of needing manual checks between each.
@@ -957,6 +957,12 @@ void YaskawaController::establish_connections_(std::stop_token token) {
         tcp_socket_ = std::make_shared<TcpRobotSocket>(io_context_, host_, tcp_port_);
     }
     auto tcp = tcp_socket_locked_();
+    const std::stop_callback on_stop{token, [&] {
+                                         tcp->disconnect();
+                                         if (auto udp = udp_socket_locked_()) {
+                                             udp->disconnect();
+                                         }
+                                     }};
 
     try {
         check_cancel();

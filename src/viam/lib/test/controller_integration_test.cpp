@@ -1,7 +1,12 @@
 #define BOOST_TEST_MODULE ControllerIntegrationTest
 #include <boost/test/unit_test.hpp>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #include <boost/asio.hpp>
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +14,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <json/json.h>
 #include <Eigen/Dense>
@@ -131,8 +137,9 @@ struct TestFixture {
 
 // Owns a scratch telemetry directory for tests that hand a RealtimeTrajectoryLogger to a move.
 struct TelemetryDir {
-    std::filesystem::path path = std::filesystem::temp_directory_path() /
-                                 ("controller_telemetry_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::path path =
+        std::filesystem::temp_directory_path() /
+        ("controller_telemetry_test_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
 
     TelemetryDir() {
         std::filesystem::create_directories(path);
@@ -958,6 +965,51 @@ BOOST_AUTO_TEST_CASE(one_holder_leaving_does_not_disconnect_the_others, *boost::
 
     io_ctx.stop();
     io_thread.join();
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+
+BOOST_AUTO_TEST_SUITE(teardown)
+
+// Teardown while the FSM is stuck in a TCP connect must not wait for the connect timeout. A listener
+// with a full accept queue (listen(1) plus two connections nobody accepts) makes Linux drop the next
+// SYN, so the controller's connect hangs deterministically.
+BOOST_AUTO_TEST_CASE(disconnect_does_not_wait_on_a_hanging_connect, *boost::unit_test::timeout(30)) {
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    const int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    BOOST_REQUIRE_EQUAL(::bind(listen_fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)), 0);
+    BOOST_REQUIRE_EQUAL(::listen(listen_fd, 1), 0);
+    socklen_t len = sizeof(addr);
+    BOOST_REQUIRE_EQUAL(::getsockname(listen_fd, reinterpret_cast<sockaddr*>(&addr), &len), 0);
+    std::array<int, 2> fillers{};
+    for (int& fd : fillers) {
+        fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        BOOST_REQUIRE_EQUAL(::connect(fd, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)), 0);
+    }
+
+    boost::asio::io_context io_ctx;
+    std::thread io_thread([&io_ctx]() {
+        auto guard = boost::asio::make_work_guard(io_ctx);
+        io_ctx.run();
+    });
+    {
+        auto controller = std::make_shared<robot::YaskawaController>(io_ctx, make_config(ntohs(addr.sin_port)));
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));  // let the FSM get stuck in the connect
+        BOOST_REQUIRE(controller->is_disconnected());
+
+        const auto start = std::chrono::steady_clock::now();
+        controller->disconnect();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+        BOOST_CHECK_LT(elapsed.count(), 1000);
+    }
+    io_ctx.stop();
+    io_thread.join();
+    for (const int fd : fillers) {
+        ::close(fd);
+    }
+    ::close(listen_fd);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

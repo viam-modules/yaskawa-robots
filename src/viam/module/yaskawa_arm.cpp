@@ -780,6 +780,12 @@ void YaskawaArm::stop(const ProtoStruct&) {
     // cannot be more specific than "the stop API": viam-server calls it for a client stop, for a
     // session expiring, and on the way into a reconfigure, and none of that reaches us here.
     robot_->abort_moves(group_index_, "move stopped by the arm's stop API");
+    // Nothing to stop when disconnected. Don't throw: the SDK calls stop() inside RemoveResource and
+    // fails the removal if it throws, leaving this arm alive in the module.
+    if (robot_->is_disconnected()) {
+        VIAM_SDK_LOG(info) << "stop: controller is disconnected, nothing to stop";
+        return;
+    }
     if (!robot_->stop(group_index_)) {
         // we were not checking this before. Add a log to see how often it occurs
         VIAM_SDK_LOG(warn) << "stop did not error but did not return as stopped";
