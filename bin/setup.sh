@@ -6,6 +6,8 @@
 #
 set -euxo pipefail
 
+SDK_VERSION="$(tr -d '[:space:]' < "$(dirname "$0")/../etc/viam-cpp-sdk.version")"
+
 if [ ! -d "tmp_cpp_sdk/viam-cpp-sdk" ]; then
   # Clone the C++ SDK repo
   mkdir -p tmp_cpp_sdk
@@ -17,9 +19,7 @@ else
   pushd viam-cpp-sdk
 fi
 
-# NOTE: If you change this version, also change it in the `conanfile.py` requirements,
-# conan.lock, the Dockerfile, and CMakeLists.txt
-git checkout releases/v0.44.0
+git checkout "releases/v${SDK_VERSION}"
 
 # Export the recipe to the cache. The C++ SDK is not on conancenter, so this is
 # what lets bin/build.sh resolve it without the viamconan remote. Exporting from

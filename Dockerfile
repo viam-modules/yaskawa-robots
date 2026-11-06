@@ -70,12 +70,12 @@ RUN cd /root/opt/src && \
     cmake --install build --prefix /usr/local && \
     rm -rf /root/opt/src/xtensor
 
-# Install Viam C++ SDK from source. If you change the
-# version here, change it in the top level CMakeLists.txt as well.
+# Install Viam C++ SDK from source at the version pinned in etc/viam-cpp-sdk.version.
+COPY etc/viam-cpp-sdk.version /root/opt/src/viam-cpp-sdk.version
 RUN cd /root/opt/src && \
     git clone https://github.com/viamrobotics/viam-cpp-sdk && \
     cd viam-cpp-sdk && \
-    git checkout releases/v0.44.0 && \
+    git checkout "releases/v$(tr -d '[:space:]' < /root/opt/src/viam-cpp-sdk.version)" && \
     cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=RelWithDebInfo \
         -DVIAMCPPSDK_USE_DYNAMIC_PROTOS=ON \

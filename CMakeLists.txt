@@ -85,10 +85,13 @@ endif()
 
 include(FetchContent)
 
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/etc/viam-cpp-sdk.version" VIAM_CPP_SDK_VERSION LIMIT_COUNT 1)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/etc/viam-cpp-sdk.version")
+
 FetchContent_Declare(
   viam-cpp-sdk
   GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-  GIT_TAG releases/v0.44.0 # Keep in sync with Dockerfile and conanfile.py
+  GIT_TAG releases/v${VIAM_CPP_SDK_VERSION}
   GIT_SHALLOW TRUE
   SYSTEM
   # Without this patch command, using this as a SYSTEM package results
@@ -101,7 +104,7 @@ FetchContent_MakeAvailable(viam-cpp-sdk)
 
 find_package(Eigen3 3.4 CONFIG REQUIRED)
 find_package(jsoncpp REQUIRED)
-find_package(viam-cpp-sdk 0.44 CONFIG REQUIRED viamsdk)
+find_package(viam-cpp-sdk ${VIAM_CPP_SDK_VERSION} CONFIG REQUIRED viamsdk)
 
 # Everything needs threads, and prefer -pthread if available
 set(THREADS_PREFER_PTHREAD_FLAG ON)
