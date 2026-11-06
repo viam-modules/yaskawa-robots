@@ -245,6 +245,8 @@ The prebuilt Linux binaries are built with gcc 13 on Ubuntu Noble. If your machi
 docker run --rm -it --volume .:/src -w /src ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble-2026-11.00 bash -c "./bin/setup.sh && ./bin/build.sh"
 ```
 
+For development, `./bin/configure.sh` (after `./bin/setup.sh`) installs the same conan dependencies and configures a regular CMake tree in `build/`, so `make build`, `make test`, `make run-clang-check`, and `make run-clang-tidy` work against it. This is what the Build, Test, and Lint CI job runs; the lint targets additionally need `clang-format-19`, `clang-tidy-19`, and `clang-tools-19`.
+
 Prebuilt binaries are only used when the dependency versions exactly match the ones the SDK release was built with. `conan.lock` pins those versions. When bumping `viam-cpp-sdk` in `conanfile.py`, regenerate it starting from the `conan.lock` attached to that SDK release on GitHub:
 
 ```
