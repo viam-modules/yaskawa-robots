@@ -8,6 +8,7 @@
 #include <sstream>
 #include <vector>
 
+#include <boost/algorithm/string.hpp>
 #include <boost/numeric/conversion/cast.hpp>
 #include <boost/variant.hpp>
 
@@ -106,6 +107,39 @@ std::string unix_time_iso8601() {
     stream << "." << std::setw(6) << std::setfill('0') << delta_us.count() << "Z";
 
     return stream.str();
+}
+
+std::optional<std::string> extract_trace_id_from_traceparent(std::string_view traceparent) {
+    std::vector<std::string_view> parts;
+    boost::split(parts, traceparent, boost::is_any_of("-"));  // NOLINT(clang-analyzer-cplusplus.NewDeleteLeaks)
+
+    if (parts.size() != 4 || parts[0] != "00" || parts[1].size() != 32 || parts[2].size() != 16 || parts[3].size() != 2) {
+        return std::nullopt;
+    }
+    return std::string(parts[1]);
+}
+
+std::filesystem::path expand_telemetry_path(const std::filesystem::path& base_path,
+                                            const std::string& traceid_template,
+                                            const std::string& trace_id) {
+    return base_path / boost::replace_all_copy(traceid_template, "{trace_id}", trace_id);
+}
+
+std::string parse_telemetry_traceid_template(const viam::sdk::ResourceConfig& cfg) {
+    const auto it = cfg.attributes().find("telemetry_output_path_append_traceid");
+    if (it == cfg.attributes().end()) {
+        return {};
+    }
+    if (const auto* s = it->second.get<std::string>()) {
+        if (s->find("{trace_id}") == std::string::npos) {
+            throw std::invalid_argument("`telemetry_output_path_append_traceid` template string must contain `{trace_id}`");
+        }
+        return *s;
+    }
+    if (const auto* b = it->second.get<bool>()) {
+        return *b ? "{trace_id}" : "";
+    }
+    throw std::invalid_argument("`telemetry_output_path_append_traceid` must be a boolean or a template string containing `{trace_id}`");
 }
 
 size_t validate_joint_limit_attribute(const viam::sdk::ResourceConfig& cfg, const std::string& attribute) {

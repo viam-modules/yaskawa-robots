@@ -424,6 +424,23 @@ target_link_libraries(move_limit_test
 
 add_test(NAME move_limit_test COMMAND move_limit_test)
 
+add_executable(telemetry_path_test EXCLUDE_FROM_ALL)
+
+target_sources(telemetry_path_test
+  PRIVATE
+    src/viam/module/test/telemetry_path_test.cpp
+    src/viam/module/utils.cpp
+)
+
+target_link_libraries(telemetry_path_test
+  PRIVATE
+    viam-yaskawa
+    Boost::unit_test_framework
+    viam-cpp-sdk::viamsdk
+)
+
+add_test(NAME telemetry_path_test COMMAND telemetry_path_test)
+
 add_executable(streamed_conversion_test EXCLUDE_FROM_ALL)
 
 target_sources(streamed_conversion_test

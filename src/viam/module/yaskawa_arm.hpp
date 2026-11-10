@@ -145,6 +145,14 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
    private:
     void configure_(const Dependencies& deps, const ResourceConfig& config);
 
+    // The telemetry directory for the move being handled. With
+    // `telemetry_output_path_append_traceid` set, this is the configured path plus the expanded
+    // template, using the trace-id from the current request (from `traceid_metadata_key`, or the
+    // traceparent header when that is unset). Falls back to the configured path when there is no
+    // request context or trace-id. Must be called on the gRPC handler thread, the only place the
+    // request metadata is visible.
+    std::string request_telemetry_output_path_() const;
+
     // Flash the configured firmware to the controller. Precondition: caller holds config_mutex_
     // (do_command), or the object is not yet shared (configure_ at startup). Tears down and
     // rebuilds the FSM connection.
@@ -206,6 +214,8 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     boost::asio::io_context& io_context_;
     std::filesystem::path resource_root_;
     std::string telemetry_output_path_;
+    std::string telemetry_output_path_append_traceid_template_;
+    std::string traceid_metadata_key_;
 
     // Firmware flashing (do_command "flash_firmware"): path to the MotoPlus .out on the host and
     // the optional on-controller name (defaults to the file's basename).
