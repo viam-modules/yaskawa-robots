@@ -41,6 +41,8 @@ The following attributes are available for `viam:yaskawa-robots` arms:
 | `enable_legacy_trajectory_planner` | bool | Optional | Enables the legacy trajectory generator. When `enable_new_trajectory_planner` is also true, the legacy generator is only used if the new one fails to produce a trajectory. At least one of the two generators must be enabled. **Default false** |
 | `enable_auto_error_recovery` | bool | Optional | When true, the driver automatically calls `reset_errors` to clear software errors so the arm can recover without operator intervention. Set to false if you want errors to remain visible on the pendant for inspection before they're cleared. (Move requests will still trigger error recovery as part of waking the arm — this only gates the passive background path.) **Default true** |
 | `telemetry_output_path` | string | Optional | Path for writing telemetry data files. **Default: VIAM_MODULE_DATA environment variable** |
+| `telemetry_output_path_append_traceid` | bool or string | Optional | Controls whether and how the trace ID of the current request is appended to the telemetry output path. When set to `true`, appends the raw trace ID as a subdirectory. When set to a template string containing `{trace_id}`, the placeholder is replaced with the actual trace ID, giving full control over the subdirectory name (e.g. `"tag={trace_id}"`, `"{trace_id}-run"`, `"traces/{trace_id}/data"`). Moves without a trace ID write to `telemetry_output_path` itself. **Default: false** |
+| `traceid_metadata_key` | string | Optional | The request-metadata field to read the trace ID from. When set, the value of that field is used directly as the trace ID; keys for metadata propagated by RDK are prefixed with `viam-metadata-`. When unset (and `telemetry_output_path_append_traceid` is set), the trace ID is parsed from the `traceparent` header instead. |
 | `group_index` | int | Optional | Control group index on the Yaskawa controller that this arm represents (see below). **Default 0** |
 | `firmware_path` | string | Optional | **Dev only.** Absolute path (on the machine running the module) to a MotoPlus firmware `.out` to flash, overriding the version-pinned firmware bundled in the tarball. **Default: the bundled firmware**, if present. See [Firmware Flashing](#firmware-flashing). |
 | `firmware_dest_name` | string | Optional | **Dev only.** Filename to store the application under on the controller. **Default: the basename of the firmware being flashed** (e.g. `viammoto.out`). |
@@ -119,6 +121,19 @@ Configure two arm components pointing to the same controller host with different
     "speed_rad_per_sec": 2.09,
     "acceleration_rad_per_sec2": 0.14,
     "telemetry_output_path": "/var/log/arm_telemetry"
+}
+```
+
+#### Telemetry output tagged per request
+Writes each move's telemetry under the data manager's capture directory in a `tag=<id>` subdirectory, where `<id>` is the value the caller sent in the `sanding-pass-id` request metadata. The data manager uploads the files tagged with that ID.
+```json
+{
+    "host": "10.1.10.84",
+    "speed_rad_per_sec": 2.09,
+    "acceleration_rad_per_sec2": 0.14,
+    "telemetry_output_path": "${environment.VIAM_HOME}/capture",
+    "telemetry_output_path_append_traceid": "tag={trace_id}",
+    "traceid_metadata_key": "viam-metadata-sanding-pass-id"
 }
 ```
 

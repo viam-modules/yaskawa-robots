@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <filesystem>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -109,6 +110,20 @@ Eigen::Vector3d transform_vector(const Eigen::Vector3d& vector, const Eigen::Mat
 
 // Generate ISO8601 timestamp string with microsecond precision
 std::string unix_time_iso8601();
+
+// Returns the trace-id from a W3C traceparent header (`00-<32 hex>-<16 hex>-<2 hex>`), or
+// std::nullopt if the header is malformed.
+std::optional<std::string> extract_trace_id_from_traceparent(std::string_view traceparent);
+
+// Returns base_path / traceid_template with every `{trace_id}` replaced by trace_id.
+std::filesystem::path expand_telemetry_path(const std::filesystem::path& base_path,
+                                            const std::string& traceid_template,
+                                            const std::string& trace_id);
+
+// Parses `telemetry_output_path_append_traceid`, which is either a bool (true means `{trace_id}`)
+// or a template string that must contain `{trace_id}`. Returns "" when absent or false.
+// Throws std::invalid_argument on a wrong type or a template without `{trace_id}`.
+std::string parse_telemetry_traceid_template(const viam::sdk::ResourceConfig& cfg);
 
 // Validates a config attribute is a strictly positive scalar or array of positive doubles.
 // Returns the dimension of the element

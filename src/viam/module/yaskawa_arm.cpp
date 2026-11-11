@@ -256,6 +256,7 @@ std::vector<std::string> validate_config_(const ResourceConfig& cfg) {
     if (telemetry_path && telemetry_path->empty()) {
         throw std::invalid_argument("attribute `telemetry_output_path` cannot be empty");
     }
+    parse_telemetry_traceid_template(cfg);
 
     auto group_index = find_config_attribute<double>(cfg, "group_index");
     constexpr int k_min_group_index = 0;
@@ -375,6 +376,8 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
     }();
 
     VIAM_SDK_LOG(debug) << "telemetry output path set : " << telemetry_output_path_;
+    telemetry_output_path_append_traceid_template_ = parse_telemetry_traceid_template(config);
+    traceid_metadata_key_ = find_config_attribute<std::string>(config, "traceid_metadata_key").value_or("");
 
     if (!robot_) {
         robot_ = YaskawaController::get_or_create(io_context_, config);
@@ -460,7 +463,7 @@ void YaskawaArm::move_through_joint_positions(const std::vector<std::vector<doub
 
     std::optional<RealtimeTrajectoryLogger> logger;
     try {
-        logger.emplace(telemetry_output_path_, unix_time, model_.model_name(), group_index_);
+        logger.emplace(request_telemetry_output_path_(), unix_time, model_.model_name(), group_index_);
     } catch (const std::exception& e) {
         VIAM_SDK_LOG(warn) << "Failed to create realtime trajectory logger: " << e.what();
     }
@@ -495,7 +498,7 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 
     std::optional<RealtimeTrajectoryLogger> logger;
     try {
-        logger.emplace(telemetry_output_path_, unix_time, model_.model_name(), group_index_);
+        logger.emplace(request_telemetry_output_path_(), unix_time, model_.model_name(), group_index_);
     } catch (const std::exception& e) {
         VIAM_SDK_LOG(warn) << "Failed to create realtime trajectory logger: " << e.what();
     }
@@ -580,7 +583,7 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
         // constraints that never shaped it.
         std::optional<RealtimeTrajectoryLogger> logger;
         try {
-            logger.emplace(telemetry_output_path_, unix_time_iso8601(), model_.model_name(), group_index_);
+            logger.emplace(request_telemetry_output_path_(), unix_time_iso8601(), model_.model_name(), group_index_);
         } catch (const std::exception& e) {
             VIAM_SDK_LOG(warn) << "Failed to create realtime trajectory logger: " << e.what();
         }
@@ -1045,6 +1048,38 @@ ProtoStruct YaskawaArm::get_status() {
     return ProtoStruct{};
 }
 
+std::string YaskawaArm::request_telemetry_output_path_() const {
+    if (telemetry_output_path_append_traceid_template_.empty()) {
+        return telemetry_output_path_;
+    }
+    const auto& observer = viam::sdk::GrpcContextObserver::current();
+    if (!observer) {
+        return telemetry_output_path_;
+    }
+
+    std::optional<std::string> trace_id;
+    if (!traceid_metadata_key_.empty()) {
+        if (const auto values = observer->get_client_metadata_field_values(traceid_metadata_key_); !values.empty()) {
+            trace_id = values[0];
+        }
+    } else if (const auto values = observer->get_client_metadata_field_values("traceparent"); !values.empty()) {
+        trace_id = extract_trace_id_from_traceparent(values[0]);
+    }
+    if (!trace_id || trace_id->empty()) {
+        return telemetry_output_path_;
+    }
+
+    const auto path = expand_telemetry_path(telemetry_output_path_, telemetry_output_path_append_traceid_template_, *trace_id);
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+    if (ec) {
+        VIAM_SDK_LOG(warn) << "Failed to create telemetry output directory " << path << ": " << ec.message() << " - falling back to "
+                           << telemetry_output_path_;
+        return telemetry_output_path_;
+    }
+    return path.string();
+}
+
 std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(const std::list<Eigen::VectorXd>& waypoints,
                                                                              uint32_t group_index,
                                                                              const std::string& unix_time,
@@ -1056,7 +1091,7 @@ std::optional<YaskawaArm::TrajectoryResult> YaskawaArm::generate_trajectory_(con
     const auto& original_waypoints = waypoints;
 
     auto log_failure = [&](const std::string& replay_json) {
-        auto filename = std::format("{}/{}_failed_trajectory.trajex-totg-replay.json", telemetry_output_path_, unix_time);
+        auto filename = std::format("{}/{}_failed_trajectory.trajex-totg-replay.json", request_telemetry_output_path_(), unix_time);
         std::ofstream json_file(filename);
         json_file << replay_json;
     };
