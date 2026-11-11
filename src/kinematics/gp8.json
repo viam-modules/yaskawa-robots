@@ -41,21 +41,67 @@
             }
         },
         {
-            "id": "link_2_l",
+            "id": "link_2_l_clevis_y_neg",
             "parent": "joint_2_l",
+            "translation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+            },
+            "geometry": {
+                "x": 144.994,
+                "y": 50.099,
+                "z": 157.973,
+                "translation": {
+                    "x": -19.217,
+                    "y": -89.9495,
+                    "z": 318.8865
+                }
+            }
+        },
+        {
+            "id": "link_2_l_clevis_y_pos",
+            "parent": "link_2_l_clevis_y_neg",
+            "translation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+            },
+            "geometry": {
+                "x": 144.857,
+                "y": 50.103,
+                "z": 158.168,
+                "translation": {
+                    "x": -19.2625,
+                    "y": 89.9515,
+                    "z": 318.984
+                }
+            }
+        },
+        {
+            "id": "link_2_l",
+            "parent": "link_2_l_clevis_y_pos",
             "translation": {
                 "x": 0,
                 "y": 0,
                 "z": 345
             },
             "geometry": {
-                "x": 156.133,
+                "x": 134.074,
                 "y": 230.008,
-                "z": 462.297,
+                "z": 318.977,
                 "translation": {
-                    "x": -13.937,
-                    "y": -0.001,
-                    "z": 166.918
+                    "x": -22.5572,
+                    "y": -0.002,
+                    "z": 92.6318
+                },
+                "orientation": {
+                    "type": "euler_angles",
+                    "value": {
+                        "roll": 0,
+                        "pitch": -0.20944,
+                        "yaw": 0
+                    }
                 }
             }
         },
@@ -68,13 +114,13 @@
                 "z": 40
             },
             "geometry": {
-                "x": 175.003,
+                "x": 212.0,
                 "y": 144.0,
-                "z": 157.911,
+                "z": 212.0,
                 "translation": {
-                    "x": -17.483,
+                    "x": 0,
                     "y": -1.5,
-                    "z": 24.322
+                    "z": 0
                 }
             }
         },
