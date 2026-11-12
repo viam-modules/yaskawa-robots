@@ -660,6 +660,31 @@ BOOST_FIXTURE_TEST_CASE(move_rejects_when_e_stopped, ControllerFixture, *boost::
     BOOST_CHECK_THROW(controller->enqueue_move_request(0, k_dof, std::move(samples), {}, 3.0), std::runtime_error);
 }
 
+// when the controller rejects a later chunk it keeps running the points it already queued, so the
+// monitor has to stop the arm itself before it fails the move. the mock rejects any MSG_MOVE_GOAL
+// while a goal is ACTIVE and leaves that goal running, which is the same thing the controller does
+// with a chunk it will not take.
+BOOST_FIXTURE_TEST_CASE(rejected_chunk_stops_the_arm, ControllerFixture, *boost::unit_test::timeout(30)) {
+    connect();
+    test::drive_mock_to_ready(controller);
+
+    // more than one 200-point chunk, slow enough that the goal is still running when the second
+    // chunk is rejected.
+    std::vector<trajectory_point_t> samples(250);
+    for (size_t i = 0; i < samples.size(); ++i) {
+        samples[i].time_from_start = {static_cast<uint32_t>(i), 0};
+        for (int j = 0; j < k_dof; ++j) {
+            samples[i].positions[j] = 0.001 * static_cast<double>(i);
+        }
+    }
+    auto stream = std::make_shared<robot::MoveStream>(std::move(samples));
+    stream->close();
+    auto handle = controller->execute_trajectory(0, k_dof, std::move(stream), {}, 3.0);
+
+    BOOST_CHECK_THROW(handle->wait(), std::runtime_error);
+    BOOST_CHECK_EQUAL(server.robot().groups[0].current_goal_state, GOAL_STATE_ABORTED);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
 
 // ==================== Suite 5b: FSM Wake-Up ====================
