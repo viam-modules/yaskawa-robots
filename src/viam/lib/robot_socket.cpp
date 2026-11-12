@@ -1509,12 +1509,8 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                 }
             }
         } catch (std::exception& e) {
-            // the controller keeps running whatever is already in its queue until it is told to stop,
-            // so a failure here, such as a rejected chunk or a failed status poll, would otherwise
-            // leave the arm moving after the caller has been told the move failed. stopping a group
-            // that is already stopped is harmless, so the paths above that stopped it already do not
-            // need to be excluded. this runs before thread_cleanup releases the group's move lock, so
-            // it cannot stop a move that someone else started after this one.
+            // the controller keeps running its queued points until told to stop. stopping twice is harmless,
+            // and the move lock is still held, so this cannot stop a move that started after this one.
             if (auto shared = self.lock()) {
                 try {
                     if (!shared->stop(group_index)) {
