@@ -1788,5 +1788,28 @@ void State::UpdateState(const RobotStatusMessage& msg) {
                        << std::hex << static_cast<int>(prev_in_motion) << "->0x" << static_cast<int>(msg.in_motion) << std::dec << " mode "
                        << prev_mode << "->" << msg.mode;
     }
+
+    // Logged here rather than in the FSM so the codes reach the log before auto-recovery's
+    // reset_errors() clears them: the FSM only acts on status packets that have already passed
+    // through here. Nonzero slots are printed regardless of position because which slot holds the
+    // pendant error number vs. alarm numbers is set by the firmware, not the protocol.
+    // Look up codes in the YRC1000 Alarm Codes manual (178644); 4000+ are minor alarms.
+    if (msg.error_codes != last_error_codes) {
+        std::string codes;
+        for (const int code : msg.error_codes) {
+            if (code != 0) {
+                codes += std::format(" {}", code);
+            }
+        }
+        if (codes.empty()) {
+            // An empty history means this is the first packet since connect; nothing was cleared.
+            if (!last_error_codes.empty()) {
+                LOGGING(info) << "controller alarms cleared";
+            }
+        } else {
+            LOGGING(warning) << "controller alarm/error codes active:" << codes << " (in_error=" << msg.in_error << ")";
+        }
+        last_error_codes = msg.error_codes;
+    }
 }
 }  // namespace robot
