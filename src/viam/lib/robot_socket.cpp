@@ -1800,5 +1800,24 @@ void State::UpdateState(const RobotStatusMessage& msg) {
                        << std::hex << static_cast<int>(prev_in_motion) << "->0x" << static_cast<int>(msg.in_motion) << std::dec << " mode "
                        << prev_mode << "->" << msg.mode;
     }
+
+    // Logged here rather than in the FSM so the codes reach the log before auto-recovery's
+    // reset_errors() clears them: the FSM only acts on status packets that have already passed
+    // through here. Only the first msg.size slots are active, the controller leaves older codes
+    // in the slots after that.
+    // Look up codes in the YRC1000 Alarm Codes manual (178644); 4000+ are minor alarms.
+    const auto active = msg.error_codes | std::views::take(std::max(msg.size, 0));
+    if (!std::ranges::equal(active, last_error_codes)) {
+        if (active.empty()) {
+            LOGGING(info) << "controller alarms cleared";
+        } else {
+            std::string codes;
+            for (const int code : active) {
+                codes += std::format(" {}", code);
+            }
+            LOGGING(warning) << "controller alarm/error codes active:" << codes << " (in_error=" << msg.in_error << ")";
+        }
+        last_error_codes.assign(active.begin(), active.end());
+    }
 }
 }  // namespace robot
