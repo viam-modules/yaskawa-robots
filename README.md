@@ -6,6 +6,7 @@ This repo is a [module](https://docs.viam.com/registry/#modular-resources) that 
 - GP180-120, as `viam:yaskawa-robots:gp180-120`
 - GP35L, as `viam:yaskawa-robots:gp35l`
 - GP8, as `viam:yaskawa-robots:gp8`
+- GP20HL, as `viam:yaskawa-robots:gp20hl`
 
 > **Setting up a new robot?** See [First-time setup](FIRST_SETUP.md) for bringing up a YRC1000 controller from scratch through to a working arm component.
 
@@ -292,6 +293,8 @@ Below is an image to show exactly how undermodeled the geometry is at this point
 <img width="1143" height="556" alt="image" src="https://github.com/user-attachments/assets/c2ea200c-ff88-4c65-833b-da59421dadab" />
 
 The `gp180-120` model has a related, two-part adjustment for the same kind of false-collision problem. The y dimension of `link_2_l` was expanded by ~240mm beyond the raw mesh AABB so it covers the motor housing protruding from `link_3_u`, and `link_3_u`'s z dimension was then shrunk by ~300mm (centered higher) since the motor that geometry would have covered now lives in `link_2_l`'s box. The combined coverage still envelops the physical robot for external collision checks while letting the two links no longer collide with each other at extreme joint angles.
+
+The `gp20hl` wrist has the same kind of adjustment. `link_4_r` ends in a clevis that straddles the B axis, and a single box around it filled the gap the flange swings through, so any wrist bend past about 12° of J5 was a false `link_4_r`/`link_6_t` collision. `link_4_r` is split at x = -125mm (wrist frame) into a shaft box and two plate boxes on zero-length links. The plates reach 10mm back into the shaft box: boxes that only share a face flip between overlapping and clear on floating-point noise, which made the rigid shaft/plate pairs report transient self-collisions depending on the start pose. The plates are sized from the visual mesh because the upstream collision mesh is closed across the clevis gap. The flange box sits on a zero-length `link_6_t_flange` link ahead of `joint_6_t`: the flange is a 50mm-radius disc, so its envelope does not depend on J6, and keeping the box out of J6's rotation stops its corners (70.7mm from the axis) from sweeping into the plates' inner faces at 60mm and 65mm.
 
 > [!NOTE]
 > The `gp35l` and `gp8` kinematics generated from the URDF use raw mesh AABBs and have not yet been reviewed for false self-collisions. Similar adjustments may be needed before the model is ready for users.
