@@ -39,25 +39,35 @@ jobs:
   build-test-lint:
     name: Build, Test, and Lint
     runs-on: ${{ matrix.runner }}
-    container: ghcr.io/viam-modules/yaskawa-robots:${{ matrix.arch }}@${{ matrix.digest }}
+    # Same image as the Linux release builds, so dependencies come prebuilt from
+    # viamconan and lint/test run against the toolchain we ship with.
+    container: ghcr.io/viamrobotics/cpp-sdk-conan-ubuntu:noble-2026-11.00
     strategy:
       fail-fast: false
       matrix:
         include:
         - arch: amd64
           runner: ubuntu-latest
-          digest: sha256:be64d6ac165c02353eb1675641ef68cbcebe2d136ffc5e12ca24a1d034894964
         - arch: arm64
           runner: ubuntu-4cpu-arm
-          digest: sha256:0ba1ab8e4957f2be2110cc9766c7595839cfb244baee2549b9428047bd682c9d
     steps:
+      # The conan image has no clang tooling; format/check/tidy need the -19 versions.
+      - name: Install clang tools
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang-format-19 \
+            clang-tidy-19 \
+            clang-tools-19
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: true
           fetch-depth: 0
+      - name: Setup C++ SDK
+        run: ./bin/setup.sh
       - name: Configure
-        run: make configure
+        run: ./bin/configure.sh
       - name: Format
         run: make format-check
       - name: Check Check

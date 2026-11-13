@@ -88,7 +88,7 @@ include(FetchContent)
 FetchContent_Declare(
   viam-cpp-sdk
   GIT_REPOSITORY https://github.com/viamrobotics/viam-cpp-sdk
-  GIT_TAG releases/v0.44.0 # Keep in sync with Dockerfile and conanfile.py
+  GIT_TAG releases/v0.44.0 # Keep in sync with conanfile.py
   GIT_SHALLOW TRUE
   SYSTEM
   # Without this patch command, using this as a SYSTEM package results
