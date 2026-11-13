@@ -1509,6 +1509,18 @@ std::unique_ptr<GoalRequestHandle> YaskawaController::execute_trajectory(uint32_
                 }
             }
         } catch (std::exception& e) {
+            // the controller keeps running its queued points until told to stop. stopping twice is harmless,
+            // and the move lock is still held, so this cannot stop a move that started after this one.
+            if (auto shared = self.lock()) {
+                try {
+                    if (!shared->stop(group_index)) {
+                        LOGGING(warning) << "group " << group_index << " stop after move failure did not return as stopped";
+                    }
+                } catch (const std::exception& stop_error) {
+                    LOGGING(warning) << "group " << group_index << " stop after move failure threw: " << stop_error.what()
+                                     << " (move failed with: " << e.what() << ")";
+                }
+            }
             try {
                 promise.set_exception_at_thread_exit(std::current_exception());
             } catch (...) {
