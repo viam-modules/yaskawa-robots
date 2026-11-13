@@ -290,6 +290,7 @@ std::vector<std::shared_ptr<ModelRegistration>> YaskawaArm::create_model_registr
         "gp180-120",
         "gp35l",
         "gp8",
+        "gp20hl",
     };
 
     const auto arm = API::get<Arm>();
@@ -756,9 +757,10 @@ pose YaskawaArm::get_end_position(const ProtoStruct&) {
         // For the gp180-120 model that translation is 650mm
         // https://github.com/Yaskawa-Global/motoman_ros2_support_packages/blob/3187e27b9e59615b7bb4d25ca406e4280e8ebe26/motoman_gp180_support/urdf/gp180_120_macro.xacro#L148
         p.coordinates.z += 650;
-    } else if (model_name == "gp35l") {
-        // For the gp35l model that translation is 540mm (from gp35l_macro.xacro
-        // joint_1_s origin xyz="0 0 0.540")
+    } else if (model_name == "gp35l" || model_name == "gp20hl") {
+        // Both models put joint_1_s 540mm above base_link (joint_1_s origin
+        // xyz="0 0 0.540" in gp35l_macro.xacro and gp20hl_macro.xacro)
+        // https://github.com/ros-industrial/motoman/blob/846fbbc57c60223f12bf4795ea6404982d57709e/motoman_gp20hl_support/urdf/gp20hl_macro.xacro
         p.coordinates.z += 540;
     } else if (model_name == "gp8") {
         // For the gp8 model that translation is 330mm (from gp8_macro.xacro
