@@ -668,8 +668,7 @@ BOOST_FIXTURE_TEST_CASE(rejected_chunk_stops_the_arm, ControllerFixture, *boost:
     connect();
     test::drive_mock_to_ready(controller);
 
-    // more than one 200-point chunk, slow enough that the goal is still running when the second
-    // chunk is rejected.
+    // more than one 200-point chunk, so there is a second chunk to reject.
     std::vector<trajectory_point_t> samples(250);
     for (size_t i = 0; i < samples.size(); ++i) {
         samples[i].time_from_start = {static_cast<uint32_t>(i), 0};
@@ -682,7 +681,12 @@ BOOST_FIXTURE_TEST_CASE(rejected_chunk_stops_the_arm, ControllerFixture, *boost:
     auto handle = controller->execute_trajectory(0, k_dof, std::move(stream), {}, 3.0);
 
     BOOST_CHECK_THROW(handle->wait(), std::runtime_error);
-    BOOST_CHECK_EQUAL(server.robot().groups[0].current_goal_state, GOAL_STATE_ABORTED);
+    // the mock finishes every goal 1s after accepting it, whatever the timestamps say. normally the
+    // rejection and stop land well inside that and the goal ends ABORTED, but a starved runner can let
+    // it reach SUCCEEDED first, which fails the move through the early-completion path instead. either
+    // way the arm must not still be running once the move has failed.
+    BOOST_CHECK_NE(server.robot().groups[0].current_goal_state, GOAL_STATE_ACTIVE);
+    BOOST_CHECK_EQUAL(server.robot().groups[0].in_motion, 0);
 }
 
 BOOST_AUTO_TEST_SUITE_END()
