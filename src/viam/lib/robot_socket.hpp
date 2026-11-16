@@ -304,6 +304,8 @@ struct State {
     std::atomic<bool> drive_powered;
     std::atomic<bool> in_error;
     std::atomic<robot_mode_t> mode;  // robot_mode_t (0=unknown, 1=teach, 2=play, 3=remote)
+    // Written and read only by UpdateState, which runs solely on the UDP receive coroutine.
+    std::vector<int> last_error_codes;
     explicit State();
     void UpdateState(const RobotStatusMessage& msg);
 };
