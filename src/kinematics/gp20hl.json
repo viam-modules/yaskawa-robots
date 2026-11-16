@@ -1,0 +1,272 @@
+{
+    "name": "gp20hl",
+    "kinematic_param_type": "SVA",
+    "links": [
+        {
+            "id": "base_link",
+            "parent": "world",
+            "translation": {
+                "x": 0,
+                "y": 0,
+                "z": 540
+            },
+            "geometry": {
+                "x": 644.92,
+                "y": 454.369,
+                "z": 259.06,
+                "translation": {
+                    "x": -92.44,
+                    "y": -2.834,
+                    "z": 129.47
+                }
+            }
+        },
+        {
+            "id": "link_1_s",
+            "parent": "joint_1_s",
+            "translation": {
+                "x": 145,
+                "y": 0,
+                "z": 0
+            },
+            "geometry": {
+                "x": 604.365,
+                "y": 568.843,
+                "z": 540.992,
+                "translation": {
+                    "x": 13.16,
+                    "y": -31.705,
+                    "z": -59.466
+                }
+            }
+        },
+        {
+            "id": "link_2_l",
+            "parent": "joint_2_l",
+            "translation": {
+                "x": 0,
+                "y": 0,
+                "z": 1150
+            },
+            "geometry": {
+                "x": 340.38,
+                "y": 314.83,
+                "z": 1445.59,
+                "translation": {
+                    "x": 0.11,
+                    "y": -185.975,
+                    "z": 552.795
+                }
+            }
+        },
+        {
+            "id": "link_3_u",
+            "parent": "joint_3_u",
+            "translation": {
+                "x": 1812,
+                "y": 0,
+                "z": 250
+            },
+            "geometry": {
+                "x": 633.92,
+                "y": 586.66,
+                "z": 533.924,
+                "translation": {
+                    "x": 181.8,
+                    "y": -60.31,
+                    "z": 103.108
+                }
+            }
+        },
+        {
+            "id": "link_4_r_clevis_y_neg",
+            "parent": "joint_4_r",
+            "translation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+            },
+            "geometry": {
+                "x": 205.7,
+                "y": 24.209,
+                "z": 148.074,
+                "translation": {
+                    "x": -32.15,
+                    "y": -72.121,
+                    "z": 14.122
+                }
+            }
+        },
+        {
+            "id": "link_4_r_clevis_y_pos",
+            "parent": "link_4_r_clevis_y_neg",
+            "translation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+            },
+            "geometry": {
+                "x": 195.512,
+                "y": 31.287,
+                "z": 143.592,
+                "translation": {
+                    "x": -37.244,
+                    "y": 80.574,
+                    "z": 15.082
+                }
+            }
+        },
+        {
+            "id": "link_4_r",
+            "parent": "link_4_r_clevis_y_pos",
+            "translation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+            },
+            "geometry": {
+                "x": 1195.0,
+                "y": 201.45,
+                "z": 192.77,
+                "translation": {
+                    "x": -722.5,
+                    "y": 2.725,
+                    "z": 7.755
+                }
+            }
+        },
+        {
+            "id": "link_5_b",
+            "parent": "joint_5_b",
+            "translation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+            },
+            "geometry": {
+                "x": 148.83,
+                "y": 129.16,
+                "z": 128.3,
+                "translation": {
+                    "x": 19.605,
+                    "y": -0.44,
+                    "z": 0.0
+                }
+            }
+        },
+        {
+            "id": "link_6_t_flange",
+            "parent": "link_5_b",
+            "translation": {
+                "x": 0,
+                "y": 0,
+                "z": 0
+            },
+            "geometry": {
+                "x": 16.0,
+                "y": 100.0,
+                "z": 100.0,
+                "translation": {
+                    "x": 92.0,
+                    "y": 0.0,
+                    "z": 0.0
+                }
+            }
+        },
+        {
+            "id": "link_6_t",
+            "parent": "joint_6_t",
+            "translation": {
+                "x": 100,
+                "y": 0,
+                "z": 0
+            }
+        },
+        {
+            "id": "joint_6_t-tool0",
+            "parent": "link_6_t",
+            "orientation": {
+                "type": "euler_angles",
+                "value": {
+                    "roll": 3.141592653589793,
+                    "pitch": -1.5707963267948966,
+                    "yaw": 0.0
+                }
+            }
+        }
+    ],
+    "joints": [
+        {
+            "id": "joint_1_s",
+            "type": "revolute",
+            "parent": "base_link",
+            "axis": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 1.0
+            },
+            "max": 180.0,
+            "min": -180.0
+        },
+        {
+            "id": "joint_2_l",
+            "type": "revolute",
+            "parent": "link_1_s",
+            "axis": {
+                "x": 0.0,
+                "y": 1.0,
+                "z": 0.0
+            },
+            "max": 135.0,
+            "min": -90.0
+        },
+        {
+            "id": "joint_3_u",
+            "type": "revolute",
+            "parent": "link_2_l",
+            "axis": {
+                "x": 0.0,
+                "y": -1.0,
+                "z": 0.0
+            },
+            "max": 206.0,
+            "min": -80.0
+        },
+        {
+            "id": "joint_4_r",
+            "type": "revolute",
+            "parent": "link_3_u",
+            "axis": {
+                "x": -1.0,
+                "y": 0.0,
+                "z": 0.0
+            },
+            "max": 200.0,
+            "min": -200.0
+        },
+        {
+            "id": "joint_5_b",
+            "type": "revolute",
+            "parent": "link_4_r",
+            "axis": {
+                "x": 0.0,
+                "y": -1.0,
+                "z": 0.0
+            },
+            "max": 150.0,
+            "min": -150.0
+        },
+        {
+            "id": "joint_6_t",
+            "type": "revolute",
+            "parent": "link_6_t_flange",
+            "axis": {
+                "x": -1.0,
+                "y": 0.0,
+                "z": 0.0
+            },
+            "max": 455.0,
+            "min": -455.0
+        }
+    ]
+}
