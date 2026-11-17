@@ -2,7 +2,6 @@
 
 #include <atomic>
 #include <boost/asio/io_context.hpp>
-#include <boost/optional.hpp>
 #include <filesystem>
 #include <functional>
 #include <list>
@@ -14,6 +13,7 @@
 
 #include <Eigen/Core>
 #include <thread>
+#include <viam/sdk/common/kinematics.hpp>
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/registry/registry.hpp>
@@ -23,8 +23,6 @@ using namespace viam::sdk;
 using namespace robot;
 
 class YaskawaArm final : public Arm, public std::enable_shared_from_this<YaskawaArm> {
-    using KinematicsData = ::viam::sdk::KinematicsData;
-
    public:
     /// @brief Whether the trajex/totg trajectory generator is enabled by default.
     static constexpr bool k_default_enable_new_trajectory_planner = true;
@@ -75,10 +73,9 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     /// @param update_handler Called for each update this arm sends back.
     /// @param extra Any additional arguments to the method.
     /// @return How the stream ended.
-    stream_outcome move_through_joint_positions_streamed(
-        const std::function<boost::optional<std::vector<trajectory_point>>()>& batch_source,
-        const std::function<bool(trajectory_update)>& update_handler,
-        const viam::sdk::ProtoStruct& extra) override;
+    stream_outcome move_through_joint_positions_streamed(const std::function<std::optional<std::vector<trajectory_point>>()>& batch_source,
+                                                         const std::function<bool(trajectory_update)>& update_handler,
+                                                         const viam::sdk::ProtoStruct& extra) override;
 
     /// @brief Get the cartesian pose of the end effector
     /// @param extra Any additional arguments to the method.
@@ -88,11 +85,11 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     /// @brief Reports if the arm is in motion.
     bool is_moving() override;
 
-    /// @brief Get the kinematics data associated with the arm.
+    /// @brief Get the kinematic model of the arm, which is the shipped model file for this arm
+    /// model with the configured speed and acceleration limits on its joints.
+    /// @param options Unused, since the shipped model files carry no meshes.
     /// @param extra Any additional arguments to the method.
-    /// @return A variant of kinematics data, with bytes field containing the raw
-    /// bytes of the file and the object's type indicating the file format.
-    KinematicsData get_kinematics(const ProtoStruct& extra) override;
+    ::viam::sdk::KinematicModel get_kinematic_model(const ::viam::sdk::kinematics_options& options, const ProtoStruct& extra) override;
 
     /// @brief Stops the Arm.
     /// @param extra Extra arguments to pass to the resource's `stop` method.
@@ -203,6 +200,7 @@ class YaskawaArm final : public Arm, public std::enable_shared_from_this<Yaskawa
     Eigen::VectorXd velocity_limits_;
     Eigen::VectorXd acceleration_limits_;
     double trajectory_sampling_freq_{3.0};
+    ::viam::sdk::KinematicModel kinematic_model_;
     double waypoint_dedup_tolerance_rad_{1e-3};
     bool use_new_trajectory_planner_{k_default_enable_new_trajectory_planner};
     bool use_legacy_trajectory_planner_{k_default_enable_legacy_trajectory_planner};

@@ -1,9 +1,8 @@
 #define BOOST_TEST_MODULE MoveLimitTest
 #include <boost/test/unit_test.hpp>
 
+#include <variant>
 #include <vector>
-
-#include <boost/variant.hpp>
 
 #include <Eigen/Dense>
 #include <viam/lib/robot_socket.hpp>
@@ -18,8 +17,8 @@ BOOST_AUTO_TEST_CASE(test_move_limit_both_vector) {
     Eigen::VectorXd vel_limits = Eigen::VectorXd::Zero(k_dof);
     Eigen::VectorXd acc_limits = Eigen::VectorXd::Zero(k_dof);
 
-    const boost::variant<double, std::vector<double>> vel = std::vector<double>{10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
-    const boost::variant<double, std::vector<double>> acc = std::vector<double>{100.0, 200.0, 300.0, 400.0, 500.0, 600.0};
+    const std::variant<double, std::vector<double>> vel = std::vector<double>{10.0, 20.0, 30.0, 40.0, 50.0, 60.0};
+    const std::variant<double, std::vector<double>> acc = std::vector<double>{100.0, 200.0, 300.0, 400.0, 500.0, 600.0};
 
     BOOST_CHECK_NO_THROW(apply_move_limit(vel_limits, vel));
     BOOST_CHECK_NO_THROW(apply_move_limit(acc_limits, acc));
@@ -36,8 +35,8 @@ BOOST_AUTO_TEST_CASE(test_move_limit_scalar_fills_all_joints) {
     Eigen::VectorXd vel_limits = Eigen::VectorXd::Zero(k_dof);
     Eigen::VectorXd acc_limits = Eigen::VectorXd::Zero(k_dof);
 
-    const boost::variant<double, std::vector<double>> vel = std::vector<double>{15.0, 25.0, 35.0, 45.0, 55.0, 65.0};
-    const boost::variant<double, std::vector<double>> acc = 180.0;
+    const std::variant<double, std::vector<double>> vel = std::vector<double>{15.0, 25.0, 35.0, 45.0, 55.0, 65.0};
+    const std::variant<double, std::vector<double>> acc = 180.0;
 
     BOOST_CHECK_NO_THROW(apply_move_limit(vel_limits, vel));
     BOOST_CHECK_NO_THROW(apply_move_limit(acc_limits, acc));
@@ -56,8 +55,8 @@ BOOST_AUTO_TEST_CASE(test_move_limit_scalar_fills_all_joints) {
 BOOST_AUTO_TEST_CASE(test_move_limit_scalar_zero_throws) {
     Eigen::VectorXd limits = Eigen::VectorXd::Constant(k_dof, 42.0);
 
-    const boost::variant<double, std::vector<double>> zero = 0.0;
-    const boost::variant<double, std::vector<double>> negative = -5.0;
+    const std::variant<double, std::vector<double>> zero = 0.0;
+    const std::variant<double, std::vector<double>> negative = -5.0;
 
     BOOST_CHECK_THROW(apply_move_limit(limits, zero), std::invalid_argument);
     for (int i = 0; i < k_dof; ++i) {
@@ -73,7 +72,7 @@ BOOST_AUTO_TEST_CASE(test_move_limit_scalar_zero_throws) {
 BOOST_AUTO_TEST_CASE(test_move_limit_vector_too_few_elements) {
     Eigen::VectorXd limits = Eigen::VectorXd::Constant(k_dof, 42.0);
 
-    const boost::variant<double, std::vector<double>> value = std::vector<double>{10.0, 20.0, 30.0};
+    const std::variant<double, std::vector<double>> value = std::vector<double>{10.0, 20.0, 30.0};
 
     BOOST_CHECK_THROW(apply_move_limit(limits, value), std::invalid_argument);
 
@@ -85,7 +84,7 @@ BOOST_AUTO_TEST_CASE(test_move_limit_vector_too_few_elements) {
 BOOST_AUTO_TEST_CASE(test_move_limit_vector_too_many_elements) {
     Eigen::VectorXd limits = Eigen::VectorXd::Constant(k_dof, 42.0);
 
-    const boost::variant<double, std::vector<double>> value = std::vector<double>{1, 2, 3, 4, 5, 6, 7, 8};
+    const std::variant<double, std::vector<double>> value = std::vector<double>{1, 2, 3, 4, 5, 6, 7, 8};
 
     BOOST_CHECK_THROW(apply_move_limit(limits, value), std::invalid_argument);
 
@@ -97,7 +96,7 @@ BOOST_AUTO_TEST_CASE(test_move_limit_vector_too_many_elements) {
 BOOST_AUTO_TEST_CASE(test_move_limit_vector_negative_element) {
     Eigen::VectorXd limits = Eigen::VectorXd::Constant(k_dof, 42.0);
 
-    const boost::variant<double, std::vector<double>> value = std::vector<double>{10.0, 20.0, -5.0, 40.0, 50.0, 60.0};
+    const std::variant<double, std::vector<double>> value = std::vector<double>{10.0, 20.0, -5.0, 40.0, 50.0, 60.0};
 
     BOOST_CHECK_THROW(apply_move_limit(limits, value), std::invalid_argument);
 
