@@ -4,6 +4,7 @@
 #include <chrono>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <stdexcept>
 #include <vector>
 
@@ -37,7 +38,7 @@ viam::sdk::ResourceConfig make_config(viam::sdk::ProtoStruct attributes) {
 Arm::trajectory_point make_point(std::chrono::microseconds time,
                                  double position_deg,
                                  double velocity_deg_per_sec,
-                                 boost::optional<double> acceleration_deg_per_sec2 = boost::none) {
+                                 std::optional<double> acceleration_deg_per_sec2 = std::nullopt) {
     Arm::trajectory_point point;
     point.time = time;
     point.positions = std::vector<double>(k_dof, position_deg);
@@ -258,7 +259,7 @@ BOOST_AUTO_TEST_CASE(each_joint_is_checked_against_its_own_limit) {
     const std::vector<double> accelerations_at_limit(limits.acceleration_degs_per_sec2.begin(), limits.acceleration_degs_per_sec2.end());
 
     // builds a fresh point rather than copying one, since gcc's -Wmaybe-uninitialized loses track
-    // of the boost::optional constraints in a copied point and fails the -Werror build.
+    // of the optional constraints in a copied point and fails the -Werror build.
     const auto point_with = [](std::vector<double> velocities, std::vector<double> accelerations) {
         Arm::trajectory_point point;
         point.time = 0us;
@@ -401,7 +402,7 @@ BOOST_AUTO_TEST_CASE(zero_dof_is_rejected) {
 // a motion the caller never described.
 BOOST_AUTO_TEST_CASE(one_bad_point_fails_the_batch) {
     std::vector<Arm::trajectory_point> batch{make_point(0us, 0.0, 0.0), make_point(1'000'000us, 90.0, 10.0)};
-    batch[1].constraints = boost::none;
+    batch[1].constraints = std::nullopt;
 
     BOOST_CHECK_THROW(convert_streamed_batch(batch, k_loose_limits), std::invalid_argument);
 }

@@ -40,6 +40,8 @@
 #include <viam/lib/motoplus_flasher.hpp>
 #include <viam/lib/robot_socket.hpp>
 #include <viam/lib/scope_guard.hpp>
+#include <viam/sdk/common/kinematic_model_file.hpp>
+#include <viam/sdk/common/kinematics.hpp>
 #include <viam/sdk/common/pose.hpp>
 #include <viam/sdk/common/proto_value.hpp>
 #include <viam/sdk/components/component.hpp>
@@ -395,6 +397,14 @@ void YaskawaArm::configure_(const Dependencies&, const ResourceConfig& config) {
 
     trajectory_sampling_freq_ =
         find_config_attribute<double>(config, "trajectory_sampling_freq_hz").value_or(k_default_trajectory_sampling_freq);
+
+    // the model only changes with the config, so we build what we serve once here and
+    // get_kinematic_model hands out copies. a MoveOptions override applies to one move and never
+    // touches these members, so what we publish is what a move without an override will use.
+    const auto model_file_path = resource_root_ / "kinematics" / (model_.model_name() + ".json");
+    kinematic_model_ = kinematic_model_for_config(
+        viam::sdk::read_kinematic_model_file(model_file_path.string()), velocity_limits_, acceleration_limits_, trajectory_sampling_freq_);
+
     auto waypoint_dedup_tolerance_deg = find_config_attribute<double>(config, "waypoint_deduplication_tolerance_deg");
     waypoint_dedup_tolerance_rad_ =
         waypoint_dedup_tolerance_deg ? degrees_to_radians(*waypoint_dedup_tolerance_deg) : k_default_waypoint_dedup_tolerance_rads;
@@ -523,7 +533,7 @@ void YaskawaArm::move_to_joint_positions(const std::vector<double>& positions, c
 }
 
 YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
-    const std::function<boost::optional<std::vector<trajectory_point>>()>& batch_source,
+    const std::function<std::optional<std::vector<trajectory_point>>()>& batch_source,
     const std::function<bool(trajectory_update)>& update_handler,
     const viam::sdk::ProtoStruct&) {
     // how the producer side of the stream ended. either one of four clean exits, or an error we
@@ -702,42 +712,10 @@ YaskawaArm::stream_outcome YaskawaArm::move_through_joint_positions_streamed(
     throw std::logic_error("move_through_joint_positions_streamed: unhandled exit_reason");
 }
 
-::viam::sdk::KinematicsData YaskawaArm::get_kinematics(const ProtoStruct&) {
-    using KinematicsDataSVA = viam::sdk::KinematicsDataSVA;
+::viam::sdk::KinematicModel YaskawaArm::get_kinematic_model(const ::viam::sdk::kinematics_options&, const ProtoStruct&) {
+    // the shipped model files carry no meshes, so there is nothing for the options to select.
     const std::shared_lock rlock{config_mutex_};
-
-    constexpr char kSvaFileTemplate[] = "kinematics/%1%.json";
-    const auto sva_file_path = resource_root_ / str(boost::format(kSvaFileTemplate) % model_.model_name());
-
-    // Open the file in binary mode
-    std::ifstream sva_file(sva_file_path, std::ios::binary);
-    if (!sva_file) {
-        throw std::runtime_error(boost::str(boost::format("unable to open kinematics file '%1%'") % sva_file_path.string()));
-    }
-
-    // Read the entire file into a vector without computing size ahead of time
-    std::vector<char> temp_bytes(std::istreambuf_iterator<char>(sva_file), {});
-    if (sva_file.bad()) {
-        throw std::runtime_error(boost::str(boost::format("error reading kinematics file '%1%'") % sva_file_path.string()));
-    }
-
-    // The shipped file carries position bounds only, so we add the configured speed and
-    // acceleration on the way out. A MoveOptions override applies to one move and never touches
-    // these members, so what we publish is what an un-overridden move will use.
-    //
-    // RDK builds the machine's whole frame system from this call, so failing to attach limits must
-    // not fail the call. validate_config_ accepts a configured DOF that disagrees with the
-    // model's joint count (a scalar paired with an array of another length, for instance), and that
-    // used to be harmless here because we returned the file untouched. We keep that behaviour and
-    // warn, since losing the limits is what every caller got before this existed.
-    try {
-        const auto patched = sva_with_joint_limits({temp_bytes.begin(), temp_bytes.end()}, velocity_limits_, acceleration_limits_);
-        return KinematicsDataSVA({patched.begin(), patched.end()});
-    } catch (const std::exception& e) {
-        VIAM_SDK_LOG(warn) << "get_kinematics: serving '" << sva_file_path.string()
-                           << "' without velocity or acceleration limits: " << e.what();
-        return KinematicsDataSVA({temp_bytes.begin(), temp_bytes.end()});
-    }
+    return kinematic_model_;
 }
 
 pose YaskawaArm::get_end_position(const ProtoStruct&) {

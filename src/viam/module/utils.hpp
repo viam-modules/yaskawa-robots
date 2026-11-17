@@ -6,13 +6,13 @@
 #include <optional>
 #include <sstream>
 #include <string_view>
+#include <variant>
 #include <vector>
-
-#include <boost/variant.hpp>
 
 #include <Eigen/Dense>
 #include <viam/lib/logger.hpp>
 #include <viam/lib/robot_socket.hpp>
+#include <viam/sdk/common/kinematics.hpp>
 #include <viam/sdk/components/arm.hpp>
 #include <viam/sdk/config/resource.hpp>
 #include <viam/sdk/log/logging.hpp>
@@ -133,7 +133,7 @@ size_t validate_joint_limit_attribute(const viam::sdk::ResourceConfig& cfg, cons
 // Apply a per-move limit override from MoveOptions to an Eigen limits vector.
 // Scalar: fills all joints uniformly. Throws if value <= 0.
 // Vector: sets per-joint limits. Requires matching DOF, all non-negative.
-void apply_move_limit(Eigen::VectorXd& limits, const boost::variant<double, std::vector<double>>& value);
+void apply_move_limit(Eigen::VectorXd& limits, const std::variant<double, std::vector<double>>& value);
 
 // Default DOF when both velocity and acceleration are scalars.
 constexpr Eigen::Index k_default_dof = 6;
@@ -146,22 +146,29 @@ Eigen::Index number_of_dof_configured(const viam::sdk::ResourceConfig& config, c
 // Scalars are broadcast to target_dof elements. Arrays must match target_dof exactly.
 Eigen::VectorXd read_limit_vector(const viam::sdk::ResourceConfig& config, const std::string& attribute, Eigen::Index target_dof);
 
-// Returns the SVA kinematics document with per-joint max_velocity and max_acceleration added,
-// so the motion service can see what this arm instance will actually honor rather than position
-// bounds alone. The limits are in radians, matching what we read from config, and are written as
-// the degrees the SVA schema uses.
+// Narrows every joint of the model to the configured speed and acceleration, so the motion service
+// sees what this arm instance will honor and not position bounds alone. The limits are in radians,
+// as we read them from config, and the model holds degrees.
 //
-// The two vectors are indexed in the document's own joints order, since the config gives us
-// positional arrays and no joint names. They must both be exactly as long as that array, and a
-// mismatch throws rather than patching the joints we happen to have values for, because a config
-// whose DOF disagrees with the model is not describing this arm.
+// The two vectors are indexed in the model's own joints order, since the config gives us
+// positional arrays and no joint names.
 //
-// Throws std::invalid_argument if the document is not parseable, is not SVA, has no joints
-// array, if either vector's length disagrees with the joint count, or if any joint is not an
-// independent revolute joint or already carries a limit of its own.
-std::string sva_with_joint_limits(const std::string& sva_json,
-                                  const Eigen::VectorXd& velocity_rad_per_sec,
-                                  const Eigen::VectorXd& acceleration_rad_per_sec2);
+// Throws, leaving the model untouched, if either vector's length disagrees with the joint count,
+// if any joint is not revolute, or if narrow_joint_limits refuses a value. It refuses a negative
+// speed, a mimic joint, and a speed above one the model file already carries.
+void narrow_to_configured_limits(viam::sdk::KinematicModel& model,
+                                 const Eigen::VectorXd& velocity_rad_per_sec,
+                                 const Eigen::VectorXd& acceleration_rad_per_sec2);
+
+// Returns the model we serve for a shipped model file, which is the file's model with the
+// configured limits on its joints and the trajectory sampling frequency as its operating frequency.
+//
+// Limits that cannot be applied are logged and left off instead of thrown, since RDK builds the
+// machine's whole frame system from this model.
+viam::sdk::KinematicModel kinematic_model_for_config(viam::sdk::KinematicModel model,
+                                                     const Eigen::VectorXd& velocity_rad_per_sec,
+                                                     const Eigen::VectorXd& acceleration_rad_per_sec2,
+                                                     double trajectory_sampling_freq_hz);
 
 // Reads `stream_limit_tolerance_ratio` from config. Returns std::nullopt if it is absent.
 // Throws std::invalid_argument if it is not a number or is less than 1.
