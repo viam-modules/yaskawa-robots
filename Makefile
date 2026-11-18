@@ -7,13 +7,6 @@
 	run-clang-check \
 	clean \
 	clean-all \
-	docker-amd64 \
-	docker-arm64 \
-	docker-build \
-	docker-upload \
-	docker \
-	docker-arm64-ci \
-	docker-amd64-ci \
 	get-firmware
 
 default: module.tar.gz
@@ -80,40 +73,3 @@ clean:
 
 clean-all:
 	git clean -fxd
-
-# Docker
-BUILD_CMD = docker buildx build --pull $(BUILD_PUSH) --force-rm --build-arg MAIN_TAG=$(MAIN_TAG) \
-	--build-arg BASE_TAG=$(BUILD_TAG) --platform linux/$(BUILD_TAG) -f $(BUILD_FILE) -t '$(MAIN_TAG):$(BUILD_TAG)' .
-BUILD_PUSH = --load
-BUILD_FILE = Dockerfile
-
-docker-amd64: MAIN_TAG = ghcr.io/viam-modules/yaskawa-robots
-docker-amd64: BUILD_TAG = amd64
-docker-amd64:
-	$(BUILD_CMD)
-
-docker-arm64: MAIN_TAG = ghcr.io/viam-modules/yaskawa-robots
-docker-arm64: BUILD_TAG = arm64
-docker-arm64:
-	$(BUILD_CMD)
-
-docker-build: docker-amd64 docker-arm64
-
-docker-upload:
-	docker push 'ghcr.io/viam-modules/yaskawa-robots:amd64'
-	docker push 'ghcr.io/viam-modules/yaskawa-robots:arm64'
-
-docker: docker-build docker-upload
-
-# CI targets that automatically push, avoid for local test-first-then-push workflows
-docker-arm64-ci: MAIN_TAG = ghcr.io/viam-modules/yaskawa-robots
-docker-arm64-ci: BUILD_TAG = arm64
-docker-arm64-ci: BUILD_PUSH = --push
-docker-arm64-ci:
-	$(BUILD_CMD)
-
-docker-amd64-ci: MAIN_TAG = ghcr.io/viam-modules/yaskawa-robots
-docker-amd64-ci: BUILD_TAG = amd64
-docker-amd64-ci: BUILD_PUSH = --push
-docker-amd64-ci:
-	$(BUILD_CMD)
